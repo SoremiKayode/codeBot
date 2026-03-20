@@ -17,7 +17,7 @@ const { initAuthCreds } = await import('@whiskeysockets/baileys/lib/Utils/auth-u
 
 dotenv.config();
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 app.use(express.static('public'));
 
 const IS_LOCAL = process.env.USE_LOCAL === 'true';
@@ -41,15 +41,21 @@ const ScheduleSchema = new mongoose.Schema({
     }
 }, { _id: false });
 
+const MediaItemSchema = new mongoose.Schema({
+    name: String,
+    mediaType: { type: String, enum: ['image', 'video', 'audio'], required: true },
+    mimeType: String,
+    dataUrl: String,
+    url: String
+}, { _id: false });
+
 const TaskSchema = new mongoose.Schema({
-    tenantId: { type: String, default: 'default-tenant', index: true },
-    userId: { type: String, default: null, index: true },
-    whatsappAccountId: { type: String, default: null, index: true },
     taskType: { type: String, enum: ['single', 'all_contacts', 'group_members'], required: true },
     targetId: String,
     message: String,
     mediaUrl: String,
     mediaType: { type: String, enum: ['text', 'image', 'video', 'audio'], default: 'text' },
+    mediaItems: { type: [MediaItemSchema], default: [] },
     time: { type: String, required: true },
     delay: { type: Number, default: 5000 },
     schedule: { type: ScheduleSchema, required: true },
@@ -121,17 +127,62 @@ function getNthWeekdayOfMonth(year, monthIndex, weekday, ordinal) {
     return dayOfMonth <= getDaysInMonth(year, monthIndex) ? dayOfMonth : null;
 }
 
+function normalizeJid(value = '') {
+    return String(value).trim();
+}
+
+function buildSchedulableContactId(contactId) {
+    const normalized = normalizeJid(contactId);
+    if (!normalized) return '';
+    if (normalized.includes('@')) return normalized;
+    const digitsOnly = normalized.replace(/\D/g, '');
+    return digitsOnly ? `${digitsOnly}@s.whatsapp.net` : normalized;
+}
+
+function normalizeMediaItems(payload) {
+    const providedItems = Array.isArray(payload.mediaItems) ? payload.mediaItems : [];
+    const normalizedItems = providedItems
+        .map(item => ({
+            name: item?.name || 'attachment',
+            mediaType: item?.mediaType,
+            mimeType: item?.mimeType || '',
+            dataUrl: item?.dataUrl || '',
+            url: item?.url || ''
+        }))
+        .filter(item => ['image', 'video', 'audio'].includes(item.mediaType) && (item.dataUrl || item.url));
+
+    if (normalizedItems.length > 0) {
+        return normalizedItems;
+    }
+
+    if (payload.mediaType && payload.mediaType !== 'text' && payload.mediaUrl) {
+        return [{
+            name: payload.mediaUrl.split('/').pop() || 'attachment',
+            mediaType: payload.mediaType,
+            mimeType: '',
+            dataUrl: '',
+            url: payload.mediaUrl
+        }];
+    }
+
+    return [];
+}
+
 function normalizeTaskPayload(payload) {
     const schedule = payload.schedule || {};
+    const mediaItems = normalizeMediaItems(payload);
+    const normalizedTaskType = payload.taskType;
+    const normalizedTargetId = normalizedTaskType === 'single' || normalizedTaskType === 'group_members'
+        ? buildSchedulableContactId(payload.targetId)
+        : '';
+
     const normalized = {
-        tenantId: payload.tenantId || 'default-tenant',
-        userId: payload.userId || null,
-        whatsappAccountId: payload.whatsappAccountId || null,
-        taskType: payload.taskType,
-        targetId: payload.targetId,
+        taskType: normalizedTaskType,
+        targetId: normalizedTargetId,
         message: payload.message,
-        mediaUrl: payload.mediaUrl,
-        mediaType: payload.mediaType || 'text',
+        mediaUrl: mediaItems[0]?.url || '',
+        mediaType: mediaItems.length > 0 ? mediaItems[0].mediaType : 'text',
+        mediaItems,
         time: payload.time,
         delay: Number(payload.delay) || 5000,
         schedule: {
@@ -143,18 +194,14 @@ function normalizeTaskPayload(payload) {
         }
     };
 
-    if (!normalized.schedule.startDate) {
-        throw new Error('Start date is required');
+    if (!normalized.schedule.startDate) throw new Error('Start date is required');
+    if (!normalized.schedule.frequency) throw new Error('Frequency is required');
+    if ((normalized.taskType === 'single' || normalized.taskType === 'group_members') && !normalized.targetId) {
+        throw new Error('Target ID is required for single chats or group member tasks');
     }
-
-    if (!normalized.schedule.frequency) {
-        throw new Error('Frequency is required');
-    }
-
     if (normalized.schedule.frequency === 'weekly' && normalized.schedule.weeklyDays.length === 0) {
         throw new Error('Select at least one day for weekly tasks');
     }
-
     if (normalized.schedule.frequency === 'monthly') {
         const hasMonthlyDates = normalized.schedule.monthlyDates.length > 0;
         const hasMonthlyPattern = normalized.schedule.monthlyPattern && Number.isInteger(Number(normalized.schedule.monthlyPattern.weekday));
@@ -189,9 +236,7 @@ function calculateNextRun(taskLike, fromDate = new Date()) {
             candidate.setDate(candidate.getDate() + offset);
             candidate.setHours(startDate.getHours(), startDate.getMinutes(), 0, 0);
             if (candidate < startDate || candidate < baseline) continue;
-            if (selectedDays.includes(candidate.getDay())) {
-                return candidate;
-            }
+            if (selectedDays.includes(candidate.getDay())) return candidate;
         }
         return null;
     }
@@ -263,7 +308,7 @@ async function useMongooseAuthState() {
                 }
             }
         },
-        saveCreds: () => writeData(creds, 'creds')
+        saveCreds: async () => writeData(creds, 'creds')
     };
 }
 
@@ -272,35 +317,35 @@ let latestQr = null;
 let taskSocketActive = false;
 
 async function startBot() {
-    const { version } = await fetchLatestBaileysVersion();
     const { state, saveCreds } = await useMongooseAuthState();
+    const { version } = await fetchLatestBaileysVersion();
 
     sock = makeWASocket({
         version,
         auth: state,
-        logger: pino({ level: 'error' }),
+        logger: pino({ level: 'silent' }),
         printQRInTerminal: false,
+        browser: ['WA Scheduler', 'Chrome', '1.0.0']
     });
-
-    sock.ev.on('creds.update', saveCreds);
 
     const upsertContact = async (contacts) => {
         console.log('Processing contacts update:', JSON.stringify(contacts, null, 2));
         for (const contact of contacts) {
             const jid = contact.id || contact.jid;
             if (!jid) continue;
-
-            await Contact.updateOne(
-                { _id: jid },
-                {
-                    $set: {
+            try {
+                await Contact.updateOne(
+                    { _id: jid },
+                    {
                         name: contact.notify || contact.verifiedName || contact.name || 'Unknown',
                         notify: contact.notify || '',
                         updatedAt: new Date()
-                    }
-                },
-                { upsert: true }
-            );
+                    },
+                    { upsert: true }
+                );
+            } catch (err) {
+                console.error(`Failed to save contact ${jid}:`, err.message);
+            }
         }
     };
 
@@ -317,28 +362,37 @@ async function startBot() {
         }
     }
 
+    sock.ev.on('creds.update', saveCreds);
     sock.ev.on('contacts.upsert', upsertContact);
     sock.ev.on('contacts.update', upsertContact);
-
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr } = update;
+    sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
         if (qr) {
             latestQr = qr;
-            console.log('✨ New QR Code generated. Scan it in terminal or dashboard.');
             qrcode.generate(qr, { small: true });
+            console.log('📲 Scan QR in terminal or use /api/qr');
         }
         if (connection === 'open') {
             latestQr = null;
             taskSocketActive = true;
-            console.log('✅ WhatsApp Connected!');
+            console.log('✅ WhatsApp connected. Task runner is active.');
             fetchAllContacts();
         }
         if (connection === 'close') {
             taskSocketActive = false;
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            const code = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = code !== DisconnectReason.loggedOut;
+            console.log('🔌 Connection closed.', code, 'Reconnect:', shouldReconnect);
             if (shouldReconnect) startBot();
         }
     });
+}
+
+function decodeDataUrl(dataUrl) {
+    const match = String(dataUrl || '').match(/^data:([^;]+);base64,(.+)$/);
+    if (!match) {
+        throw new Error('Invalid media payload');
+    }
+    return { mimeType: match[1], buffer: Buffer.from(match[2], 'base64') };
 }
 
 async function getTaskRecipients(task) {
@@ -349,9 +403,29 @@ async function getTaskRecipients(task) {
     }
     if (task.taskType === 'all_contacts') {
         const contacts = await Contact.find({}, { _id: 1 });
-        return contacts.map(contact => contact._id);
+        return contacts.map(contact => buildSchedulableContactId(contact._id));
     }
     return [];
+}
+
+async function sendTaskMediaMessage(jid, mediaItem, caption = '') {
+    const payload = {};
+    if (mediaItem.dataUrl) {
+        const { buffer, mimeType } = decodeDataUrl(mediaItem.dataUrl);
+        payload[mediaItem.mediaType] = buffer;
+        if (mimeType) payload.mimetype = mimeType;
+    } else if (mediaItem.url) {
+        payload[mediaItem.mediaType] = { url: mediaItem.url };
+        if (mediaItem.mimeType) payload.mimetype = mediaItem.mimeType;
+    } else {
+        throw new Error('Media item has no content');
+    }
+
+    if (caption && mediaItem.mediaType !== 'audio') {
+        payload.caption = caption;
+    }
+
+    await sock.sendMessage(jid, payload);
 }
 
 async function runDueTasks() {
@@ -369,13 +443,15 @@ async function runDueTasks() {
             await task.save();
 
             const recipients = await getTaskRecipients(task);
+            const mediaItems = Array.isArray(task.mediaItems) ? task.mediaItems : [];
             for (const jid of recipients) {
-                const content = { caption: task.message };
-                if (task.mediaType === 'text') {
+                if (mediaItems.length === 0) {
                     await sock.sendMessage(jid, { text: task.message });
                 } else {
-                    content[task.mediaType] = { url: task.mediaUrl };
-                    await sock.sendMessage(jid, content);
+                    for (const [index, item] of mediaItems.entries()) {
+                        await sendTaskMediaMessage(jid, item, index === 0 ? task.message : '');
+                        await new Promise(r => setTimeout(r, Math.max(500, Math.floor(task.delay / Math.max(mediaItems.length, 1)))));
+                    }
                 }
                 await new Promise(r => setTimeout(r, task.delay));
             }
@@ -419,7 +495,8 @@ app.get('/api/chats', async (req, res) => {
         const formatted = Object.values(chats).map(g => ({
             id: g.id,
             name: g.subject,
-            members: g.participants.length
+            members: g.participants.length,
+            scheduleId: g.id
         }));
         res.json(formatted);
     } catch (e) {
@@ -430,7 +507,11 @@ app.get('/api/chats', async (req, res) => {
 app.get('/api/contacts', async (req, res) => {
     try {
         const contacts = await Contact.find().sort({ name: 1 });
-        res.json(contacts);
+        const formatted = contacts.map(contact => ({
+            ...contact.toObject(),
+            scheduleId: buildSchedulableContactId(contact._id)
+        }));
+        res.json(formatted);
     } catch (e) {
         res.status(500).json({ error: 'Could not fetch contacts from DB' });
     }
