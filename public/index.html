@@ -15,18 +15,28 @@
         main { flex: 1; padding: 40px; overflow-y: auto; }
         .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
         .form-group { margin-bottom: 20px; }
+        .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+        .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
         label { display: block; margin-bottom: 8px; font-weight: 600; }
-        input, select, textarea { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; }
+        input, select, textarea { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; box-sizing: border-box; }
+        select[multiple] { min-height: 180px; }
+        .checkbox-grid { display: grid; grid-template-columns: repeat(4, minmax(100px, 1fr)); gap: 12px; }
+        .checkbox-item { display: flex; align-items: center; gap: 8px; background: #f8f9fa; padding: 10px 12px; border-radius: 8px; }
+        .checkbox-item input { width: auto; margin: 0; }
         button { background: var(--primary); color: white; border: none; padding: 15px 25px; border-radius: 8px; cursor: pointer; font-size: 16px; width: 100%; font-weight: bold; }
         button:hover { background: var(--dark); }
         table { width: 100%; border-collapse: collapse; margin-top: 20px; background: white; border-radius: 12px; overflow: hidden; }
-        th, td { padding: 15px; text-align: left; border-bottom: 1px solid #eee; }
+        th, td { padding: 15px; text-align: left; border-bottom: 1px solid #eee; vertical-align: top; }
         th { background: #f8f9fa; }
         .badge { padding: 5px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; }
         .pending { background: #fff3cd; color: #856404; }
+        .active { background: #d1ecf1; color: #0c5460; }
+        .processing { background: #cce5ff; color: #004085; }
         .completed { background: #d4edda; color: #155724; }
+        .failed { background: #f8d7da; color: #721c24; }
         .btn-delete { color: #dc3545; cursor: pointer; border: none; background: none; }
         .hidden { display: none; }
+        .hint { font-size: 13px; color: #666; margin-top: 4px; }
     </style>
 </head>
 <body>
@@ -34,32 +44,126 @@
         <h2><i class="fab fa-whatsapp"></i> WA Admin</h2>
         <a href="#" onclick="showPage('create')" id="link-create" class="active"><i class="fas fa-plus"></i> Create Task</a>
         <a href="#" onclick="showPage('manage')" id="link-manage"><i class="fas fa-tasks"></i> Manage Tasks</a>
-<a href="#" onclick="showPage('contacts')" id="link-contacts"><i class="fas fa-address-book"></i> Groups & Contacts</a>
+        <a href="#" onclick="showPage('contacts')" id="link-contacts"><i class="fas fa-address-book"></i> Groups & Contacts</a>
     </nav>
 
     <main>
         <section id="page-create">
             <div class="card">
                 <h3>Schedule New Automation</h3>
-                <div class="form-group">
-                    <label>Task Type</label>
-                    <select id="taskType">
-                        <option value="single">Single Chat / Group</option>
-                        <option value="group_members">All Members in a Group</option>
-                    </select>
+                <div class="grid-3">
+                    <div class="form-group">
+                        <label>Tenant ID</label>
+                        <input type="text" id="tenantId" placeholder="default-tenant">
+                        <div class="hint">Future-ready for multi-tenant scheduling.</div>
+                    </div>
+                    <div class="form-group">
+                        <label>User ID</label>
+                        <input type="text" id="userId" placeholder="optional-user-id">
+                    </div>
+                    <div class="form-group">
+                        <label>WhatsApp Account ID</label>
+                        <input type="text" id="whatsappAccountId" placeholder="optional-account-id">
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>Target JID</label>
-                    <input type="text" id="targetId" placeholder="e.g. 123456789@s.whatsapp.net or group-id@g.us">
+
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Task Type</label>
+                        <select id="taskType">
+                            <option value="single">Single Chat / Group</option>
+                            <option value="group_members">All Members in a Group</option>
+                            <option value="all_contacts">All Contacts</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Target JID</label>
+                        <input type="text" id="targetId" placeholder="e.g. 123456789@s.whatsapp.net or group-id@g.us">
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label>Media Type</label>
-                    <select id="mediaType">
-                        <option value="text">Text Only</option>
-                        <option value="image">Image</option>
-                        <option value="video">Video</option>
-                    </select>
+
+                <div class="grid-3">
+                    <div class="form-group">
+                        <label>Media Type</label>
+                        <select id="mediaType">
+                            <option value="text">Text Only</option>
+                            <option value="image">Image</option>
+                            <option value="video">Video</option>
+                            <option value="audio">Audio</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Start Date</label>
+                        <input type="date" id="startDate">
+                    </div>
+                    <div class="form-group">
+                        <label>Time</label>
+                        <input type="time" id="time">
+                    </div>
                 </div>
+
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label>Frequency</label>
+                        <select id="frequency" onchange="toggleScheduleOptions()">
+                            <option value="once">Once</option>
+                            <option value="weekly">Weekly</option>
+                            <option value="monthly">Monthly</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Delay Between Recipients (ms)</label>
+                        <input type="number" id="delay" value="5000" min="0" step="500">
+                    </div>
+                </div>
+
+                <div id="weeklyOptions" class="form-group hidden">
+                    <label>Days of the Week</label>
+                    <div class="checkbox-grid">
+                        <label class="checkbox-item"><input type="checkbox" value="0" class="weekly-day"> Sun</label>
+                        <label class="checkbox-item"><input type="checkbox" value="1" class="weekly-day"> Mon</label>
+                        <label class="checkbox-item"><input type="checkbox" value="2" class="weekly-day"> Tue</label>
+                        <label class="checkbox-item"><input type="checkbox" value="3" class="weekly-day"> Wed</label>
+                        <label class="checkbox-item"><input type="checkbox" value="4" class="weekly-day"> Thu</label>
+                        <label class="checkbox-item"><input type="checkbox" value="5" class="weekly-day"> Fri</label>
+                        <label class="checkbox-item"><input type="checkbox" value="6" class="weekly-day"> Sat</label>
+                    </div>
+                </div>
+
+                <div id="monthlyOptions" class="hidden">
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label>Specific Days of Month</label>
+                            <select id="monthlyDates" multiple></select>
+                            <div class="hint">Hold Ctrl/Cmd to select multiple days such as 1, 15, and 31.</div>
+                        </div>
+                        <div class="form-group">
+                            <label>Monthly Weekday Pattern</label>
+                            <div class="grid-2">
+                                <select id="monthlyOrdinal">
+                                    <option value="">No pattern</option>
+                                    <option value="first">First</option>
+                                    <option value="second">Second</option>
+                                    <option value="third">Third</option>
+                                    <option value="fourth">Fourth</option>
+                                    <option value="last">Last</option>
+                                </select>
+                                <select id="monthlyWeekday">
+                                    <option value="">Select weekday</option>
+                                    <option value="0">Sunday</option>
+                                    <option value="1">Monday</option>
+                                    <option value="2">Tuesday</option>
+                                    <option value="3">Wednesday</option>
+                                    <option value="4">Thursday</option>
+                                    <option value="5">Friday</option>
+                                    <option value="6">Saturday</option>
+                                </select>
+                            </div>
+                            <div class="hint">Examples: first Sunday, second Monday, or last Friday.</div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="form-group">
                     <label>Media URL / Path (Optional)</label>
                     <input type="text" id="mediaUrl" placeholder="http://... or ./media/file.jpg">
@@ -67,19 +171,6 @@
                 <div class="form-group">
                     <label>Message</label>
                     <textarea id="message" rows="4"></textarea>
-                </div>
-                <div style="display: flex; gap: 20px;">
-                    <div class="form-group" style="flex: 1;">
-                        <label>Day</label>
-                        <select id="day">
-                            <option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option>
-                            <option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option>
-                        </select>
-                    </div>
-                    <div class="form-group" style="flex: 1;">
-                        <label>Time</label>
-                        <input type="time" id="time">
-                    </div>
                 </div>
                 <button onclick="saveTask()">Create Automation Task</button>
             </div>
@@ -92,8 +183,8 @@
                     <thead>
                         <tr>
                             <th>Target</th>
-                            <th>Type</th>
-                            <th>Schedule</th>
+                            <th>Frequency</th>
+                            <th>Next Run</th>
                             <th>Status</th>
                             <th>Action</th>
                         </tr>
@@ -104,50 +195,118 @@
         </section>
 
         <section id="page-contacts" class="hidden">
-    <div class="card">
-        <h3>WhatsApp Groups</h3>
-        <table id="groupTable">
-            <thead><tr><th>Name</th><th>ID</th><th>Members</th></tr></thead>
-            <tbody id="groupBody"></tbody>
-        </table>
-    </div>
-    <div class="card" style="margin-top: 20px;">
-        <h3>Contacts</h3>
-        <table id="contactTable">
-            <thead><tr><th>Name</th><th>ID</th></tr></thead>
-            <tbody id="contactBody"></tbody>
-        </table>
-    </div>
-</section>
+            <div class="card">
+                <h3>WhatsApp Groups</h3>
+                <table id="groupTable">
+                    <thead><tr><th>Name</th><th>ID</th><th>Members</th></tr></thead>
+                    <tbody id="groupBody"></tbody>
+                </table>
+            </div>
+            <div class="card" style="margin-top: 20px;">
+                <h3>Contacts</h3>
+                <table id="contactTable">
+                    <thead><tr><th>Name</th><th>ID</th></tr></thead>
+                    <tbody id="contactBody"></tbody>
+                </table>
+            </div>
+        </section>
     </main>
 
     <script>
+        const weekdayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
         function showPage(page) {
             document.getElementById('page-create').classList.toggle('hidden', page !== 'create');
             document.getElementById('page-manage').classList.toggle('hidden', page !== 'manage');
+            document.getElementById('page-contacts').classList.toggle('hidden', page !== 'contacts');
             document.getElementById('link-create').classList.toggle('active', page === 'create');
             document.getElementById('link-manage').classList.toggle('active', page === 'manage');
-            document.getElementById('page-contacts').classList.toggle('hidden', page !== 'contacts');
-            if(page === 'manage') fetchTasks();
-            if(page === 'contacts') fetchNetwork();
+            document.getElementById('link-contacts').classList.toggle('active', page === 'contacts');
+            if (page === 'manage') fetchTasks();
+            if (page === 'contacts') fetchNetwork();
+        }
+
+        function initializeForm() {
+            const monthlyDates = document.getElementById('monthlyDates');
+            monthlyDates.innerHTML = Array.from({ length: 31 }, (_, index) => `<option value="${index + 1}">${index + 1}</option>`).join('');
+
+            const today = new Date();
+            document.getElementById('startDate').value = today.toISOString().slice(0, 10);
+            document.getElementById('time').value = `${String(today.getHours()).padStart(2, '0')}:${String(today.getMinutes()).padStart(2, '0')}`;
+            toggleScheduleOptions();
+        }
+
+        function toggleScheduleOptions() {
+            const frequency = document.getElementById('frequency').value;
+            document.getElementById('weeklyOptions').classList.toggle('hidden', frequency !== 'weekly');
+            document.getElementById('monthlyOptions').classList.toggle('hidden', frequency !== 'monthly');
+        }
+
+        function getSelectedValues(selector) {
+            return Array.from(document.querySelectorAll(selector))
+                .filter(input => input.checked)
+                .map(input => Number(input.value));
+        }
+
+        function getSelectedMonthlyDates() {
+            return Array.from(document.getElementById('monthlyDates').selectedOptions).map(option => Number(option.value));
+        }
+
+        function formatSchedule(task) {
+            const { frequency, weeklyDays = [], monthlyDates = [], monthlyPattern } = task.schedule || {};
+            if (frequency === 'once') return `Once on ${task.schedule.startDate?.slice(0, 10) || 'n/a'} @ ${task.time}`;
+            if (frequency === 'weekly') return `Weekly: ${weeklyDays.map(day => weekdayNames[day]).join(', ')} @ ${task.time}`;
+            if (frequency === 'monthly') {
+                const parts = [];
+                if (monthlyDates.length) parts.push(`Days ${monthlyDates.join(', ')}`);
+                if (monthlyPattern?.ordinal !== undefined && monthlyPattern?.weekday !== undefined) {
+                    parts.push(`${monthlyPattern.ordinal} ${weekdayNames[monthlyPattern.weekday]}`);
+                }
+                return `Monthly: ${parts.join(' + ')} @ ${task.time}`;
+            }
+            return task.time;
         }
 
         async function saveTask() {
+            const frequency = document.getElementById('frequency').value;
+            const monthlyOrdinal = document.getElementById('monthlyOrdinal').value;
+            const monthlyWeekday = document.getElementById('monthlyWeekday').value;
+
             const data = {
+                tenantId: document.getElementById('tenantId').value || 'default-tenant',
+                userId: document.getElementById('userId').value || null,
+                whatsappAccountId: document.getElementById('whatsappAccountId').value || null,
                 taskType: document.getElementById('taskType').value,
                 targetId: document.getElementById('targetId').value,
                 mediaType: document.getElementById('mediaType').value,
                 mediaUrl: document.getElementById('mediaUrl').value,
                 message: document.getElementById('message').value,
-                day: parseInt(document.getElementById('day').value),
-                time: document.getElementById('time').value
+                time: document.getElementById('time').value,
+                delay: Number(document.getElementById('delay').value || 5000),
+                schedule: {
+                    startDate: document.getElementById('startDate').value,
+                    frequency,
+                    weeklyDays: frequency === 'weekly' ? getSelectedValues('.weekly-day') : [],
+                    monthlyDates: frequency === 'monthly' ? getSelectedMonthlyDates() : [],
+                    monthlyPattern: frequency === 'monthly' && monthlyOrdinal && monthlyWeekday !== ''
+                        ? { ordinal: monthlyOrdinal, weekday: Number(monthlyWeekday) }
+                        : null
+                }
             };
-            await fetch('/api/tasks', {
+
+            const res = await fetch('/api/tasks', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(data)
             });
-            alert('Task Scheduled Successfully!');
+
+            const payload = await res.json();
+            if (!res.ok) {
+                alert(payload.error || 'Unable to save task.');
+                return;
+            }
+
+            alert(`Task scheduled! Next run: ${payload.nextRunAt ? new Date(payload.nextRunAt).toLocaleString() : 'No future run'}`);
             showPage('manage');
         }
 
@@ -157,9 +316,12 @@
             const body = document.getElementById('taskBody');
             body.innerHTML = tasks.map(t => `
                 <tr>
-                    <td>${t.targetId || 'All Contacts'}</td>
-                    <td>${t.mediaType}</td>
-                    <td>Day ${t.day} @ ${t.time}</td>
+                    <td>
+                        <strong>${t.targetId || 'All Contacts'}</strong><br>
+                        <small>${t.tenantId || 'default-tenant'}${t.whatsappAccountId ? ` / ${t.whatsappAccountId}` : ''}</small>
+                    </td>
+                    <td>${formatSchedule(t)}</td>
+                    <td>${t.nextRunAt ? new Date(t.nextRunAt).toLocaleString() : 'Completed'}</td>
                     <td><span class="badge ${t.status}">${t.status}</span></td>
                     <td><button class="btn-delete" onclick="deleteTask('${t._id}')"><i class="fas fa-trash"></i></button></td>
                 </tr>
@@ -167,27 +329,27 @@
         }
 
         async function deleteTask(id) {
-            if(confirm('Delete this task?')) {
+            if (confirm('Delete this task?')) {
                 await fetch(`/api/tasks/${id}`, { method: 'DELETE' });
                 fetchTasks();
             }
         }
 
-async function fetchNetwork() {
-    // Fetch Groups
-    const groupRes = await fetch('/api/chats');
-    const groups = await groupRes.json();
-    document.getElementById('groupBody').innerHTML = groups.map(g => `
-        <tr><td>${g.name}</td><td>${g.id}</td><td>${g.members}</td></tr>
-    `).join('');
+        async function fetchNetwork() {
+            const groupRes = await fetch('/api/chats');
+            const groups = await groupRes.json();
+            document.getElementById('groupBody').innerHTML = groups.map(g => `
+                <tr><td>${g.name}</td><td>${g.id}</td><td>${g.members}</td></tr>
+            `).join('');
 
-    // Fetch Contacts
-    const contactRes = await fetch('/api/contacts');
-    const contacts = await contactRes.json();
-    document.getElementById('contactBody').innerHTML = contacts.map(c => `
-        <tr><td>${c.name || 'Unknown'}</td><td>${c._id}</td></tr>
-    `).join('');
-}
+            const contactRes = await fetch('/api/contacts');
+            const contacts = await contactRes.json();
+            document.getElementById('contactBody').innerHTML = contacts.map(c => `
+                <tr><td>${c.name || 'Unknown'}</td><td>${c._id}</td></tr>
+            `).join('');
+        }
+
+        initializeForm();
     </script>
 </body>
 </html>
