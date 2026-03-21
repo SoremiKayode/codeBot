@@ -32,6 +32,7 @@ export const api = {
   providerStatus: (provider) => request(`/api/auth/providers/${provider}`),
   connectWhatsApp: () => request('/api/whatsapp/connect', { method: 'POST' }),
   whatsappStatus: () => request('/api/whatsapp/status'),
+  whatsappAudience: () => request('/api/whatsapp/audience'),
   requiredCredentials: () => request('/api/config/required-credentials'),
   createTask: (payload) => request('/api/tasks', { method: 'POST', body: JSON.stringify(payload) }),
   listTasks: () => request('/api/tasks'),
