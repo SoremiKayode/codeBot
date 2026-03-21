@@ -18,7 +18,7 @@
     <header class="app-header">
       <button class="brand-block brand-button" type="button" data-route="home" aria-label="Go to CodeBot home">
         <div class="brand-logo">
-          <span class="brand-logo__mark">C</span>
+          <img src="/assets/logo.png" alt="CodeBot logo" class="brand-logo__image" />
         </div>
         <div>
           <p class="eyebrow">CodeIgnite Automation Suite</p>
@@ -56,19 +56,9 @@
       <section id="homeView" class="view active">
         <div class="hero-panel home-grid hero-shell">
           <article class="info-card hero-card banner-card">
-            <div class="hero-banner-art" aria-hidden="true">
-              <div class="hero-orb hero-orb--one"></div>
-              <div class="hero-orb hero-orb--two"></div>
-              <div class="hero-mockup hero-mockup--dashboard">
-                <div class="hero-mockup__top"></div>
-                <div class="hero-mockup__rows">
-                  <span></span><span></span><span></span>
-                </div>
-              </div>
-              <div class="hero-mockup hero-mockup--phone">
-                <div class="chat-bubble"></div>
-                <div class="chat-bubble chat-bubble--light"></div>
-                <div class="chat-bubble"></div>
+            <div class="hero-banner-art">
+              <div class="hero-image-frame">
+                <img src="/assets/hero.png" alt="CodeBot dashboard hero" class="hero-image" />
               </div>
             </div>
             <div class="hero-copy stack">
@@ -556,7 +546,7 @@
     <footer class="app-footer footer-grid">
       <section class="footer-section stack">
         <div class="brand-block footer-brand">
-          <div class="brand-logo brand-logo--small"><span class="brand-logo__mark">C</span></div>
+          <div class="brand-logo brand-logo--small"><img src="/assets/logo.png" alt="CodeBot logo" class="brand-logo__image" /></div>
           <div>
             <h3>CodeBot</h3>
             <p class="muted">CodeBot by CodeIgnite is a WhatsApp automation platform for teams that need reliable messaging, task management, and persistent workspace access.</p>
@@ -577,10 +567,18 @@
         <div>
           <h3>Follow pages</h3>
           <div class="social-icon-row">
-            <a href="https://facebook.com/codeignitehandle" target="_blank" rel="noreferrer" aria-label="Facebook">ⓕ</a>
-            <a href="https://instagram.com/codeignitehandle" target="_blank" rel="noreferrer" aria-label="Instagram">◎</a>
-            <a href="https://youtube.com/@codeignitehandle" target="_blank" rel="noreferrer" aria-label="YouTube">▶</a>
-            <a href="https://tiktok.com/@codeignitehandle" target="_blank" rel="noreferrer" aria-label="TikTok">♪</a>
+            <a href="https://facebook.com/codeignitehandle" target="_blank" rel="noreferrer" aria-label="Facebook" class="social-icon social-icon--facebook">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.5 21v-7h2.3l.4-3h-2.7V9.1c0-.9.3-1.6 1.7-1.6H16V4.8c-.3 0-1.1-.1-2.1-.1-2.1 0-3.6 1.3-3.6 3.8V11H8v3h2.2v7h3.3Z"/></svg>
+            </a>
+            <a href="https://instagram.com/codeignitehandle" target="_blank" rel="noreferrer" aria-label="Instagram" class="social-icon social-icon--instagram">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 3h9A4.5 4.5 0 0 1 21 7.5v9a4.5 4.5 0 0 1-4.5 4.5h-9A4.5 4.5 0 0 1 3 16.5v-9A4.5 4.5 0 0 1 7.5 3Zm0 1.8A2.7 2.7 0 0 0 4.8 7.5v9a2.7 2.7 0 0 0 2.7 2.7h9a2.7 2.7 0 0 0 2.7-2.7v-9a2.7 2.7 0 0 0-2.7-2.7h-9Zm9.45 1.35a1.05 1.05 0 1 1 0 2.1 1.05 1.05 0 0 1 0-2.1ZM12 7.8A4.2 4.2 0 1 1 7.8 12 4.2 4.2 0 0 1 12 7.8Zm0 1.8A2.4 2.4 0 1 0 14.4 12 2.4 2.4 0 0 0 12 9.6Z"/></svg>
+            </a>
+            <a href="https://youtube.com/@codeignitehandle" target="_blank" rel="noreferrer" aria-label="YouTube" class="social-icon social-icon--youtube">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.6 8.2a2.9 2.9 0 0 0-2-2C17.8 5.7 12 5.7 12 5.7s-5.8 0-7.6.5a2.9 2.9 0 0 0-2 2A30 30 0 0 0 1.9 12a30 30 0 0 0 .5 3.8 2.9 2.9 0 0 0 2 2c1.8.5 7.6.5 7.6.5s5.8 0 7.6-.5a2.9 2.9 0 0 0 2-2 30 30 0 0 0 .5-3.8 30 30 0 0 0-.5-3.8ZM10 15.5v-7l6 3.5-6 3.5Z"/></svg>
+            </a>
+            <a href="https://tiktok.com/@codeignitehandle" target="_blank" rel="noreferrer" aria-label="TikTok" class="social-icon social-icon--tiktok">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 3c.3 1.8 1.3 3.2 3 4.1.9.5 1.8.8 2.8.8v3a8.2 8.2 0 0 1-3-.6v5.3a6.6 6.6 0 1 1-6.6-6.6c.4 0 .8 0 1.2.1v3.1a3.5 3.5 0 1 0 2.6 3.4V3h3Z"/></svg>
+            </a>
           </div>
           <p class="muted social-handle">@codeignitehandle</p>
         </div>
@@ -599,10 +597,18 @@
         <div class="share-block stack-sm">
           <span class="muted">Share CodeBot</span>
           <div class="social-icon-row social-icon-row--small" id="shareIcons">
-            <a href="#" data-share="whatsapp" aria-label="Share on WhatsApp">◉</a>
-            <a href="#" data-share="tiktok" aria-label="Share on TikTok">♪</a>
-            <a href="#" data-share="twitter" aria-label="Share on Twitter">✕</a>
-            <a href="#" data-share="facebook" aria-label="Share on Facebook">ⓕ</a>
+            <a href="#" data-share="whatsapp" aria-label="Share on WhatsApp" class="social-icon social-icon--whatsapp">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 11.8A8.5 8.5 0 0 1 8.1 19.4L3 21l1.7-5A8.5 8.5 0 1 1 20.5 11.8Zm-8.5-6.7a6.7 6.7 0 0 0-5.8 10l.3.5-1 3 3.1-1 .5.3A6.7 6.7 0 1 0 12 5.1Zm3.7 8.5c-.2-.1-1.2-.6-1.4-.7s-.3-.1-.5.1-.6.7-.7.8-.3.2-.5.1a5.5 5.5 0 0 1-2.8-2.5c-.1-.2 0-.3.1-.5l.4-.4c.1-.1.2-.2.2-.4l-.3-.9c-.1-.2-.4-1-.5-1.3s-.3-.3-.5-.3h-.4a.8.8 0 0 0-.6.3 2.4 2.4 0 0 0-.7 1.8c0 1 .8 2 1 2.2.1.1 1.7 2.7 4.2 3.7 2.5 1 2.5.6 3 .5.4-.1 1.2-.5 1.4-1 .2-.6.2-1 .1-1.1-.1-.1-.2-.1-.4-.2Z"/></svg>
+            </a>
+            <a href="#" data-share="tiktok" aria-label="Share on TikTok" class="social-icon social-icon--tiktok">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 3c.3 1.8 1.3 3.2 3 4.1.9.5 1.8.8 2.8.8v3a8.2 8.2 0 0 1-3-.6v5.3a6.6 6.6 0 1 1-6.6-6.6c.4 0 .8 0 1.2.1v3.1a3.5 3.5 0 1 0 2.6 3.4V3h3Z"/></svg>
+            </a>
+            <a href="#" data-share="twitter" aria-label="Share on Twitter" class="social-icon social-icon--twitter">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13.7 10.7 5.8-6.7H18l-5 5.8L9 4H4.2l6 8.7L4.2 20H5.8l5.2-6 4.1 6h4.8l-6.2-9.3Z"/></svg>
+            </a>
+            <a href="#" data-share="facebook" aria-label="Share on Facebook" class="social-icon social-icon--facebook">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.5 21v-7h2.3l.4-3h-2.7V9.1c0-.9.3-1.6 1.7-1.6H16V4.8c-.3 0-1.1-.1-2.1-.1-2.1 0-3.6 1.3-3.6 3.8V11H8v3h2.2v7h3.3Z"/></svg>
+            </a>
           </div>
         </div>
       </section>
