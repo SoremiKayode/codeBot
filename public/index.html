@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>WhatsApp Automation Platform</title>
+  <title>CodeBot | WhatsApp automation for modern teams</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -14,16 +14,19 @@
 <body>
   <div class="site-shell">
     <header class="app-header">
-      <div class="brand-block">
-        <div class="brand-icon">WA</div>
-        <div>
-          <p class="eyebrow">Enterprise SaaS Messaging</p>
-          <h1>WhatsApp Automation Cloud</h1>
+      <button class="brand-block brand-button" type="button" data-route="home" aria-label="Go to CodeBot home">
+        <div class="brand-logo">
+          <span class="brand-logo__mark">C</span>
         </div>
-      </div>
+        <div>
+          <p class="eyebrow">CodeIgnite Automation Suite</p>
+          <h1>CodeBot</h1>
+        </div>
+      </button>
       <nav class="header-nav">
         <button class="nav-link" data-route="home">Home</button>
-        <button class="nav-link auth-only" data-route="dashboard">Dashboard</button>
+        <button class="nav-link" data-route="dashboard">Dashboard</button>
+        <button class="nav-link auth-only" data-route="tasks">Tasks</button>
         <button class="nav-link guest-only" data-route="login">Login</button>
         <button class="nav-link guest-only" data-route="signup">Sign up</button>
       </nav>
@@ -42,34 +45,92 @@
 
     <main class="main-content">
       <section id="homeView" class="view active">
-        <div class="hero-panel">
-          <div>
-            <p class="eyebrow">Multi-tenant automation architecture</p>
-            <h2>Run WhatsApp automation, AI workflows, wallet billing, and QR-based onboarding from one platform.</h2>
-            <p class="muted">This homepage introduces the platform, explains the value proposition, and routes new users into authentication before they can start configuring automations.</p>
+        <div class="hero-panel home-grid">
+          <article class="hero-copy info-card hero-card">
+            <p class="eyebrow">Persistent WhatsApp productivity for fast-growing teams</p>
+            <h2>Turn conversations into automated workflows, scheduled campaigns, and reliable follow-up from one polished workspace.</h2>
+            <p class="muted">CodeBot helps businesses connect WhatsApp, create reusable tasks, manage credits, and keep their workspace ready whenever they return. New users receive <strong>150 starter credits</strong>—enough for many teams to test and stretch usage for months, and for lighter use cases it can last up to a year.</p>
             <div class="hero-actions">
-              <button id="startButton" class="primary-button" type="button">Start automating</button>
-              <button class="secondary-button" type="button" data-route="signup">Create account</button>
+              <button id="startButton" class="primary-button" type="button">Go to dashboard</button>
+              <button class="secondary-button" type="button" data-route="signup">Claim 150 credits</button>
             </div>
-          </div>
-          <div class="info-card stack">
-            <h3>Company overview</h3>
+            <div class="hero-metrics">
+              <div class="metric-card"><strong>150</strong><span>free starter credits</span></div>
+              <div class="metric-card"><strong>24/7</strong><span>persistent browser sessions</span></div>
+              <div class="metric-card"><strong>1</strong><span>workspace for tasks and WhatsApp</span></div>
+            </div>
+          </article>
+
+          <aside class="info-card stack">
+            <h3>Why teams choose CodeBot</h3>
             <ul class="feature-list">
-              <li>WhatsApp QR authentication powered by Baileys.</li>
-              <li>Wallet and credit-aware messaging workflows.</li>
-              <li>Reusable UI architecture with shared header, footer, and theme controls.</li>
-              <li>Prepared foundation for Google, GitHub, and Microsoft social login.</li>
+              <li>Create task plans for campaigns, reminders, and customer follow-ups.</li>
+              <li>Connect WhatsApp with QR onboarding and persistent saved connection state.</li>
+              <li>Keep users signed in with secure browser session storage so they do not log in every visit.</li>
+              <li>Use a clean dashboard to monitor credits, theme, connection health, and tasks.</li>
             </ul>
-          </div>
+          </aside>
         </div>
+
+        <section class="content-grid three-column-grid">
+          <article class="info-card stack">
+            <p class="eyebrow">What you can do</p>
+            <h3>About the product</h3>
+            <p class="muted">CodeBot is built for founders, growth teams, agencies, and operations teams who want dependable WhatsApp automation without managing a complicated tool chain.</p>
+            <ul class="feature-list">
+              <li>Plan outreach and recurring operational tasks.</li>
+              <li>Track whether your WhatsApp connection is available.</li>
+              <li>Manage credits and usage from a single account.</li>
+              <li>Scale from testing to production-ready messaging workflows.</li>
+            </ul>
+          </article>
+          <article class="info-card stack">
+            <p class="eyebrow">How it works</p>
+            <h3>Three simple steps</h3>
+            <ol class="number-list">
+              <li>Create your account and receive your free 150 credits.</li>
+              <li>Open the dashboard, connect WhatsApp, and confirm the saved connection state.</li>
+              <li>Go to the task page to create automation tasks, campaigns, reminders, or team workflows.</li>
+            </ol>
+          </article>
+          <article class="info-card stack">
+            <p class="eyebrow">About the company</p>
+            <h3>CodeIgnite services</h3>
+            <p class="muted">CodeIgnite builds practical automation software focused on reliable messaging, workflow orchestration, onboarding experience, and customer engagement.</p>
+            <ul class="feature-list">
+              <li>WhatsApp automation services.</li>
+              <li>Workflow consulting and setup support.</li>
+              <li>Credit-based SaaS products for growing businesses.</li>
+              <li>Product and integration delivery for digital teams.</li>
+            </ul>
+          </article>
+        </section>
+
+        <section class="content-grid two-column-grid">
+          <article class="info-card stack">
+            <p class="eyebrow">Why sign up now</p>
+            <h3>Convincing value for new users</h3>
+            <p class="muted">If you are exploring automation for the first time, CodeBot gives you enough room to learn, test, and launch. The 150-credit welcome package is designed to help you validate your workflow before you scale.</p>
+            <p class="muted">For low-volume reminders, personal business follow-up, and pilot campaigns, those starter credits can last a very long time—often months, and in light-use scenarios potentially up to a year.</p>
+          </article>
+          <article class="info-card cta-card stack">
+            <p class="eyebrow">Ready to build?</p>
+            <h3>Create your first automation task in minutes.</h3>
+            <p class="muted">Sign up, connect WhatsApp, and move directly into a task workspace built for action.</p>
+            <div class="hero-actions">
+              <button class="primary-button" type="button" data-route="signup">Create free account</button>
+              <button class="secondary-button" type="button" data-route="login">I already have an account</button>
+            </div>
+          </article>
+        </section>
       </section>
 
       <section id="loginView" class="view auth-view">
-        <div class="auth-card">
+        <div class="auth-card auth-card--wide">
           <div>
             <p class="eyebrow">Welcome back</p>
-            <h2>Login to your workspace</h2>
-            <p class="muted">Use your email and password or start a social login flow once credentials are configured.</p>
+            <h2>Login to your CodeBot workspace</h2>
+            <p class="muted">Stay signed in on this browser, connect WhatsApp faster, and continue your existing automation tasks.</p>
           </div>
           <form id="loginForm" class="stack">
             <label>
@@ -78,24 +139,28 @@
             </label>
             <label>
               <span>Password</span>
-              <input name="password" type="password" placeholder="••••••••" required />
+              <div class="password-field">
+                <input id="loginPassword" name="password" type="password" placeholder="••••••••" required />
+                <button class="password-toggle" type="button" data-password-toggle="loginPassword">Show</button>
+              </div>
+              <small id="loginPasswordStrength" class="password-strength muted">Enter your password to see strength feedback.</small>
             </label>
             <button class="primary-button" type="submit">Login</button>
           </form>
-          <div class="social-buttons">
-            <button class="social-button" type="button" data-provider="google">Continue with Google</button>
-            <button class="social-button" type="button" data-provider="github">Continue with GitHub</button>
-            <button class="social-button" type="button" data-provider="microsoft">Continue with Microsoft</button>
+          <div class="social-buttons social-buttons--grid">
+            <button class="social-button social-login" type="button" data-provider="google"><span>🔵</span><span>Continue with Google</span></button>
+            <button class="social-button social-login" type="button" data-provider="github"><span>⚫</span><span>Continue with GitHub</span></button>
+            <button class="social-button social-login" type="button" data-provider="microsoft"><span>🟦</span><span>Continue with Microsoft</span></button>
           </div>
         </div>
       </section>
 
       <section id="signupView" class="view auth-view">
-        <div class="auth-card">
+        <div class="auth-card auth-card--wide">
           <div>
             <p class="eyebrow">Get started</p>
-            <h2>Create your account</h2>
-            <p class="muted">New accounts receive starter credits so you can test the automation flow quickly.</p>
+            <h2>Create your CodeBot account</h2>
+            <p class="muted">New accounts get 150 free credits and a clean path into your dashboard, task page, and persistent WhatsApp connection setup.</p>
           </div>
           <form id="signupForm" class="stack">
             <label>
@@ -108,26 +173,31 @@
             </label>
             <label>
               <span>Password</span>
-              <input name="password" type="password" placeholder="Minimum 6 characters" required />
+              <div class="password-field">
+                <input id="signupPassword" name="password" type="password" placeholder="Minimum 6 characters" required />
+                <button class="password-toggle" type="button" data-password-toggle="signupPassword">Show</button>
+              </div>
+              <small id="signupPasswordStrength" class="password-strength muted">Use at least 8 characters with upper, lower, number, and symbol for a strong password.</small>
             </label>
             <button class="primary-button" type="submit">Create account</button>
           </form>
-          <div class="social-buttons">
-            <button class="social-button" type="button" data-provider="google">Sign up with Google</button>
-            <button class="social-button" type="button" data-provider="github">Sign up with GitHub</button>
-            <button class="social-button" type="button" data-provider="microsoft">Sign up with Microsoft</button>
+          <div class="social-buttons social-buttons--grid">
+            <button class="social-button social-login" type="button" data-provider="google"><span>🔵</span><span>Sign up with Google</span></button>
+            <button class="social-button social-login" type="button" data-provider="github"><span>⚫</span><span>Sign up with GitHub</span></button>
+            <button class="social-button social-login" type="button" data-provider="microsoft"><span>🟦</span><span>Sign up with Microsoft</span></button>
           </div>
         </div>
       </section>
 
       <section id="dashboardView" class="view">
-        <div class="dashboard-grid">
+        <div class="dashboard-grid dashboard-grid--full">
           <article class="info-card stack">
             <div class="section-heading">
               <div>
                 <p class="eyebrow">Account summary</p>
                 <h2>Workspace overview</h2>
               </div>
+              <button id="goToTasksButton" class="primary-button compact-button" type="button">Go to task page</button>
             </div>
             <div class="summary-grid">
               <div class="summary-item">
@@ -153,7 +223,7 @@
             <div class="section-heading">
               <div>
                 <p class="eyebrow">WhatsApp auth</p>
-                <h2>Scan QR in the browser</h2>
+                <h2>Persistent connection status</h2>
               </div>
               <button id="connectWhatsappButton" class="primary-button compact-button" type="button">Generate QR code</button>
             </div>
@@ -162,18 +232,110 @@
               <div id="qrCode"></div>
               <p id="qrHint">Start a connection to display the QR image here.</p>
             </div>
-            <div class="status-banner">
-              <span>Status</span>
-              <strong id="whatsappStatusBadge">idle</strong>
+            <div class="summary-grid summary-grid--status">
+              <div class="status-banner">
+                <span>Status</span>
+                <strong id="whatsappStatusBadge">idle</strong>
+              </div>
+              <div class="status-banner">
+                <span>Connected phone</span>
+                <strong id="whatsappPhone">Not available</strong>
+              </div>
             </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="tasksView" class="view">
+        <div class="content-grid two-column-grid">
+          <article class="info-card stack">
+            <div>
+              <p class="eyebrow">Task builder</p>
+              <h2>Create a task</h2>
+              <p class="muted">Use this page to create reminders, campaigns, onboarding flows, or any manual workflow you want your team to track in CodeBot.</p>
+            </div>
+            <form id="taskForm" class="stack">
+              <label>
+                <span>Task title</span>
+                <input name="title" type="text" placeholder="Customer onboarding follow-up" required />
+              </label>
+              <label>
+                <span>Task type</span>
+                <input name="type" type="text" placeholder="Reminder, Campaign, Support, Sales" required />
+              </label>
+              <label>
+                <span>Description</span>
+                <textarea name="description" rows="5" placeholder="Describe what this task should accomplish." required></textarea>
+              </label>
+              <button class="primary-button" type="submit">Create task</button>
+            </form>
+          </article>
+          <article class="info-card stack">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Saved tasks</p>
+                <h2>Your task list</h2>
+              </div>
+            </div>
+            <div id="taskList" class="task-list"></div>
           </article>
         </div>
       </section>
     </main>
 
-    <footer class="app-footer">
-      <p>© 2026 WhatsApp Automation Cloud. Shared footer applied across every page state.</p>
-      <p>Built for reusable components, credit-aware SaaS workflows, and secure QR onboarding.</p>
+    <footer class="app-footer footer-grid">
+      <section class="footer-section stack">
+        <div class="brand-block footer-brand">
+          <div class="brand-logo brand-logo--small"><span class="brand-logo__mark">C</span></div>
+          <div>
+            <h3>CodeBot</h3>
+            <p class="muted">CodeBot by CodeIgnite is a WhatsApp automation platform for teams that need reliable messaging, task management, and persistent workspace access.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="footer-section stack">
+        <div>
+          <h3>Popular pages</h3>
+          <div class="footer-links">
+            <button class="footer-link" type="button" data-route="home">Home</button>
+            <button class="footer-link" type="button" data-route="dashboard">Dashboard</button>
+            <button class="footer-link" type="button" data-route="tasks">Tasks</button>
+            <button class="footer-link" type="button" data-route="signup">Sign up</button>
+          </div>
+        </div>
+        <div>
+          <h3>Follow pages</h3>
+          <div class="social-icon-row">
+            <a href="https://facebook.com/codeignitehandle" target="_blank" rel="noreferrer" aria-label="Facebook">ⓕ</a>
+            <a href="https://instagram.com/codeignitehandle" target="_blank" rel="noreferrer" aria-label="Instagram">◎</a>
+            <a href="https://youtube.com/@codeignitehandle" target="_blank" rel="noreferrer" aria-label="YouTube">▶</a>
+            <a href="https://tiktok.com/@codeignitehandle" target="_blank" rel="noreferrer" aria-label="TikTok">♪</a>
+          </div>
+          <p class="muted social-handle">@codeignitehandle</p>
+        </div>
+      </section>
+
+      <section class="footer-section stack">
+        <div>
+          <h3>Enquiry form</h3>
+          <form id="enquiryForm" class="stack compact-form">
+            <input name="name" type="text" placeholder="Your name" required />
+            <input name="email" type="email" placeholder="Your email" required />
+            <textarea name="message" rows="4" placeholder="Tell us what you need" required></textarea>
+            <button class="primary-button" type="submit">Send enquiry</button>
+          </form>
+        </div>
+        <div class="share-block stack-sm">
+          <span class="muted">Share CodeBot</span>
+          <div class="social-icon-row social-icon-row--small" id="shareIcons">
+            <a href="#" data-share="whatsapp" aria-label="Share on WhatsApp">◉</a>
+            <a href="#" data-share="tiktok" aria-label="Share on TikTok">♪</a>
+            <a href="#" data-share="twitter" aria-label="Share on Twitter">✕</a>
+            <a href="#" data-share="facebook" aria-label="Share on Facebook">ⓕ</a>
+          </div>
+        </div>
+      </section>
     </footer>
   </div>
 
