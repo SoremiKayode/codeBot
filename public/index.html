@@ -7,8 +7,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.snow.css" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css" />
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.min.js"></script>
   <script type="module" defer src="/app.js"></script>
 </head>
 <body>
@@ -222,15 +224,10 @@
           <article class="info-card stack">
             <div class="section-heading">
               <div>
-                <p class="eyebrow">WhatsApp auth</p>
-                <h2>Persistent connection status</h2>
+                <p class="eyebrow">WhatsApp connection</p>
+                <h2>Persistent session setup</h2>
               </div>
-              <button id="connectWhatsappButton" class="primary-button compact-button" type="button">Generate QR code</button>
-            </div>
-            <p class="muted" id="whatsappStatusText">Not connected.</p>
-            <div id="qrWrapper" class="qr-wrapper empty">
-              <div id="qrCode"></div>
-              <p id="qrHint">Start a connection to display the QR image here.</p>
+              <button id="connectWhatsappButton" class="primary-button compact-button" type="button">Connect WhatsApp</button>
             </div>
             <div class="summary-grid summary-grid--status">
               <div class="status-banner">
@@ -242,34 +239,239 @@
                 <strong id="whatsappPhone">Not available</strong>
               </div>
             </div>
+            <p id="whatsappStatusText" class="muted">Connect your WhatsApp account to generate a QR code and save the session state.</p>
+            <div id="qrWrapper" class="qr-wrapper empty">
+              <div id="qrCode"></div>
+              <p id="qrHint" class="muted">QR code will appear here after you start the connection.</p>
+            </div>
           </article>
         </div>
       </section>
 
       <section id="tasksView" class="view">
-        <div class="content-grid two-column-grid">
+        <div class="task-workspace stack">
           <article class="info-card stack">
-            <div>
-              <p class="eyebrow">Task builder</p>
-              <h2>Create a task</h2>
-              <p class="muted">Use this page to create reminders, campaigns, onboarding flows, or any manual workflow you want your team to track in CodeBot.</p>
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Task builder</p>
+                <h2>Create a WhatsApp task with AI-assisted content</h2>
+              </div>
+              <div class="pill-row">
+                <span class="pill">Responsive</span>
+                <span class="pill">AI-assisted</span>
+                <span class="pill">Schedule-aware</span>
+              </div>
             </div>
-            <form id="taskForm" class="stack">
-              <label>
-                <span>Task title</span>
-                <input name="title" type="text" placeholder="Customer onboarding follow-up" required />
-              </label>
-              <label>
-                <span>Task type</span>
-                <input name="type" type="text" placeholder="Reminder, Campaign, Support, Sales" required />
-              </label>
-              <label>
-                <span>Description</span>
-                <textarea name="description" rows="5" placeholder="Describe what this task should accomplish." required></textarea>
-              </label>
-              <button class="primary-button" type="submit">Create task</button>
-            </form>
+            <div class="task-tab-bar" id="taskTabBar">
+              <button class="task-tab active" type="button" data-task-tab="message">1. Message</button>
+              <button class="task-tab" type="button" data-task-tab="audience">2. Audience</button>
+              <button class="task-tab" type="button" data-task-tab="schedule">3. Schedule</button>
+              <button class="task-tab" type="button" data-task-tab="ai-text">AI text</button>
+              <button class="task-tab" type="button" data-task-tab="ai-media">AI image</button>
+            </div>
+
+            <div class="task-panel active" data-task-panel="message">
+              <div class="task-panel-grid">
+                <div class="stack">
+                  <div class="tip-card">
+                    <strong>Supported tags</strong>
+                    <p class="muted">Insert tags like <code>{current_date}</code>, <code>{current_time}</code>, <code>{first_monday}</code>, <code>{last_friday}</code> inside the message. They are translated into exact dates before preview and when the task runs.</p>
+                  </div>
+                  <label>
+                    <span>Task title</span>
+                    <input id="taskTitle" type="text" placeholder="Friday customer update" />
+                  </label>
+                  <div>
+                    <div class="section-heading">
+                      <div>
+                        <span>Message editor</span>
+                      </div>
+                      <button id="openAiTextTabButton" class="secondary-button" type="button">Generate with AI</button>
+                    </div>
+                    <div id="messageEditor" class="quill-host"></div>
+                  </div>
+                  <div class="stack-sm">
+                    <label>
+                      <span>Upload media (image, video, or text file, max 20MB)</span>
+                      <input id="mediaFileInput" type="file" accept="image/*,video/*,.txt,text/plain" />
+                    </label>
+                    <small class="muted">Uploaded files are added to the queue after validation. AI generation currently supports image creation only.</small>
+                    <button id="openAiMediaTabButton" class="secondary-button" type="button">Generate media with AI</button>
+                  </div>
+                  <div class="stack-sm">
+                    <div class="section-heading">
+                      <div>
+                        <strong>Media queue</strong>
+                        <p class="muted">Approved AI images and uploaded files appear here.</p>
+                      </div>
+                      <button id="generateMoreMediaButton" class="ghost-button hidden" type="button">Generate more images</button>
+                    </div>
+                    <div id="mediaQueue" class="media-queue empty-state">No media selected yet.</div>
+                  </div>
+                  <div class="wizard-actions">
+                    <button id="messageNextButton" class="primary-button" type="button">Next: audience</button>
+                  </div>
+                </div>
+                <aside class="preview-shell">
+                  <div class="whatsapp-preview">
+                    <div class="whatsapp-preview__header">
+                      <strong>WhatsApp preview</strong>
+                      <span id="previewFrequencyPill" class="pill">Not scheduled</span>
+                    </div>
+                    <div id="previewMediaStrip" class="preview-media-strip"></div>
+                    <div id="messagePreview" class="whatsapp-bubble">Your message preview appears here.</div>
+                    <div id="selectedAudienceSummary" class="audience-summary"></div>
+                  </div>
+                </aside>
+              </div>
+            </div>
+
+            <div class="task-panel" data-task-panel="ai-text">
+              <div class="task-panel-grid">
+                <div class="stack">
+                  <label>
+                    <span>Prompt for AI text generation</span>
+                    <textarea id="aiTextPrompt" rows="6" placeholder="Write a friendly WhatsApp message for our VIP customers about this week's promo. Mention it expires on {last_friday} at {current_time}."></textarea>
+                  </label>
+                  <div class="hero-actions">
+                    <button id="generateTextButton" class="primary-button" type="button">Generate message</button>
+                    <button class="secondary-button" type="button" data-task-back="message">Back to message</button>
+                  </div>
+                  <div id="aiTextStatus" class="empty-state">AI generated text will appear here before it is inserted into the editor.</div>
+                </div>
+                <aside class="tip-card stack-sm">
+                  <strong>Model notes</strong>
+                  <p class="muted">Text generation uses a SiliconFlow chat-completions model on the server. Keep prompts concise and include tone, audience, and CTA requirements.</p>
+                </aside>
+              </div>
+            </div>
+
+            <div class="task-panel" data-task-panel="ai-media">
+              <div class="task-panel-grid">
+                <div class="stack">
+                  <label>
+                    <span>Prompt for AI image generation</span>
+                    <textarea id="aiImagePrompt" rows="6" placeholder="Create a premium product promo banner with a modern WhatsApp-friendly square layout and bold green accents."></textarea>
+                  </label>
+                  <div class="hero-actions">
+                    <button id="generateImageButton" class="primary-button" type="button">Generate image</button>
+                    <button id="regenerateImageButton" class="secondary-button hidden" type="button">Regenerate</button>
+                    <button id="approveImageButton" class="secondary-button hidden" type="button">Approve image</button>
+                    <button class="secondary-button" type="button" data-task-back="message">Back to message</button>
+                  </div>
+                  <div id="aiImageStatus" class="empty-state">Generated image will appear here for review.</div>
+                </div>
+                <aside class="tip-card stack-sm">
+                  <strong>Media workflow</strong>
+                  <p class="muted">Generate, review, regenerate if needed, then approve to push the image back to the message tab queue.</p>
+                </aside>
+              </div>
+            </div>
+
+            <div class="task-panel" data-task-panel="audience">
+              <div class="stack">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Audience selection</p>
+                    <h3>Select WhatsApp groups and contacts</h3>
+                  </div>
+                  <div class="hero-actions">
+                    <button id="audienceBackButton" class="secondary-button" type="button">Back</button>
+                    <button id="audienceNextButton" class="primary-button" type="button">Next: schedule</button>
+                  </div>
+                </div>
+                <div class="audience-grid">
+                  <section class="table-card">
+                    <div class="table-toolbar">
+                      <strong>Groups</strong>
+                      <label class="search-field"><span>Search</span><input id="groupSearch" type="search" placeholder="Search groups" /></label>
+                    </div>
+                    <div class="table-actions">
+                      <button id="groupSortButton" class="secondary-button" type="button">Sort: A–Z</button>
+                      <label class="checkbox-inline"><input id="selectAllGroups" type="checkbox" /> Select all</label>
+                    </div>
+                    <div id="groupsTable" class="advanced-table"></div>
+                    <div class="pagination-row">
+                      <button id="groupPrevButton" class="secondary-button" type="button">Previous</button>
+                      <span id="groupPageInfo" class="muted"></span>
+                      <button id="groupNextButton" class="secondary-button" type="button">Next</button>
+                    </div>
+                  </section>
+                  <section class="table-card">
+                    <div class="table-toolbar">
+                      <strong>Contacts</strong>
+                      <label class="search-field"><span>Search</span><input id="contactSearch" type="search" placeholder="Search contacts" /></label>
+                    </div>
+                    <div class="table-actions">
+                      <button id="contactSortButton" class="secondary-button" type="button">Sort: A–Z</button>
+                      <label class="checkbox-inline"><input id="selectAllContacts" type="checkbox" /> Select all</label>
+                    </div>
+                    <div id="contactsTable" class="advanced-table"></div>
+                    <div class="pagination-row">
+                      <button id="contactPrevButton" class="secondary-button" type="button">Previous</button>
+                      <span id="contactPageInfo" class="muted"></span>
+                      <button id="contactNextButton" class="secondary-button" type="button">Next</button>
+                    </div>
+                  </section>
+                </div>
+              </div>
+            </div>
+
+            <div class="task-panel" data-task-panel="schedule">
+              <div class="stack">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Schedule task</p>
+                    <h3>Configure timing and final WhatsApp output</h3>
+                  </div>
+                  <button id="scheduleBackButton" class="secondary-button" type="button">Back</button>
+                </div>
+                <div class="schedule-grid">
+                  <section class="stack">
+                    <label>
+                      <span>Selected groups and contacts</span>
+                      <textarea id="recipientSummaryInput" rows="4" placeholder="Selected recipients will appear here."></textarea>
+                    </label>
+                    <div class="stack-sm">
+                      <label>
+                        <span>Start date</span>
+                        <input id="startDateInput" type="date" />
+                      </label>
+                      <label>
+                        <span>Start time</span>
+                        <input id="startTimeInput" type="time" />
+                      </label>
+                      <label>
+                        <span>Frequency</span>
+                        <select id="frequencySelect">
+                          <option value="">Choose frequency</option>
+                          <option value="once">Once</option>
+                          <option value="daily">Daily</option>
+                          <option value="weekly">Weekly</option>
+                          <option value="monthly">Monthly</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div id="frequencyOptions" class="frequency-options"></div>
+                    <div class="wizard-actions">
+                      <button id="scheduleTaskButton" class="primary-button" type="button">Schedule task</button>
+                    </div>
+                  </section>
+                  <aside class="stack">
+                    <div id="scheduleSummary" class="tip-card">Choose a frequency to see the exact rule summary.</div>
+                    <div class="whatsapp-preview">
+                      <div class="whatsapp-preview__header">
+                        <strong>Execution preview</strong>
+                        <span id="nextRunBadge" class="pill">Pending setup</span>
+                      </div>
+                      <div id="finalPreview" class="whatsapp-bubble">Your translated message will appear here.</div>
+                    </div>
+                  </aside>
+                </div>
+              </div>
+            </div>
           </article>
+
           <article class="info-card stack">
             <div class="section-heading">
               <div>
