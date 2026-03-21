@@ -27,10 +27,17 @@ const SILICONFLOW_API_KEY = process.env.SILICONFLOW_API_KEY || '';
 const SILICONFLOW_BASE_URL = process.env.SILICONFLOW_BASE_URL || 'https://api.siliconflow.cn/v1';
 const SILICONFLOW_TEXT_MODEL = process.env.SILICONFLOW_TEXT_MODEL || 'Qwen/Qwen2.5-7B-Instruct';
 const SILICONFLOW_IMAGE_MODEL = process.env.SILICONFLOW_IMAGE_MODEL || 'Qwen/Qwen-Image';
+const CREDIT_COSTS = {
+  whatsappConnect: Number(process.env.CREDIT_COST_WHATSAPP_CONNECT || 5),
+  createTask: Number(process.env.CREDIT_COST_CREATE_TASK || 10),
+  generateText: Number(process.env.CREDIT_COST_GENERATE_TEXT || 2),
+  generateImage: Number(process.env.CREDIT_COST_GENERATE_IMAGE || 6),
+};
 
 const connectionStateStore = new Map();
 const socketStore = new Map();
 const audienceStore = new Map();
+const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 
 function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -38,6 +45,25 @@ function sha256(value) {
 
 function createToken() {
   return crypto.randomBytes(24).toString('hex');
+}
+
+async function applyCreditActivity(user, amount, reason) {
+  const normalizedAmount = Number(amount || 0);
+  if (!normalizedAmount) return user;
+
+  const nextCredits = Math.max(0, Number(user.credits || 0) - normalizedAmount);
+  if (nextCredits === Number(user.credits || 0)) return user;
+
+  user.credits = nextCredits;
+  await user.save();
+  logger.info({ userId: String(user._id), reason, amount: normalizedAmount, credits: nextCredits }, 'Credits updated');
+  return user;
+}
+
+function ensureCredits(user, amount, label) {
+  if (Number(user.credits || 0) < Number(amount || 0)) {
+    throw new Error(`Not enough credits to ${label}.`);
+  }
 }
 
 function sanitizeUser(user) {
@@ -548,8 +574,10 @@ app.get('/api/auth/providers/:provider', (req, res) => {
 
 app.post('/api/whatsapp/connect', authenticateRequest, async (req, res) => {
   try {
+    ensureCredits(req.user, CREDIT_COSTS.whatsappConnect, 'connect WhatsApp');
     const state = await startWhatsAppSession(req.user);
-    res.json(state);
+    await applyCreditActivity(req.user, CREDIT_COSTS.whatsappConnect, 'whatsapp_connect');
+    res.json({ ...state, user: sanitizeUser(req.user) });
   } catch (error) {
     await persistConnectionState(String(req.user._id), {
       status: 'error',
@@ -593,6 +621,8 @@ app.post('/api/tasks', authenticateRequest, async (req, res) => {
     return res.status(400).json({ error: 'Title, type, and description are required.' });
   }
 
+  ensureCredits(req.user, CREDIT_COSTS.createTask, 'create a task');
+
   const task = await Task.create({
     userId: String(req.user._id),
     title,
@@ -607,13 +637,16 @@ app.post('/api/tasks', authenticateRequest, async (req, res) => {
     status: 'active',
   });
 
-  res.status(201).json({ task });
+  await applyCreditActivity(req.user, CREDIT_COSTS.createTask, 'task_create');
+  res.status(201).json({ task, user: sanitizeUser(req.user) });
 });
 
 app.post('/api/ai/text', authenticateRequest, async (req, res) => {
   try {
     const prompt = String(req.body.prompt || '').trim();
     if (!prompt) return res.status(400).json({ error: 'Prompt is required.' });
+
+    ensureCredits(req.user, CREDIT_COSTS.generateText, 'generate AI text');
 
     const data = await callSiliconFlow('/chat/completions', {
       model: SILICONFLOW_TEXT_MODEL,
@@ -626,7 +659,8 @@ app.post('/api/ai/text', authenticateRequest, async (req, res) => {
 
     const text = data.choices?.[0]?.message?.content?.trim();
     if (!text) throw new Error('No text was returned by the AI provider.');
-    res.json({ text });
+    await applyCreditActivity(req.user, CREDIT_COSTS.generateText, 'ai_text');
+    res.json({ text, user: sanitizeUser(req.user) });
   } catch (error) {
     res.status(500).json({ error: error.message || 'Unable to generate AI text.' });
   }
@@ -637,8 +671,11 @@ app.post('/api/ai/image', authenticateRequest, async (req, res) => {
     const prompt = String(req.body.prompt || '').trim();
     if (!prompt) return res.status(400).json({ error: 'Prompt is required.' });
 
+    ensureCredits(req.user, CREDIT_COSTS.generateImage, 'generate AI image');
+
     if (!SILICONFLOW_API_KEY) {
-      return res.json({ imageUrl: fallbackImage(prompt), model: 'fallback-placeholder' });
+      await applyCreditActivity(req.user, CREDIT_COSTS.generateImage, 'ai_image_fallback');
+      return res.json({ imageUrl: fallbackImage(prompt), model: 'fallback-placeholder', user: sanitizeUser(req.user) });
     }
 
     const data = await callSiliconFlow('/images/generations', {
@@ -649,7 +686,8 @@ app.post('/api/ai/image', authenticateRequest, async (req, res) => {
 
     const imageUrl = data.images?.[0]?.url || data.data?.[0]?.url || data.data?.[0]?.b64_json && `data:image/png;base64,${data.data[0].b64_json}`;
     if (!imageUrl) throw new Error('No image was returned by the AI provider.');
-    res.json({ imageUrl });
+    await applyCreditActivity(req.user, CREDIT_COSTS.generateImage, 'ai_image');
+    res.json({ imageUrl, user: sanitizeUser(req.user) });
   } catch (error) {
     res.status(500).json({ error: error.message || 'Unable to generate AI image.' });
   }
