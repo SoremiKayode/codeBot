@@ -1,521 +1,427 @@
+import crypto from 'crypto';
 import express from 'express';
 import mongoose from 'mongoose';
-import qrcode from 'qrcode-terminal';
-import cron from 'node-cron';
 import dotenv from 'dotenv';
 import pino from 'pino';
 
 const {
-    default: makeWASocket,
-    DisconnectReason,
-    BufferJSON,
-    proto,
-    fetchLatestBaileysVersion,
+  default: makeWASocket,
+  DisconnectReason,
+  BufferJSON,
+  proto,
+  fetchLatestBaileysVersion,
 } = await import('@whiskeysockets/baileys');
-
 const { initAuthCreds } = await import('@whiskeysockets/baileys/lib/Utils/auth-utils.js');
 
 dotenv.config();
+
 const app = express();
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '20mb' }));
 app.use(express.static('public'));
 
 const IS_LOCAL = process.env.USE_LOCAL === 'true';
 const MONGO_URI = IS_LOCAL ? 'mongodb://localhost:27017/whatsapp_bot' : process.env.CLOUD_MONGO_URI;
+const PORT = Number(process.env.PORT || 3000);
+const CREDIT_SIGNUP_BONUS = Number(process.env.DEFAULT_SIGNUP_CREDITS || 150);
 
-mongoose.connect(MONGO_URI)
-    .then(() => console.log(`✅ MongoDB Connected: ${IS_LOCAL ? 'Local' : 'Cloud'}`))
-    .catch(err => console.error('❌ MongoDB Connection Error:', err));
+const connectionStateStore = new Map();
+const socketStore = new Map();
 
-const AuthSchema = new mongoose.Schema({ _id: String, data: String }, { collection: 'kayode_session' });
-const AuthModel = mongoose.model('Auth', AuthSchema);
+function sha256(value) {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
 
-const ScheduleSchema = new mongoose.Schema({
-    startDate: { type: Date, required: true },
-    frequency: { type: String, enum: ['once', 'weekly', 'monthly'], required: true },
-    weeklyDays: [{ type: Number, min: 0, max: 6 }],
-    monthlyDates: [{ type: Number, min: 1, max: 31 }],
-    monthlyPattern: {
-        ordinal: { type: String, enum: ['first', 'second', 'third', 'fourth', 'last'] },
-        weekday: { type: Number, min: 0, max: 6 }
-    }
-}, { _id: false });
+function createToken() {
+  return crypto.randomBytes(24).toString('hex');
+}
 
-const MediaItemSchema = new mongoose.Schema({
-    name: String,
-    mediaType: { type: String, enum: ['image', 'video', 'audio'], required: true },
-    mimeType: String,
-    dataUrl: String,
-    url: String
-}, { _id: false });
+function sanitizeUser(user) {
+  return {
+    id: String(user._id),
+    username: user.username,
+    email: user.email,
+    credits: user.credits,
+    theme: user.theme,
+    whatsappStatus: user.whatsappStatus,
+    walletBalance: user.walletBalance,
+  };
+}
 
-const TaskSchema = new mongoose.Schema({
-    taskType: { type: String, enum: ['single', 'all_contacts', 'group_members'], required: true },
-    targetId: String,
-    message: String,
-    mediaUrl: String,
-    mediaType: { type: String, enum: ['text', 'image', 'video', 'audio'], default: 'text' },
-    mediaItems: { type: [MediaItemSchema], default: [] },
-    time: { type: String, required: true },
-    delay: { type: Number, default: 5000 },
-    schedule: { type: ScheduleSchema, required: true },
-    status: { type: String, enum: ['pending', 'active', 'processing', 'completed', 'failed'], default: 'active' },
-    nextRunAt: { type: Date, index: true },
-    lastRunAt: Date,
-    lastError: String
+function buildDefaultConnectionState(userId) {
+  return {
+    userId,
+    status: 'idle',
+    qr: '',
+    lastUpdatedAt: new Date(),
+    phoneNumber: '',
+    message: 'Connect your WhatsApp account to start automation.',
+  };
+}
+
+function setConnectionState(userId, updates) {
+  const current = connectionStateStore.get(userId) || buildDefaultConnectionState(userId);
+  const next = {
+    ...current,
+    ...updates,
+    lastUpdatedAt: new Date(),
+  };
+  connectionStateStore.set(userId, next);
+  return next;
+}
+
+const userSchema = new mongoose.Schema({
+  username: { type: String, required: true, trim: true },
+  email: { type: String, required: true, unique: true, trim: true, lowercase: true },
+  passwordHash: { type: String, required: true },
+  credits: { type: Number, default: CREDIT_SIGNUP_BONUS },
+  walletBalance: { type: Number, default: 0 },
+  theme: { type: String, enum: ['light', 'dark'], default: 'light' },
+  whatsappStatus: { type: String, enum: ['not_connected', 'connecting', 'connected'], default: 'not_connected' },
+  whatsappPhone: { type: String, default: '' },
+  socialProviders: {
+    google: { type: Boolean, default: false },
+    github: { type: Boolean, default: false },
+    microsoft: { type: Boolean, default: false },
+  },
 }, { timestamps: true });
 
-const Task = mongoose.model('Task', TaskSchema);
-
-const ContactSchema = new mongoose.Schema({
-    _id: String,
-    name: String,
-    notify: String,
-    updatedAt: { type: Date, default: Date.now }
+const appSessionSchema = new mongoose.Schema({
+  tokenHash: { type: String, required: true, unique: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  createdAt: { type: Date, default: Date.now, expires: '14d' },
 });
-const Contact = mongoose.model('Contact', ContactSchema);
 
-function parseTimeToParts(time) {
-    const [hours, minutes] = String(time || '').split(':').map(Number);
-    if (!Number.isInteger(hours) || !Number.isInteger(minutes)) {
-        throw new Error('Time must be in HH:mm format');
-    }
-    return { hours, minutes };
+const authSchema = new mongoose.Schema({
+  userId: { type: String, required: true, index: true },
+  key: { type: String, required: true },
+  data: { type: String, required: true },
+}, { timestamps: true });
+authSchema.index({ userId: 1, key: 1 }, { unique: true });
+
+const whatsappConnectionSchema = new mongoose.Schema({
+  userId: { type: String, required: true, unique: true },
+  status: { type: String, default: 'idle' },
+  qr: { type: String, default: '' },
+  phoneNumber: { type: String, default: '' },
+  message: { type: String, default: '' },
+  lastUpdatedAt: { type: Date, default: Date.now },
+}, { timestamps: true });
+
+const User = mongoose.model('User', userSchema);
+const AppSession = mongoose.model('AppSession', appSessionSchema);
+const AuthState = mongoose.model('AuthState', authSchema);
+const WhatsAppConnection = mongoose.model('WhatsAppConnection', whatsappConnectionSchema);
+
+async function connectDatabase() {
+  if (!MONGO_URI) {
+    throw new Error('Missing MongoDB connection string. Set CLOUD_MONGO_URI or USE_LOCAL=true.');
+  }
+  await mongoose.connect(MONGO_URI);
+  console.log(`✅ MongoDB Connected: ${IS_LOCAL ? 'Local' : 'Cloud'}`);
 }
 
-function startOfMinute(date) {
-    const copy = new Date(date);
-    copy.setSeconds(0, 0);
-    return copy;
+async function persistConnectionState(userId, updates) {
+  const next = setConnectionState(userId, updates);
+  await WhatsAppConnection.findOneAndUpdate(
+    { userId },
+    { ...next },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  );
+  return next;
 }
 
-function combineDateAndTime(dateInput, time) {
-    const date = new Date(dateInput);
-    if (Number.isNaN(date.getTime())) {
-        throw new Error('Invalid start date');
-    }
-    const { hours, minutes } = parseTimeToParts(time);
-    date.setHours(hours, minutes, 0, 0);
-    return date;
-}
+async function useMongooseAuthState(userId) {
+  const writeData = async (data, key) => {
+    const json = JSON.stringify(data, BufferJSON.replacer);
+    await AuthState.findOneAndUpdate(
+      { userId, key },
+      { userId, key, data: json },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+  };
 
-function getDaysInMonth(year, monthIndex) {
-    return new Date(year, monthIndex + 1, 0).getDate();
-}
+  const readData = async (key) => {
+    const record = await AuthState.findOne({ userId, key });
+    return record ? JSON.parse(record.data, BufferJSON.reviver) : null;
+  };
 
-function getNthWeekdayOfMonth(year, monthIndex, weekday, ordinal) {
-    const firstDay = new Date(year, monthIndex, 1);
-    const firstWeekdayOffset = (weekday - firstDay.getDay() + 7) % 7;
+  const creds = await readData('creds') || initAuthCreds();
 
-    if (ordinal === 'last') {
-        const lastDate = getDaysInMonth(year, monthIndex);
-        const lastDay = new Date(year, monthIndex, lastDate);
-        const backwardsOffset = (lastDay.getDay() - weekday + 7) % 7;
-        return lastDate - backwardsOffset;
-    }
-
-    const ordinalMap = {
-        first: 1,
-        second: 2,
-        third: 3,
-        fourth: 4
-    };
-
-    const nth = ordinalMap[ordinal];
-    if (!nth) return null;
-    const dayOfMonth = 1 + firstWeekdayOffset + ((nth - 1) * 7);
-    return dayOfMonth <= getDaysInMonth(year, monthIndex) ? dayOfMonth : null;
-}
-
-function normalizeJid(value = '') {
-    return String(value).trim();
-}
-
-function buildSchedulableContactId(contactId) {
-    const normalized = normalizeJid(contactId);
-    if (!normalized) return '';
-    if (normalized.includes('@')) return normalized;
-    const digitsOnly = normalized.replace(/\D/g, '');
-    return digitsOnly ? `${digitsOnly}@s.whatsapp.net` : normalized;
-}
-
-function normalizeMediaItems(payload) {
-    const providedItems = Array.isArray(payload.mediaItems) ? payload.mediaItems : [];
-    const normalizedItems = providedItems
-        .map(item => ({
-            name: item?.name || 'attachment',
-            mediaType: item?.mediaType,
-            mimeType: item?.mimeType || '',
-            dataUrl: item?.dataUrl || '',
-            url: item?.url || ''
-        }))
-        .filter(item => ['image', 'video', 'audio'].includes(item.mediaType) && (item.dataUrl || item.url));
-
-    if (normalizedItems.length > 0) {
-        return normalizedItems;
-    }
-
-    if (payload.mediaType && payload.mediaType !== 'text' && payload.mediaUrl) {
-        return [{
-            name: payload.mediaUrl.split('/').pop() || 'attachment',
-            mediaType: payload.mediaType,
-            mimeType: '',
-            dataUrl: '',
-            url: payload.mediaUrl
-        }];
-    }
-
-    return [];
-}
-
-function normalizeTaskPayload(payload) {
-    const schedule = payload.schedule || {};
-    const mediaItems = normalizeMediaItems(payload);
-    const normalizedTaskType = payload.taskType;
-    const normalizedTargetId = normalizedTaskType === 'single' || normalizedTaskType === 'group_members'
-        ? buildSchedulableContactId(payload.targetId)
-        : '';
-
-    const normalized = {
-        taskType: normalizedTaskType,
-        targetId: normalizedTargetId,
-        message: payload.message,
-        mediaUrl: mediaItems[0]?.url || '',
-        mediaType: mediaItems.length > 0 ? mediaItems[0].mediaType : 'text',
-        mediaItems,
-        time: payload.time,
-        delay: Number(payload.delay) || 5000,
-        schedule: {
-            startDate: schedule.startDate || payload.startDate,
-            frequency: schedule.frequency || payload.frequency,
-            weeklyDays: Array.isArray(schedule.weeklyDays) ? schedule.weeklyDays.map(Number) : [],
-            monthlyDates: Array.isArray(schedule.monthlyDates) ? schedule.monthlyDates.map(Number) : [],
-            monthlyPattern: schedule.monthlyPattern || null
-        }
-    };
-
-    if (!normalized.schedule.startDate) throw new Error('Start date is required');
-    if (!normalized.schedule.frequency) throw new Error('Frequency is required');
-    if ((normalized.taskType === 'single' || normalized.taskType === 'group_members') && !normalized.targetId) {
-        throw new Error('Target ID is required for single chats or group member tasks');
-    }
-    if (normalized.schedule.frequency === 'weekly' && normalized.schedule.weeklyDays.length === 0) {
-        throw new Error('Select at least one day for weekly tasks');
-    }
-    if (normalized.schedule.frequency === 'monthly') {
-        const hasMonthlyDates = normalized.schedule.monthlyDates.length > 0;
-        const hasMonthlyPattern = normalized.schedule.monthlyPattern && Number.isInteger(Number(normalized.schedule.monthlyPattern.weekday));
-        if (!hasMonthlyDates && !hasMonthlyPattern) {
-            throw new Error('Monthly tasks need month dates or a weekday pattern');
-        }
-        if (hasMonthlyPattern) {
-            normalized.schedule.monthlyPattern = {
-                ordinal: normalized.schedule.monthlyPattern.ordinal,
-                weekday: Number(normalized.schedule.monthlyPattern.weekday)
-            };
-        }
-    }
-
-    return normalized;
-}
-
-function calculateNextRun(taskLike, fromDate = new Date()) {
-    const startDate = combineDateAndTime(taskLike.schedule.startDate, taskLike.time);
-    const baseline = startOfMinute(fromDate);
-    const searchStart = startDate > baseline ? startDate : baseline;
-    const frequency = taskLike.schedule.frequency;
-
-    if (frequency === 'once') {
-        return startDate >= baseline ? startDate : null;
-    }
-
-    if (frequency === 'weekly') {
-        const selectedDays = [...new Set((taskLike.schedule.weeklyDays || []).map(Number).filter(day => day >= 0 && day <= 6))].sort((a, b) => a - b);
-        for (let offset = 0; offset < 370; offset += 1) {
-            const candidate = new Date(searchStart);
-            candidate.setDate(candidate.getDate() + offset);
-            candidate.setHours(startDate.getHours(), startDate.getMinutes(), 0, 0);
-            if (candidate < startDate || candidate < baseline) continue;
-            if (selectedDays.includes(candidate.getDay())) return candidate;
-        }
-        return null;
-    }
-
-    if (frequency === 'monthly') {
-        const monthlyDates = [...new Set((taskLike.schedule.monthlyDates || []).map(Number).filter(day => day >= 1 && day <= 31))].sort((a, b) => a - b);
-        const monthlyPattern = taskLike.schedule.monthlyPattern;
-
-        for (let monthOffset = 0; monthOffset < 24; monthOffset += 1) {
-            const cursor = new Date(searchStart.getFullYear(), searchStart.getMonth() + monthOffset, 1);
-            const year = cursor.getFullYear();
-            const monthIndex = cursor.getMonth();
-            const candidateDates = [];
-
-            for (const dayOfMonth of monthlyDates) {
-                const safeDay = Math.min(dayOfMonth, getDaysInMonth(year, monthIndex));
-                candidateDates.push(new Date(year, monthIndex, safeDay, startDate.getHours(), startDate.getMinutes(), 0, 0));
+  return {
+    state: {
+      creds,
+      keys: {
+        get: async (type, ids) => {
+          const data = {};
+          await Promise.all(ids.map(async (id) => {
+            let value = await readData(`${type}-${id}`);
+            if (type === 'app-state-sync-key' && value) {
+              value = proto.Message.AppStateSyncKeyData.fromObject(value);
             }
-
-            if (monthlyPattern?.ordinal && Number.isInteger(monthlyPattern.weekday)) {
-                const patternDay = getNthWeekdayOfMonth(year, monthIndex, Number(monthlyPattern.weekday), monthlyPattern.ordinal);
-                if (patternDay) {
-                    candidateDates.push(new Date(year, monthIndex, patternDay, startDate.getHours(), startDate.getMinutes(), 0, 0));
-                }
-            }
-
-            candidateDates.sort((a, b) => a - b);
-            const match = candidateDates.find(candidate => candidate >= startDate && candidate >= baseline);
-            if (match) return match;
-        }
-        return null;
-    }
-
-    return null;
-}
-
-async function useMongooseAuthState() {
-    const writeData = async (data, id) => {
-        const json = JSON.stringify(data, BufferJSON.replacer);
-        return AuthModel.replaceOne({ _id: id }, { data: json }, { upsert: true });
-    };
-    const readData = async (id) => {
-        const result = await AuthModel.findById(id);
-        return result ? JSON.parse(result.data, BufferJSON.reviver) : null;
-    };
-    const creds = await readData('creds') || initAuthCreds();
-    return {
-        state: {
-            creds,
-            keys: {
-                get: async (type, ids) => {
-                    const data = {};
-                    await Promise.all(ids.map(async (id) => {
-                        let value = await readData(`${type}-${id}`);
-                        if (type === 'app-state-sync-key' && value) value = proto.Message.AppStateSyncKeyData.fromObject(value);
-                        data[id] = value;
-                    }));
-                    return data;
-                },
-                set: async (data) => {
-                    for (const category in data) {
-                        for (const id in data[category]) {
-                            const value = data[category][id];
-                            const key = `${category}-${id}`;
-                            if (value) await writeData(value, key);
-                            else await AuthModel.deleteOne({ _id: key });
-                        }
-                    }
-                }
-            }
+            data[id] = value;
+          }));
+          return data;
         },
-        saveCreds: async () => writeData(creds, 'creds')
-    };
+        set: async (data) => {
+          for (const category of Object.keys(data)) {
+            for (const id of Object.keys(data[category])) {
+              const value = data[category][id];
+              const key = `${category}-${id}`;
+              if (value) {
+                await writeData(value, key);
+              } else {
+                await AuthState.deleteOne({ userId, key });
+              }
+            }
+          }
+        },
+      },
+    },
+    saveCreds: async () => {
+      await writeData(creds, 'creds');
+      await User.findByIdAndUpdate(userId, { whatsappStatus: 'connected' });
+    },
+  };
 }
 
-let sock;
-let latestQr = null;
-let taskSocketActive = false;
+async function authenticateRequest(req, res, next) {
+  const authorization = req.headers.authorization || '';
+  const token = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+  if (!token) {
+    return res.status(401).json({ error: 'Authentication required.' });
+  }
 
-async function startBot() {
-    const { state, saveCreds } = await useMongooseAuthState();
-    const { version } = await fetchLatestBaileysVersion();
+  const tokenHash = sha256(token);
+  const session = await AppSession.findOne({ tokenHash });
+  if (!session) {
+    return res.status(401).json({ error: 'Session expired. Please log in again.' });
+  }
 
-    sock = makeWASocket({
-        version,
-        auth: state,
-        logger: pino({ level: 'silent' }),
-        printQRInTerminal: false,
-        browser: ['WA Scheduler', 'Chrome', '1.0.0']
+  const user = await User.findById(session.userId);
+  if (!user) {
+    return res.status(401).json({ error: 'User not found.' });
+  }
+
+  req.user = user;
+  req.sessionToken = token;
+  next();
+}
+
+function validateSignupPayload(payload) {
+  const username = String(payload.username || '').trim();
+  const email = String(payload.email || '').trim().toLowerCase();
+  const password = String(payload.password || '');
+
+  if (!username || username.length < 2) throw new Error('Username must be at least 2 characters long.');
+  if (!email.includes('@')) throw new Error('Enter a valid email address.');
+  if (password.length < 6) throw new Error('Password must be at least 6 characters long.');
+
+  return { username, email, password };
+}
+
+async function issueSession(user) {
+  const token = createToken();
+  await AppSession.create({ tokenHash: sha256(token), userId: user._id });
+  return { token, user: sanitizeUser(user) };
+}
+
+function buildSocialProviderResponse(provider) {
+  return {
+    provider,
+    available: false,
+    message: `Provide ${provider} OAuth client credentials to enable this login flow.`,
+    requiredCredentials: provider === 'google'
+      ? ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_CALLBACK_URL']
+      : provider === 'github'
+        ? ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET', 'GITHUB_CALLBACK_URL']
+        : ['MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_CALLBACK_URL'],
+  };
+}
+
+async function startWhatsAppSession(user) {
+  const userId = String(user._id);
+  if (socketStore.has(userId)) {
+    return connectionStateStore.get(userId) || buildDefaultConnectionState(userId);
+  }
+
+  await persistConnectionState(userId, {
+    status: 'connecting',
+    qr: '',
+    phoneNumber: user.whatsappPhone || '',
+    message: 'Starting WhatsApp connection and waiting for QR code.',
+  });
+  await User.findByIdAndUpdate(userId, { whatsappStatus: 'connecting' });
+
+  const { version } = await fetchLatestBaileysVersion();
+  const { state, saveCreds } = await useMongooseAuthState(userId);
+  const sock = makeWASocket({
+    version,
+    auth: state,
+    logger: pino({ level: 'silent' }),
+    printQRInTerminal: false,
+    syncFullHistory: false,
+    markOnlineOnConnect: false,
+  });
+
+  socketStore.set(userId, sock);
+
+  sock.ev.on('creds.update', async () => {
+    await saveCreds();
+  });
+
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr } = update;
+
+    if (qr) {
+      await persistConnectionState(userId, {
+        status: 'qr_ready',
+        qr,
+        message: 'Scan this QR code with WhatsApp on your phone.',
+      });
+    }
+
+    if (connection === 'open') {
+      const phoneNumber = sock?.user?.id || '';
+      await User.findByIdAndUpdate(userId, {
+        whatsappStatus: 'connected',
+        whatsappPhone: phoneNumber,
+      });
+      await persistConnectionState(userId, {
+        status: 'connected',
+        qr: '',
+        phoneNumber,
+        message: 'WhatsApp connected successfully. Credentials were saved to the database.',
+      });
+    }
+
+    if (connection === 'close') {
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const loggedOut = statusCode === DisconnectReason.loggedOut;
+      socketStore.delete(userId);
+
+      if (loggedOut) {
+        await AuthState.deleteMany({ userId });
+        await User.findByIdAndUpdate(userId, { whatsappStatus: 'not_connected', whatsappPhone: '' });
+        await persistConnectionState(userId, {
+          status: 'logged_out',
+          qr: '',
+          phoneNumber: '',
+          message: 'WhatsApp session logged out. Start a new connection to generate another QR code.',
+        });
+        return;
+      }
+
+      await User.findByIdAndUpdate(userId, { whatsappStatus: 'not_connected' });
+      await persistConnectionState(userId, {
+        status: 'disconnected',
+        qr: '',
+        message: 'Connection dropped. Start the session again to reconnect.',
+      });
+    }
+  });
+
+  return connectionStateStore.get(userId) || buildDefaultConnectionState(userId);
+}
+
+app.post('/api/auth/signup', async (req, res) => {
+  try {
+    const { username, email, password } = validateSignupPayload(req.body);
+    const existing = await User.findOne({ email });
+    if (existing) {
+      return res.status(409).json({ error: 'An account with that email already exists.' });
+    }
+
+    const user = await User.create({
+      username,
+      email,
+      passwordHash: sha256(password),
     });
 
-    const upsertContact = async (contacts) => {
-        console.log('Processing contacts update:', JSON.stringify(contacts, null, 2));
-        for (const contact of contacts) {
-            const jid = contact.id || contact.jid;
-            if (!jid) continue;
-            try {
-                await Contact.updateOne(
-                    { _id: jid },
-                    {
-                        name: contact.notify || contact.verifiedName || contact.name || 'Unknown',
-                        notify: contact.notify || '',
-                        updatedAt: new Date()
-                    },
-                    { upsert: true }
-                );
-            } catch (err) {
-                console.error(`Failed to save contact ${jid}:`, err.message);
-            }
-        }
-    };
+    const session = await issueSession(user);
+    res.status(201).json(session);
+  } catch (error) {
+    res.status(400).json({ error: error.message || 'Unable to create account.' });
+  }
+});
 
-    async function fetchAllContacts() {
-        try {
-            const contacts = await sock.contacts;
-            if (contacts) {
-                const contactArray = Object.values(contacts);
-                await upsertContact(contactArray);
-                console.log(`✅ Synced ${contactArray.length} contacts to DB`);
-            }
-        } catch (e) {
-            console.error('Error manual syncing contacts:', e);
-        }
-    }
+app.post('/api/auth/login', async (req, res) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const password = String(req.body.password || '');
+  const user = await User.findOne({ email });
 
-    sock.ev.on('creds.update', saveCreds);
-    sock.ev.on('contacts.upsert', upsertContact);
-    sock.ev.on('contacts.update', upsertContact);
-    sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-        if (qr) {
-            latestQr = qr;
-            qrcode.generate(qr, { small: true });
-            console.log('📲 Scan QR in terminal or use /api/qr');
-        }
-        if (connection === 'open') {
-            latestQr = null;
-            taskSocketActive = true;
-            console.log('✅ WhatsApp connected. Task runner is active.');
-            fetchAllContacts();
-        }
-        if (connection === 'close') {
-            taskSocketActive = false;
-            const code = lastDisconnect?.error?.output?.statusCode;
-            const shouldReconnect = code !== DisconnectReason.loggedOut;
-            console.log('🔌 Connection closed.', code, 'Reconnect:', shouldReconnect);
-            if (shouldReconnect) startBot();
-        }
+  if (!user || user.passwordHash !== sha256(password)) {
+    return res.status(401).json({ error: 'Invalid email or password.' });
+  }
+
+  const session = await issueSession(user);
+  res.json(session);
+});
+
+app.post('/api/auth/logout', authenticateRequest, async (req, res) => {
+  await AppSession.deleteOne({ tokenHash: sha256(req.sessionToken) });
+  res.json({ success: true });
+});
+
+app.get('/api/auth/me', authenticateRequest, async (req, res) => {
+  res.json({ user: sanitizeUser(req.user) });
+});
+
+app.patch('/api/users/theme', authenticateRequest, async (req, res) => {
+  const theme = req.body.theme === 'dark' ? 'dark' : 'light';
+  req.user.theme = theme;
+  await req.user.save();
+  res.json({ user: sanitizeUser(req.user) });
+});
+
+app.get('/api/auth/providers/:provider', (req, res) => {
+  const provider = String(req.params.provider || '').toLowerCase();
+  if (!['google', 'github', 'microsoft'].includes(provider)) {
+    return res.status(404).json({ error: 'Unsupported provider.' });
+  }
+  res.json(buildSocialProviderResponse(provider));
+});
+
+app.post('/api/whatsapp/connect', authenticateRequest, async (req, res) => {
+  try {
+    const state = await startWhatsAppSession(req.user);
+    res.json(state);
+  } catch (error) {
+    await persistConnectionState(String(req.user._id), {
+      status: 'error',
+      qr: '',
+      message: error.message || 'Unable to start WhatsApp connection.',
     });
-}
-
-function decodeDataUrl(dataUrl) {
-    const match = String(dataUrl || '').match(/^data:([^;]+);base64,(.+)$/);
-    if (!match) {
-        throw new Error('Invalid media payload');
-    }
-    return { mimeType: match[1], buffer: Buffer.from(match[2], 'base64') };
-}
-
-async function getTaskRecipients(task) {
-    if (task.taskType === 'single') return [task.targetId];
-    if (task.taskType === 'group_members') {
-        const group = await sock.groupMetadata(task.targetId);
-        return group.participants.map(p => p.id);
-    }
-    if (task.taskType === 'all_contacts') {
-        const contacts = await Contact.find({}, { _id: 1 });
-        return contacts.map(contact => buildSchedulableContactId(contact._id));
-    }
-    return [];
-}
-
-async function sendTaskMediaMessage(jid, mediaItem, caption = '') {
-    const payload = {};
-    if (mediaItem.dataUrl) {
-        const { buffer, mimeType } = decodeDataUrl(mediaItem.dataUrl);
-        payload[mediaItem.mediaType] = buffer;
-        if (mimeType) payload.mimetype = mimeType;
-    } else if (mediaItem.url) {
-        payload[mediaItem.mediaType] = { url: mediaItem.url };
-        if (mediaItem.mimeType) payload.mimetype = mediaItem.mimeType;
-    } else {
-        throw new Error('Media item has no content');
-    }
-
-    if (caption && mediaItem.mediaType !== 'audio') {
-        payload.caption = caption;
-    }
-
-    await sock.sendMessage(jid, payload);
-}
-
-async function runDueTasks() {
-    if (!sock || !taskSocketActive) return;
-
-    const now = startOfMinute(new Date());
-    const dueTasks = await Task.find({
-        status: { $in: ['active', 'pending'] },
-        nextRunAt: { $lte: now }
-    }).sort({ nextRunAt: 1, createdAt: 1 });
-
-    for (const task of dueTasks) {
-        try {
-            task.status = 'processing';
-            await task.save();
-
-            const recipients = await getTaskRecipients(task);
-            const mediaItems = Array.isArray(task.mediaItems) ? task.mediaItems : [];
-            for (const jid of recipients) {
-                if (mediaItems.length === 0) {
-                    await sock.sendMessage(jid, { text: task.message });
-                } else {
-                    for (const [index, item] of mediaItems.entries()) {
-                        await sendTaskMediaMessage(jid, item, index === 0 ? task.message : '');
-                        await new Promise(r => setTimeout(r, Math.max(500, Math.floor(task.delay / Math.max(mediaItems.length, 1)))));
-                    }
-                }
-                await new Promise(r => setTimeout(r, task.delay));
-            }
-
-            task.lastRunAt = new Date();
-            task.lastError = null;
-            const nextRunAt = calculateNextRun(task, new Date(task.lastRunAt.getTime() + 60000));
-            task.nextRunAt = nextRunAt;
-            task.status = nextRunAt ? 'active' : 'completed';
-            await task.save();
-        } catch (e) {
-            console.error('Task Error:', e);
-            task.status = 'failed';
-            task.lastError = e.message;
-            await task.save();
-        }
-    }
-}
-
-cron.schedule('* * * * *', runDueTasks);
-
-app.get('/api/tasks', async (req, res) => res.json(await Task.find().sort({ createdAt: -1 })));
-app.post('/api/tasks', async (req, res) => {
-    try {
-        const payload = normalizeTaskPayload(req.body);
-        const task = new Task(payload);
-        task.nextRunAt = calculateNextRun(task);
-        task.status = task.nextRunAt ? 'active' : 'completed';
-        const saved = await task.save();
-        res.status(201).json(saved);
-    } catch (error) {
-        res.status(400).json({ error: error.message });
-    }
-});
-app.delete('/api/tasks/:id', async (req, res) => res.json(await Task.findByIdAndDelete(req.params.id)));
-
-app.get('/api/qr', (req, res) => res.json({ qr: latestQr }));
-app.get('/api/chats', async (req, res) => {
-    try {
-        const chats = await sock.groupFetchAllParticipating();
-        const formatted = Object.values(chats).map(g => ({
-            id: g.id,
-            name: g.subject,
-            members: g.participants.length,
-            scheduleId: g.id
-        }));
-        res.json(formatted);
-    } catch (e) {
-        res.status(500).json({ error: 'Failed to fetch groups' });
-    }
+    res.status(500).json({ error: error.message || 'Unable to start WhatsApp connection.' });
+  }
 });
 
-app.get('/api/contacts', async (req, res) => {
-    try {
-        const contacts = await Contact.find().sort({ name: 1 });
-        const formatted = contacts.map(contact => ({
-            ...contact.toObject(),
-            scheduleId: buildSchedulableContactId(contact._id)
-        }));
-        res.json(formatted);
-    } catch (e) {
-        res.status(500).json({ error: 'Could not fetch contacts from DB' });
-    }
+app.get('/api/whatsapp/status', authenticateRequest, async (req, res) => {
+  const userId = String(req.user._id);
+  const state = connectionStateStore.get(userId) || await WhatsAppConnection.findOne({ userId }).lean() || buildDefaultConnectionState(userId);
+  res.json(state);
 });
 
-app.listen(3000, () => console.log('🚀 Dashboard: http://localhost:3000'));
-startBot();
+app.get('/api/config/required-credentials', (req, res) => {
+  res.json({
+    database: ['CLOUD_MONGO_URI or USE_LOCAL=true'],
+    socialLogin: {
+      google: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_CALLBACK_URL'],
+      github: ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET', 'GITHUB_CALLBACK_URL'],
+      microsoft: ['MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_CALLBACK_URL'],
+    },
+    optional: ['PORT', 'DEFAULT_SIGNUP_CREDITS'],
+  });
+});
+
+app.use((req, res) => {
+  res.sendFile(new URL('./public/index.html', import.meta.url).pathname);
+});
+
+connectDatabase()
+  .then(() => {
+    app.listen(PORT, () => console.log(`🚀 App running on http://localhost:${PORT}`));
+  })
+  .catch((error) => {
+    console.error('❌ Startup failure:', error.message);
+    process.exit(1);
+  });
