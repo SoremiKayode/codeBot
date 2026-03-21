@@ -127,7 +127,8 @@ input, textarea, select { width: 100%; padding: .9rem 1rem; border-radius: 1rem;
 .task-status { font-size: .8rem; text-transform: capitalize; font-weight: 700; padding: .35rem .7rem; border-radius: 999px; background: rgba(37, 211, 102, 0.15); color: var(--primary-dark); }
 .empty-state { padding: 1rem; border: 1px dashed var(--border); border-radius: 1rem; color: var(--muted); }
 .footer-links { display: flex; flex-wrap: wrap; }
-.social-icon-row a { width: 2.25rem; height: 2.25rem; border-radius: 999px; display: inline-grid; place-items: center; border: 1px solid var(--border); background: var(--surface-alt); font-size: 1rem; }
+.social-icon-row { gap: .5rem; justify-content: flex-start; }
+.social-icon-row a { width: 2.25rem; height: 2.25rem; margin: 0; border-radius: 999px; display: inline-grid; place-items: center; border: 1px solid var(--border); background: var(--surface-alt); font-size: 1rem; }
 .social-icon-row--small a { width: 2rem; height: 2rem; font-size: .9rem; }
 .social-handle { margin: .5rem 0 0; }
 .compact-form { gap: .75rem; }
@@ -143,4 +144,23 @@ body.is-authenticated .guest-only { display: none; }
   .app-header, .brand-block, .header-actions { flex-direction: column; align-items: flex-start; }
   .table-row, .table-head { grid-template-columns: 44px 1fr; }
   .table-row > :nth-child(3), .table-row > :nth-child(4), .table-head > :nth-child(3), .table-head > :nth-child(4) { display: none; }
+}
+
+@media (max-width: 900px) {
+  .app-header { padding: 1rem; align-items: stretch; }
+  .brand-block { width: 100%; flex-direction: row; align-items: center; }
+  .header-nav, .header-actions { width: 100%; }
+  .header-nav { justify-content: center; gap: .6rem; }
+  .header-actions { gap: .75rem; }
+  .theme-switch, .user-chip, #logoutButton { width: 100%; }
+  .theme-switch { justify-content: space-between; }
+  .user-chip { min-width: 0; }
+}
+
+@media (max-width: 640px) {
+  .app-header h1 { font-size: 1.3rem; }
+  .nav-link, .secondary-button, .social-button, .footer-link, .ghost-button, .task-tab { width: 100%; justify-content: center; text-align: center; }
+  .brand-block { gap: .75rem; }
+  .brand-logo { width: 2.75rem; height: 2.75rem; }
+  .social-icon-row { gap: .35rem; }
 }

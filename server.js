@@ -30,6 +30,7 @@ const SILICONFLOW_IMAGE_MODEL = process.env.SILICONFLOW_IMAGE_MODEL || 'Qwen/Qwe
 
 const connectionStateStore = new Map();
 const socketStore = new Map();
+const audienceStore = new Map();
 
 function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -72,6 +73,87 @@ function setConnectionState(userId, updates) {
   };
   connectionStateStore.set(userId, next);
   return next;
+}
+
+
+function buildDefaultAudienceState() {
+  return { groups: [], contacts: [], lastSyncedAt: null };
+}
+
+function normalizePhoneNumber(jid = '') {
+  const raw = String(jid).split('@')[0].replace(/[^\d]/g, '');
+  return raw ? `+${raw}` : '';
+}
+
+function normalizeGroup(group) {
+  return {
+    id: String(group.id || ''),
+    name: String(group.subject || group.name || group.id || 'Unnamed group'),
+    members: Array.isArray(group.participants) ? group.participants.length : 0,
+    category: group.announce ? 'Announcement' : 'Group',
+  };
+}
+
+function normalizeContact(contact = {}, chat = {}) {
+  const id = String(contact.id || chat.id || '');
+  const name = String(contact.name || contact.notify || contact.verifiedName || chat.name || chat.notify || normalizePhoneNumber(id) || id);
+  return {
+    id,
+    name,
+    phone: normalizePhoneNumber(contact.phoneNumber || id),
+    segment: chat.unreadCount ? 'Recent chat' : 'Contact',
+  };
+}
+
+function upsertAudienceContacts(userId, contacts = [], chats = []) {
+  const current = audienceStore.get(userId) || buildDefaultAudienceState();
+  const chatMap = new Map((Array.isArray(chats) ? chats : []).map((chat) => [String(chat.id || ''), chat]));
+  const nextContacts = new Map(current.contacts.map((contact) => [contact.id, contact]));
+
+  contacts.forEach((contact) => {
+    const normalized = normalizeContact(contact, chatMap.get(String(contact.id || '')));
+    if (normalized.id && !normalized.id.endsWith('@g.us')) nextContacts.set(normalized.id, { ...nextContacts.get(normalized.id), ...normalized });
+  });
+
+  chatMap.forEach((chat, id) => {
+    if (!id || id.endsWith('@g.us') || id === 'status@broadcast') return;
+    const normalized = normalizeContact({}, chat);
+    nextContacts.set(id, { ...nextContacts.get(id), ...normalized });
+  });
+
+  const next = {
+    ...current,
+    contacts: Array.from(nextContacts.values()).sort((a, b) => a.name.localeCompare(b.name)),
+    lastSyncedAt: new Date(),
+  };
+  audienceStore.set(userId, next);
+  return next;
+}
+
+function upsertAudienceGroups(userId, groups = []) {
+  const current = audienceStore.get(userId) || buildDefaultAudienceState();
+  const nextGroups = new Map(current.groups.map((group) => [group.id, group]));
+  groups.forEach((group) => {
+    const normalized = normalizeGroup(group);
+    if (normalized.id) nextGroups.set(normalized.id, normalized);
+  });
+  const next = {
+    ...current,
+    groups: Array.from(nextGroups.values()).sort((a, b) => a.name.localeCompare(b.name)),
+    lastSyncedAt: new Date(),
+  };
+  audienceStore.set(userId, next);
+  return next;
+}
+
+async function syncAudienceFromSocket(userId, sock) {
+  const allGroups = await sock.groupFetchAllParticipating().catch(() => ({}));
+  upsertAudienceGroups(userId, Object.values(allGroups || {}));
+  return audienceStore.get(userId) || buildDefaultAudienceState();
+}
+
+async function getAudienceState(userId) {
+  return audienceStore.get(userId) || buildDefaultAudienceState();
 }
 
 const userSchema = new mongoose.Schema({
@@ -323,6 +405,34 @@ async function startWhatsAppSession(user) {
     await saveCreds();
   });
 
+  sock.ev.on('messaging-history.set', ({ contacts, chats }) => {
+    upsertAudienceContacts(userId, contacts, chats);
+  });
+
+  sock.ev.on('contacts.upsert', (contacts) => {
+    upsertAudienceContacts(userId, contacts);
+  });
+
+  sock.ev.on('contacts.update', (contacts) => {
+    upsertAudienceContacts(userId, contacts);
+  });
+
+  sock.ev.on('chats.upsert', (chats) => {
+    upsertAudienceContacts(userId, [], chats);
+  });
+
+  sock.ev.on('chats.update', (chats) => {
+    upsertAudienceContacts(userId, [], chats);
+  });
+
+  sock.ev.on('groups.upsert', (groups) => {
+    upsertAudienceGroups(userId, groups);
+  });
+
+  sock.ev.on('groups.update', (groups) => {
+    upsertAudienceGroups(userId, groups);
+  });
+
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
@@ -340,6 +450,7 @@ async function startWhatsAppSession(user) {
         whatsappStatus: 'connected',
         whatsappPhone: phoneNumber,
       });
+      await syncAudienceFromSocket(userId, sock);
       await persistConnectionState(userId, {
         status: 'connected',
         qr: '',
@@ -453,6 +564,24 @@ app.get('/api/whatsapp/status', authenticateRequest, async (req, res) => {
   const userId = String(req.user._id);
   const state = connectionStateStore.get(userId) || await WhatsAppConnection.findOne({ userId }).lean() || buildDefaultConnectionState(userId);
   res.json(state);
+});
+
+app.get('/api/whatsapp/audience', authenticateRequest, async (req, res) => {
+  const userId = String(req.user._id);
+  const sock = socketStore.get(userId);
+  const connectionState = connectionStateStore.get(userId) || await WhatsAppConnection.findOne({ userId }).lean() || buildDefaultConnectionState(userId);
+
+  if (sock && connectionState.status === 'connected') {
+    await syncAudienceFromSocket(userId, sock).catch(() => null);
+  }
+
+  const audience = await getAudienceState(userId);
+  res.json({
+    status: connectionState.status,
+    groups: audience.groups,
+    contacts: audience.contacts,
+    lastSyncedAt: audience.lastSyncedAt,
+  });
 });
 
 app.post('/api/tasks', authenticateRequest, async (req, res) => {

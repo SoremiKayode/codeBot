@@ -81,19 +81,11 @@ const ui = {
   scheduleTaskButton: document.getElementById('scheduleTaskButton'),
 };
 
-const groups = Array.from({ length: 22 }, (_, index) => ({
-  id: `group-${index + 1}`,
-  name: `${['Sales', 'Support', 'VIP', 'Leads', 'Partners'][index % 5]} Group ${index + 1}`,
-  members: 20 + index * 3,
-  category: ['Campaign', 'Operations', 'Broadcast'][index % 3],
-}));
-
-const contacts = Array.from({ length: 28 }, (_, index) => ({
-  id: `contact-${index + 1}`,
-  name: `${['Ava', 'Noah', 'Mia', 'Lucas', 'Ethan', 'Sophia'][index % 6]} ${index + 1}`,
-  phone: `+1 555 010 ${String(index + 1).padStart(2, '0')}`,
-  segment: ['Customer', 'Lead', 'Vendor'][index % 3],
-}));
+const audienceState = {
+  groups: [],
+  contacts: [],
+  hasLoaded: false,
+};
 
 const taskBuilderState = {
   activeTab: 'message',
@@ -130,6 +122,7 @@ function navigate(route) {
   setRoute(targetRoute);
   Object.entries(views).forEach(([key, view]) => view.classList.toggle('active', key === targetRoute));
   if (targetRoute === 'tasks' && appState.user) {
+    loadAudience();
     renderAudienceTables();
     renderFrequencyOptions();
     updateTaskPreview();
@@ -213,6 +206,7 @@ async function syncWhatsAppStatus() {
       ui.qrHint.textContent = `Connected as ${status.phoneNumber || 'your WhatsApp account'}.`;
       stopPoller();
       await refreshUser();
+      await loadAudience(true);
     }
   } catch (error) {
     stopPoller();
@@ -282,6 +276,13 @@ function getSelectedItems(items, selectedIds) {
   return items.filter((item) => selectedIds.has(item.id));
 }
 
+function pruneSelections() {
+  const groupIds = new Set(audienceState.groups.map((item) => item.id));
+  const contactIds = new Set(audienceState.contacts.map((item) => item.id));
+  taskBuilderState.selectedGroups.forEach((id) => { if (!groupIds.has(id)) taskBuilderState.selectedGroups.delete(id); });
+  taskBuilderState.selectedContacts.forEach((id) => { if (!contactIds.has(id)) taskBuilderState.selectedContacts.delete(id); });
+}
+
 function updateTaskPreview() {
   const translated = translateTags(extractMessageText()) || 'Your message preview appears here.';
   ui.messagePreview.textContent = translated;
@@ -290,8 +291,8 @@ function updateTaskPreview() {
   ui.nextRunBadge.textContent = buildScheduleLabel();
 
   const selectedNames = [
-    ...getSelectedItems(groups, taskBuilderState.selectedGroups).map((item) => item.name),
-    ...getSelectedItems(contacts, taskBuilderState.selectedContacts).map((item) => item.name),
+    ...getSelectedItems(audienceState.groups, taskBuilderState.selectedGroups).map((item) => item.name),
+    ...getSelectedItems(audienceState.contacts, taskBuilderState.selectedContacts).map((item) => item.name),
   ];
   ui.selectedAudienceSummary.innerHTML = selectedNames.length
     ? selectedNames.map((name) => `<span class="pill">${escapeHtml(name)}</span>`).join('')
@@ -377,7 +378,7 @@ function getFilteredData(items, search, sortAsc) {
 }
 
 function renderTable(type) {
-  const items = type === 'groups' ? groups : contacts;
+  const items = type === 'groups' ? audienceState.groups : audienceState.contacts;
   const search = type === 'groups' ? ui.groupSearch.value : ui.contactSearch.value;
   const sortAsc = type === 'groups' ? taskBuilderState.groupSortAsc : taskBuilderState.contactSortAsc;
   const page = type === 'groups' ? taskBuilderState.groupPage : taskBuilderState.contactPage;
@@ -394,7 +395,7 @@ function renderTable(type) {
   const fields = type === 'groups' ? ['name', 'members', 'category'] : ['name', 'phone', 'segment'];
 
   if (!pageItems.length) {
-    container.innerHTML = '<div class="table-empty">No matching records.</div>';
+    container.innerHTML = `<div class="table-empty">${audienceState.hasLoaded ? 'No matching records.' : 'Connect WhatsApp to load your live groups and contacts.'}</div>`;
   } else {
     container.innerHTML = `
       <div class="table-head"><span></span><span>Name</span><span>${type === 'groups' ? 'Members' : 'Phone'}</span><span>${type === 'groups' ? 'Category' : 'Segment'}</span></div>
@@ -417,9 +418,31 @@ function renderTable(type) {
 }
 
 function renderAudienceTables() {
+  pruneSelections();
   renderTable('groups');
   renderTable('contacts');
   updateTaskPreview();
+}
+
+async function loadAudience(force = false) {
+  if (!appState.user) return;
+  if (audienceState.hasLoaded && !force) return;
+  try {
+    const data = await api.whatsappAudience();
+    audienceState.groups = Array.isArray(data.groups) ? data.groups : [];
+    audienceState.contacts = Array.isArray(data.contacts) ? data.contacts : [];
+    audienceState.hasLoaded = true;
+    renderAudienceTables();
+    if (data.status !== 'connected' && !audienceState.groups.length && !audienceState.contacts.length) {
+      showToast('Connect WhatsApp to load your real groups and contacts.');
+    }
+  } catch (error) {
+    audienceState.groups = [];
+    audienceState.contacts = [];
+    audienceState.hasLoaded = false;
+    renderAudienceTables();
+    showToast(error.message);
+  }
 }
 
 function addTimeField(value = '09:00') {
@@ -609,8 +632,8 @@ async function scheduleTask() {
       translatedPreview: translateTags(messageText),
       mediaQueue: taskBuilderState.mediaQueue,
       recipients: {
-        groups: getSelectedItems(groups, taskBuilderState.selectedGroups),
-        contacts: getSelectedItems(contacts, taskBuilderState.selectedContacts),
+        groups: getSelectedItems(audienceState.groups, taskBuilderState.selectedGroups),
+        contacts: getSelectedItems(audienceState.contacts, taskBuilderState.selectedContacts),
       },
       schedule: buildScheduleConfig(),
     });
@@ -727,6 +750,7 @@ ui.connectWhatsappButton.addEventListener('click', async () => {
     ui.whatsappPhone.textContent = data.phoneNumber || 'Not available';
     startWhatsAppPolling();
     await syncWhatsAppStatus();
+    await loadAudience(true);
     showToast('WhatsApp connection started.');
   } catch (error) {
     showToast(error.message);
@@ -760,12 +784,12 @@ ui.contactPrevButton.addEventListener('click', () => { taskBuilderState.contactP
 ui.contactNextButton.addEventListener('click', () => { taskBuilderState.contactPage += 1; renderTable('contacts'); });
 
 ui.selectAllGroups.addEventListener('change', () => {
-  getFilteredData(groups, ui.groupSearch.value, taskBuilderState.groupSortAsc).forEach((item) => ui.selectAllGroups.checked ? taskBuilderState.selectedGroups.add(item.id) : taskBuilderState.selectedGroups.delete(item.id));
+  getFilteredData(audienceState.groups, ui.groupSearch.value, taskBuilderState.groupSortAsc).forEach((item) => ui.selectAllGroups.checked ? taskBuilderState.selectedGroups.add(item.id) : taskBuilderState.selectedGroups.delete(item.id));
   renderTable('groups');
   updateTaskPreview();
 });
 ui.selectAllContacts.addEventListener('change', () => {
-  getFilteredData(contacts, ui.contactSearch.value, taskBuilderState.contactSortAsc).forEach((item) => ui.selectAllContacts.checked ? taskBuilderState.selectedContacts.add(item.id) : taskBuilderState.selectedContacts.delete(item.id));
+  getFilteredData(audienceState.contacts, ui.contactSearch.value, taskBuilderState.contactSortAsc).forEach((item) => ui.selectAllContacts.checked ? taskBuilderState.selectedContacts.add(item.id) : taskBuilderState.selectedContacts.delete(item.id));
   renderTable('contacts');
   updateTaskPreview();
 });
