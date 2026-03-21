@@ -22,7 +22,6 @@ const ui = {
   loginForm: document.getElementById('loginForm'),
   signupForm: document.getElementById('signupForm'),
   enquiryForm: document.getElementById('enquiryForm'),
-  taskForm: document.getElementById('taskForm'),
   taskList: document.getElementById('taskList'),
   toast: document.getElementById('toast'),
   startButton: document.getElementById('startButton'),
@@ -35,7 +34,89 @@ const ui = {
   qrHint: document.getElementById('qrHint'),
   loginPasswordStrength: document.getElementById('loginPasswordStrength'),
   signupPasswordStrength: document.getElementById('signupPasswordStrength'),
+  taskTitle: document.getElementById('taskTitle'),
+  openAiTextTabButton: document.getElementById('openAiTextTabButton'),
+  openAiMediaTabButton: document.getElementById('openAiMediaTabButton'),
+  messageNextButton: document.getElementById('messageNextButton'),
+  audienceBackButton: document.getElementById('audienceBackButton'),
+  audienceNextButton: document.getElementById('audienceNextButton'),
+  scheduleBackButton: document.getElementById('scheduleBackButton'),
+  mediaFileInput: document.getElementById('mediaFileInput'),
+  mediaQueue: document.getElementById('mediaQueue'),
+  generateMoreMediaButton: document.getElementById('generateMoreMediaButton'),
+  messagePreview: document.getElementById('messagePreview'),
+  finalPreview: document.getElementById('finalPreview'),
+  previewMediaStrip: document.getElementById('previewMediaStrip'),
+  selectedAudienceSummary: document.getElementById('selectedAudienceSummary'),
+  previewFrequencyPill: document.getElementById('previewFrequencyPill'),
+  aiTextPrompt: document.getElementById('aiTextPrompt'),
+  aiTextStatus: document.getElementById('aiTextStatus'),
+  generateTextButton: document.getElementById('generateTextButton'),
+  aiImagePrompt: document.getElementById('aiImagePrompt'),
+  aiImageStatus: document.getElementById('aiImageStatus'),
+  generateImageButton: document.getElementById('generateImageButton'),
+  regenerateImageButton: document.getElementById('regenerateImageButton'),
+  approveImageButton: document.getElementById('approveImageButton'),
+  groupsTable: document.getElementById('groupsTable'),
+  contactsTable: document.getElementById('contactsTable'),
+  groupSearch: document.getElementById('groupSearch'),
+  contactSearch: document.getElementById('contactSearch'),
+  groupSortButton: document.getElementById('groupSortButton'),
+  contactSortButton: document.getElementById('contactSortButton'),
+  selectAllGroups: document.getElementById('selectAllGroups'),
+  selectAllContacts: document.getElementById('selectAllContacts'),
+  groupPrevButton: document.getElementById('groupPrevButton'),
+  groupNextButton: document.getElementById('groupNextButton'),
+  contactPrevButton: document.getElementById('contactPrevButton'),
+  contactNextButton: document.getElementById('contactNextButton'),
+  groupPageInfo: document.getElementById('groupPageInfo'),
+  contactPageInfo: document.getElementById('contactPageInfo'),
+  recipientSummaryInput: document.getElementById('recipientSummaryInput'),
+  startDateInput: document.getElementById('startDateInput'),
+  startTimeInput: document.getElementById('startTimeInput'),
+  frequencySelect: document.getElementById('frequencySelect'),
+  frequencyOptions: document.getElementById('frequencyOptions'),
+  scheduleSummary: document.getElementById('scheduleSummary'),
+  nextRunBadge: document.getElementById('nextRunBadge'),
+  scheduleTaskButton: document.getElementById('scheduleTaskButton'),
 };
+
+const groups = Array.from({ length: 22 }, (_, index) => ({
+  id: `group-${index + 1}`,
+  name: `${['Sales', 'Support', 'VIP', 'Leads', 'Partners'][index % 5]} Group ${index + 1}`,
+  members: 20 + index * 3,
+  category: ['Campaign', 'Operations', 'Broadcast'][index % 3],
+}));
+
+const contacts = Array.from({ length: 28 }, (_, index) => ({
+  id: `contact-${index + 1}`,
+  name: `${['Ava', 'Noah', 'Mia', 'Lucas', 'Ethan', 'Sophia'][index % 6]} ${index + 1}`,
+  phone: `+1 555 010 ${String(index + 1).padStart(2, '0')}`,
+  segment: ['Customer', 'Lead', 'Vendor'][index % 3],
+}));
+
+const taskBuilderState = {
+  activeTab: 'message',
+  quill: null,
+  pendingImage: null,
+  mediaQueue: [],
+  selectedGroups: new Set(),
+  selectedContacts: new Set(),
+  groupPage: 1,
+  contactPage: 1,
+  groupSortAsc: true,
+  contactSortAsc: true,
+  pageSize: 6,
+  frequency: '',
+  dailyTimes: ['09:00'],
+  weeklySlots: [{ day: 'Monday', time: '09:00' }],
+  monthlyWeeks: [],
+  monthlyDays: [],
+};
+
+function escapeHtml(value = '') {
+  return value.replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
+}
 
 function showToast(message) {
   ui.toast.textContent = message;
@@ -47,10 +128,11 @@ function showToast(message) {
 function navigate(route) {
   const targetRoute = ['dashboard', 'tasks'].includes(route) && !appState.user ? 'login' : route;
   setRoute(targetRoute);
-  Object.entries(views).forEach(([key, view]) => {
-    view.classList.toggle('active', key === targetRoute);
-  });
+  Object.entries(views).forEach(([key, view]) => view.classList.toggle('active', key === targetRoute));
   if (targetRoute === 'tasks' && appState.user) {
+    renderAudienceTables();
+    renderFrequencyOptions();
+    updateTaskPreview();
     loadTasks();
   }
 }
@@ -97,7 +179,7 @@ async function refreshUser() {
     applyTheme(data.user.theme || 'light');
     updateUserUI();
     return data.user;
-  } catch (error) {
+  } catch {
     setToken('');
     setUser(null);
     updateUserUI();
@@ -114,11 +196,7 @@ function renderQrCode(qrValue) {
   }
   ui.qrWrapper.classList.remove('empty');
   ui.qrHint.textContent = 'Scan this QR code with your WhatsApp mobile app.';
-  new window.QRCode(ui.qrCode, {
-    text: qrValue,
-    width: 220,
-    height: 220,
-  });
+  new window.QRCode(ui.qrCode, { text: qrValue, width: 220, height: 220 });
 }
 
 async function syncWhatsAppStatus() {
@@ -128,9 +206,8 @@ async function syncWhatsAppStatus() {
     ui.whatsappStatusText.textContent = status.message || 'Waiting for update.';
     ui.whatsappStatusBadge.textContent = status.status || 'idle';
     ui.whatsappPhone.textContent = status.phoneNumber || 'Not available';
-    if (status.qr) {
-      renderQrCode(status.qr);
-    } else if (status.status === 'connected') {
+    if (status.qr) renderQrCode(status.qr);
+    else if (status.status === 'connected') {
       ui.qrCode.innerHTML = '';
       ui.qrWrapper.classList.add('empty');
       ui.qrHint.textContent = `Connected as ${status.phoneNumber || 'your WhatsApp account'}.`;
@@ -158,9 +235,99 @@ async function handleAuthSuccess(payload, successMessage) {
   showToast(successMessage);
 }
 
+function setTaskTab(tabName) {
+  taskBuilderState.activeTab = tabName;
+  document.querySelectorAll('[data-task-tab]').forEach((button) => button.classList.toggle('active', button.dataset.taskTab === tabName));
+  document.querySelectorAll('[data-task-panel]').forEach((panel) => panel.classList.toggle('active', panel.dataset.taskPanel === tabName));
+}
+
+function resolveTagValue(tag, baseDate = new Date()) {
+  const normalized = String(tag || '').toLowerCase();
+  if (normalized === 'current_time') return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(baseDate);
+  if (normalized === 'current_date') return new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).format(baseDate);
+
+  const match = normalized.match(/^(first|last)_(monday|tuesday|wednesday|thursday|friday|saturday|sunday)$/);
+  if (!match) return `{${tag}}`;
+  const [, position, weekdayName] = match;
+  const weekdays = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const targetDay = weekdays.indexOf(weekdayName);
+  const year = baseDate.getFullYear();
+  const month = baseDate.getMonth();
+  let date;
+
+  if (position === 'first') {
+    date = new Date(year, month, 1);
+    while (date.getDay() !== targetDay) date.setDate(date.getDate() + 1);
+  } else {
+    date = new Date(year, month + 1, 0);
+    while (date.getDay() !== targetDay) date.setDate(date.getDate() - 1);
+  }
+
+  return new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric' }).format(date);
+}
+
+function translateTags(text = '') {
+  return text.replace(/\{([^}]+)\}/g, (_, tag) => resolveTagValue(tag));
+}
+
+function extractMessageHtml() {
+  return taskBuilderState.quill ? taskBuilderState.quill.root.innerHTML : '';
+}
+
+function extractMessageText() {
+  return taskBuilderState.quill ? taskBuilderState.quill.getText().trim() : '';
+}
+
+function getSelectedItems(items, selectedIds) {
+  return items.filter((item) => selectedIds.has(item.id));
+}
+
+function updateTaskPreview() {
+  const translated = translateTags(extractMessageText()) || 'Your message preview appears here.';
+  ui.messagePreview.textContent = translated;
+  ui.finalPreview.textContent = translated;
+  ui.previewFrequencyPill.textContent = taskBuilderState.frequency || 'Not scheduled';
+  ui.nextRunBadge.textContent = buildScheduleLabel();
+
+  const selectedNames = [
+    ...getSelectedItems(groups, taskBuilderState.selectedGroups).map((item) => item.name),
+    ...getSelectedItems(contacts, taskBuilderState.selectedContacts).map((item) => item.name),
+  ];
+  ui.selectedAudienceSummary.innerHTML = selectedNames.length
+    ? selectedNames.map((name) => `<span class="pill">${escapeHtml(name)}</span>`).join('')
+    : '<span class="muted">No audience selected yet.</span>';
+
+  ui.recipientSummaryInput.value = selectedNames.join(', ');
+  renderMediaQueue();
+  ui.scheduleSummary.textContent = buildScheduleDescription();
+}
+
+function renderMediaQueue() {
+  const items = taskBuilderState.mediaQueue;
+  ui.generateMoreMediaButton.classList.toggle('hidden', items.length === 0);
+  ui.previewMediaStrip.innerHTML = items.map((item) => `<span class="pill">${escapeHtml(item.type)}</span>`).join('');
+  if (!items.length) {
+    ui.mediaQueue.className = 'media-queue empty-state';
+    ui.mediaQueue.textContent = 'No media selected yet.';
+    return;
+  }
+  ui.mediaQueue.className = 'media-queue';
+  ui.mediaQueue.innerHTML = items.map((item, index) => `
+    <article class="media-card">
+      <div class="section-heading">
+        <strong>${escapeHtml(item.name)}</strong>
+        <span class="pill">${escapeHtml(item.type)}</span>
+      </div>
+      ${item.type === 'image' ? `<img src="${item.dataUrl}" alt="${escapeHtml(item.name)}" />` : item.type === 'video' ? `<video src="${item.dataUrl}" controls></video>` : `<div class="empty-state">${escapeHtml(item.previewText || 'Text file ready to send.')}</div>`}
+      <div class="media-card__actions">
+        <button class="secondary-button" type="button" data-delete-media="${index}">Delete</button>
+      </div>
+    </article>`).join('');
+}
+
 function renderTasks(tasks = []) {
   if (!tasks.length) {
-    ui.taskList.innerHTML = '<div class="empty-state">No tasks yet. Create your first task from the form.</div>';
+    ui.taskList.innerHTML = '<div class="empty-state">No tasks yet. Use the wizard above to create your first task.</div>';
     return;
   }
 
@@ -168,13 +335,13 @@ function renderTasks(tasks = []) {
     <article class="task-card">
       <div class="task-card__row">
         <div>
-          <h3>${task.title}</h3>
-          <p class="muted">${task.type}</p>
+          <h3>${escapeHtml(task.title)}</h3>
+          <p class="muted">${escapeHtml(task.type || 'Automation task')}</p>
         </div>
-        <span class="task-status ${task.status}">${task.status}</span>
+        <span class="task-status ${task.status}">${escapeHtml(task.status)}</span>
       </div>
-      <p class="muted">${task.description}</p>
-      <p class="task-meta">Created ${new Date(task.createdAt).toLocaleDateString()}</p>
+      <p class="muted">${escapeHtml(task.description || 'No description provided.')}</p>
+      <p class="task-meta">Recipients: ${task.recipients?.groups?.length || 0} groups, ${task.recipients?.contacts?.length || 0} contacts • Created ${new Date(task.createdAt).toLocaleDateString()}</p>
     </article>
   `).join('');
 }
@@ -190,9 +357,7 @@ async function loadTasks() {
 }
 
 function attachRouteButtons() {
-  document.querySelectorAll('[data-route]').forEach((button) => {
-    button.addEventListener('click', () => navigate(button.dataset.route));
-  });
+  document.querySelectorAll('[data-route]').forEach((button) => button.addEventListener('click', () => navigate(button.dataset.route)));
 }
 
 async function handleSocialClick(provider) {
@@ -204,11 +369,301 @@ async function handleSocialClick(provider) {
   }
 }
 
+function getFilteredData(items, search, sortAsc) {
+  const query = search.trim().toLowerCase();
+  return items
+    .filter((item) => Object.values(item).some((value) => String(value).toLowerCase().includes(query)))
+    .sort((a, b) => sortAsc ? String(a.name).localeCompare(String(b.name)) : String(b.name).localeCompare(String(a.name)));
+}
+
+function renderTable(type) {
+  const items = type === 'groups' ? groups : contacts;
+  const search = type === 'groups' ? ui.groupSearch.value : ui.contactSearch.value;
+  const sortAsc = type === 'groups' ? taskBuilderState.groupSortAsc : taskBuilderState.contactSortAsc;
+  const page = type === 'groups' ? taskBuilderState.groupPage : taskBuilderState.contactPage;
+  const selected = type === 'groups' ? taskBuilderState.selectedGroups : taskBuilderState.selectedContacts;
+  const filtered = getFilteredData(items, search, sortAsc);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / taskBuilderState.pageSize));
+  const safePage = Math.min(page, totalPages);
+  if (type === 'groups') taskBuilderState.groupPage = safePage;
+  else taskBuilderState.contactPage = safePage;
+  const start = (safePage - 1) * taskBuilderState.pageSize;
+  const pageItems = filtered.slice(start, start + taskBuilderState.pageSize);
+  const container = type === 'groups' ? ui.groupsTable : ui.contactsTable;
+  const pageInfo = type === 'groups' ? ui.groupPageInfo : ui.contactPageInfo;
+  const fields = type === 'groups' ? ['name', 'members', 'category'] : ['name', 'phone', 'segment'];
+
+  if (!pageItems.length) {
+    container.innerHTML = '<div class="table-empty">No matching records.</div>';
+  } else {
+    container.innerHTML = `
+      <div class="table-head"><span></span><span>Name</span><span>${type === 'groups' ? 'Members' : 'Phone'}</span><span>${type === 'groups' ? 'Category' : 'Segment'}</span></div>
+      ${pageItems.map((item) => `
+        <label class="table-row">
+          <input type="checkbox" data-select-${type.slice(0, -1)}="${item.id}" ${selected.has(item.id) ? 'checked' : ''} />
+          <span>${escapeHtml(item[fields[0]])}</span>
+          <span>${escapeHtml(String(item[fields[1]]))}</span>
+          <span>${escapeHtml(item[fields[2]])}</span>
+        </label>
+      `).join('')}
+    `;
+  }
+
+  const visibleIds = filtered.map((item) => item.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+  if (type === 'groups') ui.selectAllGroups.checked = allVisibleSelected;
+  else ui.selectAllContacts.checked = allVisibleSelected;
+  pageInfo.textContent = `Page ${safePage} of ${totalPages}`;
+}
+
+function renderAudienceTables() {
+  renderTable('groups');
+  renderTable('contacts');
+  updateTaskPreview();
+}
+
+function addTimeField(value = '09:00') {
+  taskBuilderState.dailyTimes.push(value);
+  renderFrequencyOptions();
+}
+
+function buildScheduleDescription() {
+  const startDate = ui.startDateInput.value || 'No date selected';
+  const startTime = ui.startTimeInput.value || 'No time selected';
+  if (!taskBuilderState.frequency) return 'Choose a frequency to see the exact rule summary.';
+  if (taskBuilderState.frequency === 'once') return `Task will run once on ${startDate} at ${startTime}.`;
+  if (taskBuilderState.frequency === 'daily') return `Task will run daily starting ${startDate} at ${taskBuilderState.dailyTimes.join(', ')}.`;
+  if (taskBuilderState.frequency === 'weekly') return `Task will run weekly on ${taskBuilderState.weeklySlots.map((slot) => `${slot.day} ${slot.time}`).join(', ')} starting ${startDate}.`;
+  return `Task will run monthly using weeks [${taskBuilderState.monthlyWeeks.join(', ') || 'none'}] and days [${taskBuilderState.monthlyDays.join(', ') || 'none'}] starting ${startDate} at ${startTime}.`;
+}
+
+function buildScheduleLabel() {
+  return taskBuilderState.frequency ? `Next rule: ${taskBuilderState.frequency}` : 'Pending setup';
+}
+
+function renderFrequencyOptions() {
+  const frequency = ui.frequencySelect.value;
+  taskBuilderState.frequency = frequency;
+  if (!frequency) {
+    ui.frequencyOptions.innerHTML = '';
+    updateTaskPreview();
+    return;
+  }
+
+  if (frequency === 'once') {
+    ui.frequencyOptions.innerHTML = '<div class="option-card">This task will run one time using the selected start date and start time.</div>';
+  } else if (frequency === 'daily') {
+    ui.frequencyOptions.innerHTML = `
+      <div class="option-card">
+        <strong>Daily run times</strong>
+        <div class="stack-sm">${taskBuilderState.dailyTimes.map((time, index) => `<label><span>Time ${index + 1}</span><input type="time" data-daily-time="${index}" value="${time}" /></label>`).join('')}</div>
+        <button id="addDailyTimeButton" class="secondary-button" type="button">Add another time</button>
+      </div>`;
+  } else if (frequency === 'weekly') {
+    ui.frequencyOptions.innerHTML = `
+      <div class="option-card">
+        <strong>Weekly slots</strong>
+        <div class="stack-sm">${taskBuilderState.weeklySlots.map((slot, index) => `
+          <div class="hero-actions">
+            <select data-weekly-day="${index}">
+              ${['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((day) => `<option value="${day}" ${slot.day === day ? 'selected' : ''}>${day}</option>`).join('')}
+            </select>
+            <input type="time" data-weekly-time="${index}" value="${slot.time}" />
+          </div>`).join('')}</div>
+        <button id="addWeeklySlotButton" class="secondary-button" type="button">Add day & time</button>
+      </div>`;
+  } else {
+    const weeks = ['first week', 'second week', 'third week', 'last week'];
+    ui.frequencyOptions.innerHTML = `
+      <div class="option-card">
+        <strong>Monthly options</strong>
+        <div>
+          <span class="muted">Choose one or more week positions.</span>
+          <div class="chip-grid">${weeks.map((week) => `<button class="chip-toggle ${taskBuilderState.monthlyWeeks.includes(week) ? 'active' : ''}" type="button" data-month-week="${week}">${week}</button>`).join('')}</div>
+        </div>
+        <label>
+          <span>Specific days of the month (comma separated)</span>
+          <input id="monthlyDaysInput" type="text" value="${taskBuilderState.monthlyDays.join(', ')}" placeholder="1, 15, 28" />
+        </label>
+      </div>`;
+  }
+  updateTaskPreview();
+}
+
+async function handleTextGeneration() {
+  const prompt = ui.aiTextPrompt.value.trim();
+  if (!prompt) {
+    showToast('Enter a prompt for AI text generation.');
+    return;
+  }
+  ui.aiTextStatus.textContent = 'Generating text...';
+  try {
+    const data = await api.generateText({ prompt });
+    ui.aiTextStatus.textContent = data.text;
+    taskBuilderState.quill.root.innerHTML = `<p>${escapeHtml(data.text).replace(/\n/g, '<br>')}</p>`;
+    setTaskTab('message');
+    updateTaskPreview();
+    showToast('AI message inserted into the editor.');
+  } catch (error) {
+    ui.aiTextStatus.textContent = error.message;
+    showToast(error.message);
+  }
+}
+
+async function handleImageGeneration() {
+  const prompt = ui.aiImagePrompt.value.trim();
+  if (!prompt) {
+    showToast('Enter a prompt for AI image generation.');
+    return;
+  }
+  ui.aiImageStatus.textContent = 'Generating image...';
+  try {
+    const data = await api.generateImage({ prompt });
+    taskBuilderState.pendingImage = { name: 'AI generated image', type: 'image', dataUrl: data.imageUrl, source: 'ai' };
+    ui.aiImageStatus.innerHTML = `<article class="media-card"><img src="${data.imageUrl}" alt="AI generated" /></article>`;
+    ui.regenerateImageButton.classList.remove('hidden');
+    ui.approveImageButton.classList.remove('hidden');
+    showToast('AI image generated. Approve it to add to the queue.');
+  } catch (error) {
+    ui.aiImageStatus.textContent = error.message;
+    showToast(error.message);
+  }
+}
+
+function approvePendingImage() {
+  if (!taskBuilderState.pendingImage) {
+    showToast('Generate an image first.');
+    return;
+  }
+  taskBuilderState.mediaQueue.push(taskBuilderState.pendingImage);
+  taskBuilderState.pendingImage = null;
+  setTaskTab('message');
+  updateTaskPreview();
+  showToast('Image approved and added to the queue.');
+}
+
+async function handleFileUpload(file) {
+  if (!file) return;
+  const allowedText = ['text/plain'];
+  const isImage = file.type.startsWith('image/');
+  const isVideo = file.type.startsWith('video/');
+  const isText = allowedText.includes(file.type) || file.name.endsWith('.txt');
+  if (!isImage && !isVideo && !isText) {
+    showToast('Only image, video, and text files are supported.');
+    return;
+  }
+  if (file.size > 20 * 1024 * 1024) {
+    showToast('Media files must be 20MB or smaller.');
+    return;
+  }
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Unable to read the selected file.'));
+    reader.readAsDataURL(file);
+  });
+  const mediaType = isImage ? 'image' : isVideo ? 'video' : 'text';
+  taskBuilderState.mediaQueue.push({ name: file.name, type: mediaType, dataUrl, previewText: isText ? 'Text file added to queue.' : '' });
+  ui.mediaFileInput.value = '';
+  updateTaskPreview();
+  showToast('Media added to the queue.');
+}
+
+function buildScheduleConfig() {
+  return {
+    startDate: ui.startDateInput.value,
+    startTime: ui.startTimeInput.value,
+    frequency: ui.frequencySelect.value,
+    dailyTimes: taskBuilderState.dailyTimes,
+    weeklySlots: taskBuilderState.weeklySlots,
+    monthlyWeeks: taskBuilderState.monthlyWeeks,
+    monthlyDays: taskBuilderState.monthlyDays,
+  };
+}
+
+async function scheduleTask() {
+  const title = ui.taskTitle.value.trim() || 'Untitled WhatsApp task';
+  const messageText = extractMessageText();
+  if (!messageText) {
+    showToast('Enter or generate a message before scheduling.');
+    setTaskTab('message');
+    return;
+  }
+  if (!taskBuilderState.selectedGroups.size && !taskBuilderState.selectedContacts.size) {
+    showToast('Select at least one group or contact.');
+    setTaskTab('audience');
+    return;
+  }
+  if (!ui.frequencySelect.value || !ui.startDateInput.value || !ui.startTimeInput.value) {
+    showToast('Complete the scheduling inputs first.');
+    return;
+  }
+
+  try {
+    await api.createTask({
+      title,
+      type: 'WhatsApp automation',
+      description: translateTags(messageText).slice(0, 240),
+      messageHtml: extractMessageHtml(),
+      messageText,
+      translatedPreview: translateTags(messageText),
+      mediaQueue: taskBuilderState.mediaQueue,
+      recipients: {
+        groups: getSelectedItems(groups, taskBuilderState.selectedGroups),
+        contacts: getSelectedItems(contacts, taskBuilderState.selectedContacts),
+      },
+      schedule: buildScheduleConfig(),
+    });
+    resetTaskBuilder();
+    await loadTasks();
+    showToast('Task scheduled successfully.');
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+function resetTaskBuilder() {
+  ui.taskTitle.value = '';
+  taskBuilderState.quill.setText('');
+  taskBuilderState.mediaQueue = [];
+  taskBuilderState.pendingImage = null;
+  taskBuilderState.selectedGroups = new Set();
+  taskBuilderState.selectedContacts = new Set();
+  taskBuilderState.groupPage = 1;
+  taskBuilderState.contactPage = 1;
+  taskBuilderState.frequency = '';
+  taskBuilderState.dailyTimes = ['09:00'];
+  taskBuilderState.weeklySlots = [{ day: 'Monday', time: '09:00' }];
+  taskBuilderState.monthlyWeeks = [];
+  taskBuilderState.monthlyDays = [];
+  ui.aiTextPrompt.value = '';
+  ui.aiImagePrompt.value = '';
+  ui.aiTextStatus.textContent = 'AI generated text will appear here before it is inserted into the editor.';
+  ui.aiImageStatus.textContent = 'Generated image will appear here for review.';
+  ui.regenerateImageButton.classList.add('hidden');
+  ui.approveImageButton.classList.add('hidden');
+  ui.startDateInput.value = '';
+  ui.startTimeInput.value = '';
+  ui.frequencySelect.value = '';
+  ui.frequencyOptions.innerHTML = '';
+  renderAudienceTables();
+  setTaskTab('message');
+  updateTaskPreview();
+}
+
+function initQuill() {
+  taskBuilderState.quill = new window.Quill('#messageEditor', {
+    theme: 'snow',
+    placeholder: 'Type or paste the WhatsApp message here...',
+    modules: { toolbar: [['bold', 'italic', 'underline'], [{ list: 'ordered' }, { list: 'bullet' }], ['link', 'clean']] },
+  });
+  taskBuilderState.quill.on('text-change', updateTaskPreview);
+}
+
 ui.loginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const formData = new FormData(event.currentTarget);
   try {
-    const payload = await api.login(Object.fromEntries(formData.entries()));
+    const payload = await api.login(Object.fromEntries(new FormData(event.currentTarget).entries()));
     await handleAuthSuccess(payload, 'Logged in successfully. Your browser session has been saved.');
   } catch (error) {
     showToast(error.message);
@@ -217,9 +672,8 @@ ui.loginForm.addEventListener('submit', async (event) => {
 
 ui.signupForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const formData = new FormData(event.currentTarget);
   try {
-    const payload = await api.signup(Object.fromEntries(formData.entries()));
+    const payload = await api.signup(Object.fromEntries(new FormData(event.currentTarget).entries()));
     await handleAuthSuccess(payload, 'Account created successfully. Your 150 credits are ready.');
   } catch (error) {
     showToast(error.message);
@@ -228,9 +682,8 @@ ui.signupForm.addEventListener('submit', async (event) => {
 
 ui.enquiryForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const formData = new FormData(event.currentTarget);
   try {
-    const payload = await api.sendEnquiry(Object.fromEntries(formData.entries()));
+    const payload = await api.sendEnquiry(Object.fromEntries(new FormData(event.currentTarget).entries()));
     event.currentTarget.reset();
     showToast(payload.message || 'Enquiry saved successfully.');
     window.open(payload.mailtoUrl, '_blank', 'noopener');
@@ -239,25 +692,8 @@ ui.enquiryForm.addEventListener('submit', async (event) => {
   }
 });
 
-ui.taskForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const formData = new FormData(event.currentTarget);
-  try {
-    await api.createTask(Object.fromEntries(formData.entries()));
-    event.currentTarget.reset();
-    await loadTasks();
-    showToast('Task created successfully.');
-  } catch (error) {
-    showToast(error.message);
-  }
-});
-
 ui.logoutButton.addEventListener('click', async () => {
-  try {
-    await api.logout();
-  } catch (_) {
-    // ignore logout errors during client cleanup
-  }
+  try { await api.logout(); } catch {}
   setToken('');
   setUser(null);
   stopPoller();
@@ -267,21 +703,18 @@ ui.logoutButton.addEventListener('click', async () => {
 });
 
 ui.themeToggle.addEventListener('click', async () => {
-  const current = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
-  const next = current === 'dark' ? 'light' : 'dark';
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
   applyTheme(next);
   if (appState.user) {
     try {
       const data = await api.setTheme(next);
       setUser(data.user);
       updateUserUI();
-      showToast(`Theme switched to ${next}.`);
     } catch (error) {
       showToast(error.message);
     }
-  } else {
-    showToast(`Theme switched to ${next}.`);
   }
+  showToast(`Theme switched to ${next}.`);
 });
 
 ui.startButton.addEventListener('click', () => navigate(appState.user ? 'dashboard' : 'signup'));
@@ -300,44 +733,139 @@ ui.connectWhatsappButton.addEventListener('click', async () => {
   }
 });
 
-document.querySelectorAll('[data-provider]').forEach((button) => {
-  button.addEventListener('click', () => handleSocialClick(button.dataset.provider));
+ui.openAiTextTabButton.addEventListener('click', () => setTaskTab('ai-text'));
+ui.openAiMediaTabButton.addEventListener('click', () => setTaskTab('ai-media'));
+ui.generateMoreMediaButton.addEventListener('click', () => setTaskTab('ai-media'));
+ui.messageNextButton.addEventListener('click', () => setTaskTab('audience'));
+ui.audienceBackButton.addEventListener('click', () => setTaskTab('message'));
+ui.audienceNextButton.addEventListener('click', () => setTaskTab('schedule'));
+ui.scheduleBackButton.addEventListener('click', () => setTaskTab('audience'));
+ui.generateTextButton.addEventListener('click', handleTextGeneration);
+ui.generateImageButton.addEventListener('click', handleImageGeneration);
+ui.regenerateImageButton.addEventListener('click', handleImageGeneration);
+ui.approveImageButton.addEventListener('click', approvePendingImage);
+ui.mediaFileInput.addEventListener('change', (event) => handleFileUpload(event.target.files?.[0]));
+ui.frequencySelect.addEventListener('change', renderFrequencyOptions);
+ui.startDateInput.addEventListener('change', updateTaskPreview);
+ui.startTimeInput.addEventListener('change', updateTaskPreview);
+ui.scheduleTaskButton.addEventListener('click', scheduleTask);
+ui.taskTitle.addEventListener('input', updateTaskPreview);
+ui.groupSearch.addEventListener('input', () => { taskBuilderState.groupPage = 1; renderTable('groups'); });
+ui.contactSearch.addEventListener('input', () => { taskBuilderState.contactPage = 1; renderTable('contacts'); });
+ui.groupSortButton.addEventListener('click', () => { taskBuilderState.groupSortAsc = !taskBuilderState.groupSortAsc; ui.groupSortButton.textContent = `Sort: ${taskBuilderState.groupSortAsc ? 'A–Z' : 'Z–A'}`; renderTable('groups'); });
+ui.contactSortButton.addEventListener('click', () => { taskBuilderState.contactSortAsc = !taskBuilderState.contactSortAsc; ui.contactSortButton.textContent = `Sort: ${taskBuilderState.contactSortAsc ? 'A–Z' : 'Z–A'}`; renderTable('contacts'); });
+ui.groupPrevButton.addEventListener('click', () => { taskBuilderState.groupPage = Math.max(1, taskBuilderState.groupPage - 1); renderTable('groups'); });
+ui.groupNextButton.addEventListener('click', () => { taskBuilderState.groupPage += 1; renderTable('groups'); });
+ui.contactPrevButton.addEventListener('click', () => { taskBuilderState.contactPage = Math.max(1, taskBuilderState.contactPage - 1); renderTable('contacts'); });
+ui.contactNextButton.addEventListener('click', () => { taskBuilderState.contactPage += 1; renderTable('contacts'); });
+
+ui.selectAllGroups.addEventListener('change', () => {
+  getFilteredData(groups, ui.groupSearch.value, taskBuilderState.groupSortAsc).forEach((item) => ui.selectAllGroups.checked ? taskBuilderState.selectedGroups.add(item.id) : taskBuilderState.selectedGroups.delete(item.id));
+  renderTable('groups');
+  updateTaskPreview();
+});
+ui.selectAllContacts.addEventListener('change', () => {
+  getFilteredData(contacts, ui.contactSearch.value, taskBuilderState.contactSortAsc).forEach((item) => ui.selectAllContacts.checked ? taskBuilderState.selectedContacts.add(item.id) : taskBuilderState.selectedContacts.delete(item.id));
+  renderTable('contacts');
+  updateTaskPreview();
 });
 
-document.querySelectorAll('[data-password-toggle]').forEach((button) => {
-  button.addEventListener('click', () => {
-    const input = document.getElementById(button.dataset.passwordToggle);
-    const nextType = input.type === 'password' ? 'text' : 'password';
-    input.type = nextType;
-    button.textContent = nextType === 'password' ? 'Show' : 'Hide';
-  });
+document.addEventListener('click', (event) => {
+  const tabButton = event.target.closest('[data-task-tab]');
+  if (tabButton) setTaskTab(tabButton.dataset.taskTab);
+
+  const backButton = event.target.closest('[data-task-back]');
+  if (backButton) setTaskTab(backButton.dataset.taskBack);
+
+  const deleteButton = event.target.closest('[data-delete-media]');
+  if (deleteButton) {
+    taskBuilderState.mediaQueue.splice(Number(deleteButton.dataset.deleteMedia), 1);
+    updateTaskPreview();
+  }
+
+  const groupSelect = event.target.closest('[data-select-group]');
+  if (groupSelect) {
+    if (groupSelect.checked) taskBuilderState.selectedGroups.add(groupSelect.dataset.selectGroup);
+    else taskBuilderState.selectedGroups.delete(groupSelect.dataset.selectGroup);
+    updateTaskPreview();
+  }
+
+  const contactSelect = event.target.closest('[data-select-contact]');
+  if (contactSelect) {
+    if (contactSelect.checked) taskBuilderState.selectedContacts.add(contactSelect.dataset.selectContact);
+    else taskBuilderState.selectedContacts.delete(contactSelect.dataset.selectContact);
+    updateTaskPreview();
+  }
+
+  const weekChip = event.target.closest('[data-month-week]');
+  if (weekChip) {
+    const week = weekChip.dataset.monthWeek;
+    if (taskBuilderState.monthlyWeeks.includes(week)) taskBuilderState.monthlyWeeks = taskBuilderState.monthlyWeeks.filter((item) => item !== week);
+    else taskBuilderState.monthlyWeeks.push(week);
+    renderFrequencyOptions();
+  }
+
+  if (event.target.id === 'addDailyTimeButton') addTimeField();
+  if (event.target.id === 'addWeeklySlotButton') {
+    taskBuilderState.weeklySlots.push({ day: 'Monday', time: '09:00' });
+    renderFrequencyOptions();
+  }
 });
 
+document.addEventListener('input', (event) => {
+  if (event.target.matches('[data-daily-time]')) {
+    taskBuilderState.dailyTimes[Number(event.target.dataset.dailyTime)] = event.target.value;
+    updateTaskPreview();
+  }
+  if (event.target.matches('[data-weekly-day]')) {
+    taskBuilderState.weeklySlots[Number(event.target.dataset.weeklyDay)].day = event.target.value;
+    updateTaskPreview();
+  }
+  if (event.target.matches('[data-weekly-time]')) {
+    taskBuilderState.weeklySlots[Number(event.target.dataset.weeklyTime)].time = event.target.value;
+    updateTaskPreview();
+  }
+  if (event.target.id === 'monthlyDaysInput') {
+    taskBuilderState.monthlyDays = event.target.value.split(',').map((value) => Number(value.trim())).filter((value) => Number.isInteger(value) && value > 0 && value <= 31);
+    updateTaskPreview();
+  }
+  if (event.target.id === 'recipientSummaryInput') {
+    // allow manual additions for display only
+    ui.selectedAudienceSummary.innerHTML = event.target.value.split(',').map((item) => item.trim()).filter(Boolean).map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join('') || '<span class="muted">No audience selected yet.</span>';
+  }
+});
+
+document.querySelectorAll('[data-provider]').forEach((button) => button.addEventListener('click', () => handleSocialClick(button.dataset.provider)));
+document.querySelectorAll('[data-password-toggle]').forEach((button) => button.addEventListener('click', () => {
+  const input = document.getElementById(button.dataset.passwordToggle);
+  input.type = input.type === 'password' ? 'text' : 'password';
+  button.textContent = input.type === 'password' ? 'Show' : 'Hide';
+}));
 ['loginPassword', 'signupPassword'].forEach((id) => {
   const input = document.getElementById(id);
   const output = document.getElementById(`${id}Strength`);
   input.addEventListener('input', () => updatePasswordStrength(input, output));
 });
-
-document.querySelectorAll('[data-share]').forEach((link) => {
-  link.addEventListener('click', (event) => {
-    event.preventDefault();
-    const url = encodeURIComponent(window.location.origin);
-    const text = encodeURIComponent('Try CodeBot for WhatsApp automation and task management.');
-    const provider = link.dataset.share;
-    const targets = {
-      whatsapp: `https://wa.me/?text=${text}%20${url}`,
-      twitter: `https://twitter.com/intent/tweet?text=${text}&url=${url}`,
-      facebook: `https://www.facebook.com/sharer/sharer.php?u=${url}`,
-      tiktok: 'https://www.tiktok.com/',
-    };
-    window.open(targets[provider], '_blank', 'noopener');
-  });
-});
+document.querySelectorAll('[data-share]').forEach((link) => link.addEventListener('click', (event) => {
+  event.preventDefault();
+  const url = encodeURIComponent(window.location.origin);
+  const text = encodeURIComponent('Try CodeBot for WhatsApp automation and task management.');
+  const provider = link.dataset.share;
+  const targets = {
+    whatsapp: `https://wa.me/?text=${text}%20${url}`,
+    twitter: `https://twitter.com/intent/tweet?text=${text}&url=${url}`,
+    facebook: `https://www.facebook.com/sharer/sharer.php?u=${url}`,
+    tiktok: 'https://www.tiktok.com/',
+  };
+  window.open(targets[provider], '_blank', 'noopener');
+}));
 
 attachRouteButtons();
 applyTheme(localStorage.getItem('wa_theme') || 'light');
 updateUserUI();
+initQuill();
+renderAudienceTables();
+updateTaskPreview();
 
 const existingToken = localStorage.getItem('wa_token');
 if (existingToken) {

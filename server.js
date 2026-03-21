@@ -23,6 +23,10 @@ const IS_LOCAL = process.env.USE_LOCAL === 'true';
 const MONGO_URI = IS_LOCAL ? 'mongodb://localhost:27017/whatsapp_bot' : process.env.CLOUD_MONGO_URI;
 const PORT = Number(process.env.PORT || 3000);
 const CREDIT_SIGNUP_BONUS = Number(process.env.DEFAULT_SIGNUP_CREDITS || 150);
+const SILICONFLOW_API_KEY = process.env.SILICONFLOW_API_KEY || '';
+const SILICONFLOW_BASE_URL = process.env.SILICONFLOW_BASE_URL || 'https://api.siliconflow.cn/v1';
+const SILICONFLOW_TEXT_MODEL = process.env.SILICONFLOW_TEXT_MODEL || 'Qwen/Qwen2.5-7B-Instruct';
+const SILICONFLOW_IMAGE_MODEL = process.env.SILICONFLOW_IMAGE_MODEL || 'Qwen/Qwen-Image';
 
 const connectionStateStore = new Map();
 const socketStore = new Map();
@@ -113,6 +117,12 @@ const taskSchema = new mongoose.Schema({
   title: { type: String, required: true, trim: true },
   type: { type: String, required: true, trim: true },
   description: { type: String, required: true, trim: true },
+  messageHtml: { type: String, default: '' },
+  messageText: { type: String, default: '' },
+  translatedPreview: { type: String, default: '' },
+  mediaQueue: { type: Array, default: [] },
+  recipients: { type: Object, default: { groups: [], contacts: [] } },
+  schedule: { type: Object, default: {} },
   status: { type: String, enum: ['draft', 'active', 'completed'], default: 'active' },
 }, { timestamps: true });
 
@@ -241,6 +251,32 @@ async function issueSession(user) {
   const token = createToken();
   await AppSession.create({ tokenHash: sha256(token), userId: user._id });
   return { token, user: sanitizeUser(user) };
+}
+
+async function callSiliconFlow(path, payload) {
+  if (!SILICONFLOW_API_KEY) {
+    throw new Error('Missing SILICONFLOW_API_KEY on the server. Add it to your environment before using AI generation.');
+  }
+
+  const response = await fetch(`${SILICONFLOW_BASE_URL}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${SILICONFLOW_API_KEY}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.message || data.error?.message || 'SiliconFlow request failed.');
+  }
+  return data;
+}
+
+function fallbackImage(prompt) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect width="100%" height="100%" fill="#0f172a"/><rect x="64" y="64" width="896" height="896" rx="48" fill="#25d366" opacity="0.16"/><text x="80" y="220" fill="white" font-size="56" font-family="Arial">AI image placeholder</text><text x="80" y="320" fill="white" font-size="28" font-family="Arial">${String(prompt).replace(/[<&>]/g, '')}</text></svg>`;
+  return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
 }
 
 function buildSocialProviderResponse(provider) {
@@ -433,10 +469,61 @@ app.post('/api/tasks', authenticateRequest, async (req, res) => {
     title,
     type,
     description,
+    messageHtml: String(req.body.messageHtml || ''),
+    messageText: String(req.body.messageText || ''),
+    translatedPreview: String(req.body.translatedPreview || ''),
+    mediaQueue: Array.isArray(req.body.mediaQueue) ? req.body.mediaQueue.slice(0, 10) : [],
+    recipients: req.body.recipients || { groups: [], contacts: [] },
+    schedule: req.body.schedule || {},
     status: 'active',
   });
 
   res.status(201).json({ task });
+});
+
+app.post('/api/ai/text', authenticateRequest, async (req, res) => {
+  try {
+    const prompt = String(req.body.prompt || '').trim();
+    if (!prompt) return res.status(400).json({ error: 'Prompt is required.' });
+
+    const data = await callSiliconFlow('/chat/completions', {
+      model: SILICONFLOW_TEXT_MODEL,
+      messages: [
+        { role: 'system', content: 'You write concise WhatsApp-ready marketing and operational messages.' },
+        { role: 'user', content: prompt },
+      ],
+      temperature: 0.7,
+    });
+
+    const text = data.choices?.[0]?.message?.content?.trim();
+    if (!text) throw new Error('No text was returned by the AI provider.');
+    res.json({ text });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Unable to generate AI text.' });
+  }
+});
+
+app.post('/api/ai/image', authenticateRequest, async (req, res) => {
+  try {
+    const prompt = String(req.body.prompt || '').trim();
+    if (!prompt) return res.status(400).json({ error: 'Prompt is required.' });
+
+    if (!SILICONFLOW_API_KEY) {
+      return res.json({ imageUrl: fallbackImage(prompt), model: 'fallback-placeholder' });
+    }
+
+    const data = await callSiliconFlow('/images/generations', {
+      model: SILICONFLOW_IMAGE_MODEL,
+      prompt,
+      size: '1024x1024',
+    });
+
+    const imageUrl = data.images?.[0]?.url || data.data?.[0]?.url || data.data?.[0]?.b64_json && `data:image/png;base64,${data.data[0].b64_json}`;
+    if (!imageUrl) throw new Error('No image was returned by the AI provider.');
+    res.json({ imageUrl });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Unable to generate AI image.' });
+  }
 });
 
 app.get('/api/tasks', authenticateRequest, async (req, res) => {
