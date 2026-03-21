@@ -43,6 +43,7 @@ function sanitizeUser(user) {
     credits: user.credits,
     theme: user.theme,
     whatsappStatus: user.whatsappStatus,
+    whatsappPhone: user.whatsappPhone,
     walletBalance: user.walletBalance,
   };
 }
@@ -107,10 +108,27 @@ const whatsappConnectionSchema = new mongoose.Schema({
   lastUpdatedAt: { type: Date, default: Date.now },
 }, { timestamps: true });
 
+const taskSchema = new mongoose.Schema({
+  userId: { type: String, required: true, index: true },
+  title: { type: String, required: true, trim: true },
+  type: { type: String, required: true, trim: true },
+  description: { type: String, required: true, trim: true },
+  status: { type: String, enum: ['draft', 'active', 'completed'], default: 'active' },
+}, { timestamps: true });
+
+const enquirySchema = new mongoose.Schema({
+  name: { type: String, required: true, trim: true },
+  email: { type: String, required: true, trim: true, lowercase: true },
+  message: { type: String, required: true, trim: true },
+  recipient: { type: String, default: 'admin@codesignite.com' },
+}, { timestamps: true });
+
 const User = mongoose.model('User', userSchema);
 const AppSession = mongoose.model('AppSession', appSessionSchema);
 const AuthState = mongoose.model('AuthState', authSchema);
 const WhatsAppConnection = mongoose.model('WhatsAppConnection', whatsappConnectionSchema);
+const Task = mongoose.model('Task', taskSchema);
+const Enquiry = mongoose.model('Enquiry', enquirySchema);
 
 async function connectDatabase() {
   if (!MONGO_URI) {
@@ -399,6 +417,50 @@ app.get('/api/whatsapp/status', authenticateRequest, async (req, res) => {
   const userId = String(req.user._id);
   const state = connectionStateStore.get(userId) || await WhatsAppConnection.findOne({ userId }).lean() || buildDefaultConnectionState(userId);
   res.json(state);
+});
+
+app.post('/api/tasks', authenticateRequest, async (req, res) => {
+  const title = String(req.body.title || '').trim();
+  const type = String(req.body.type || '').trim();
+  const description = String(req.body.description || '').trim();
+
+  if (!title || !type || !description) {
+    return res.status(400).json({ error: 'Title, type, and description are required.' });
+  }
+
+  const task = await Task.create({
+    userId: String(req.user._id),
+    title,
+    type,
+    description,
+    status: 'active',
+  });
+
+  res.status(201).json({ task });
+});
+
+app.get('/api/tasks', authenticateRequest, async (req, res) => {
+  const tasks = await Task.find({ userId: String(req.user._id) }).sort({ createdAt: -1 }).lean();
+  res.json({ tasks });
+});
+
+app.post('/api/enquiries', async (req, res) => {
+  const name = String(req.body.name || '').trim();
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const message = String(req.body.message || '').trim();
+
+  if (!name || !email || !message) {
+    return res.status(400).json({ error: 'Name, email, and message are required.' });
+  }
+
+  await Enquiry.create({ name, email, message, recipient: 'admin@codesignite.com' });
+
+  const mailtoUrl = `mailto:admin@codesignite.com?subject=${encodeURIComponent(`CodeBot enquiry from ${name}`)}&body=${encodeURIComponent(`Name: ${name}\nEmail: ${email}\n\n${message}`)}`;
+  res.status(201).json({
+    success: true,
+    message: 'Enquiry saved and ready to send to admin@codesignite.com.',
+    mailtoUrl,
+  });
 });
 
 app.get('/api/config/required-credentials', (req, res) => {
