@@ -62,7 +62,7 @@ async function applyCreditActivity(user, amount, reason) {
 
 function ensureCredits(user, amount, label) {
   if (Number(user.credits || 0) < Number(amount || 0)) {
-    throw new Error(`Not enough credits to ${label}.`);
+    throw new Error(`Insufficient credits to ${label}. Your account has ${Number(user.credits || 0)} credits remaining.`);
   }
 }
 
@@ -623,6 +623,8 @@ app.post('/api/tasks', authenticateRequest, async (req, res) => {
 
   ensureCredits(req.user, CREDIT_COSTS.createTask, 'create a task');
 
+  const recipients = req.body.recipients || {};
+  const groupDeliveryMode = recipients.groupDeliveryMode === 'members' ? 'members' : 'group';
   const task = await Task.create({
     userId: String(req.user._id),
     title,
@@ -632,7 +634,11 @@ app.post('/api/tasks', authenticateRequest, async (req, res) => {
     messageText: String(req.body.messageText || ''),
     translatedPreview: String(req.body.translatedPreview || ''),
     mediaQueue: Array.isArray(req.body.mediaQueue) ? req.body.mediaQueue.slice(0, 10) : [],
-    recipients: req.body.recipients || { groups: [], contacts: [] },
+    recipients: {
+      groups: Array.isArray(recipients.groups) ? recipients.groups : [],
+      contacts: Array.isArray(recipients.contacts) ? recipients.contacts : [],
+      groupDeliveryMode,
+    },
     schedule: req.body.schedule || {},
     status: 'active',
   });

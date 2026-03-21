@@ -16,13 +16,9 @@
 <body>
   <div class="site-shell">
     <header class="app-header">
-      <button class="brand-block brand-button" type="button" data-route="home" aria-label="Go to CodeBot home">
-        <div class="brand-logo">
+      <button class="brand-block brand-button" type="button" data-route="home" aria-label="Go to home">
+        <div class="brand-logo" aria-label="Brand logo">
           <img src="/assets/logo.png" alt="CodeBot logo" class="brand-logo__image" />
-        </div>
-        <div>
-          <p class="eyebrow">CodeIgnite Automation Suite</p>
-          <h1>CodeBot</h1>
         </div>
       </button>
 
@@ -292,7 +288,7 @@
                 </div>
                 <div class="status-banner">
                   <span>Connected phone</span>
-                  <strong id="whatsappPhone">Not available</strong>
+                  <strong id="whatsappPhone" title="Not available">Not available</strong>
                 </div>
               </div>
               <p id="whatsappStatusText" class="muted">Connect your WhatsApp account to generate a QR code and save the session state.</p>
@@ -353,7 +349,7 @@
                       <span>Upload media (image, video, or text file, max 20MB)</span>
                       <input id="mediaFileInput" type="file" accept="image/*,video/*,.txt,text/plain" />
                     </label>
-                    <small class="muted">Uploaded files are added to the queue after validation. AI generation currently supports image creation only.</small>
+                    <small class="muted">You can upload your own image, video, or text file directly, or generate an AI image and approve it into the same queue.</small>
                     <button id="openAiMediaTabButton" class="secondary-button" type="button">Generate media with AI</button>
                   </div>
                   <div class="stack-sm">
@@ -440,6 +436,17 @@
                 </div>
                 <div class="audience-grid">
                   <section class="table-card">
+                    <div class="stack-sm audience-mode-card">
+                      <strong>How to send to selected groups</strong>
+                      <label class="radio-option">
+                        <input type="radio" name="groupDeliveryMode" value="group" checked />
+                        <span>Send to the group chat only</span>
+                      </label>
+                      <label class="radio-option">
+                        <input type="radio" name="groupDeliveryMode" value="members" />
+                        <span>Send individually to all members of each selected group</span>
+                      </label>
+                    </div>
                     <div class="table-toolbar">
                       <strong>Groups</strong>
                       <label class="search-field"><span>Search</span><input id="groupSearch" type="search" placeholder="Search groups" /></label>
@@ -487,7 +494,7 @@
                 <div class="schedule-grid">
                   <section class="stack">
                     <label>
-                      <span>Selected groups and contacts</span>
+                      <span>Selected recipients</span>
                       <textarea id="recipientSummaryInput" rows="4" placeholder="Selected recipients will appear here."></textarea>
                     </label>
                     <div class="stack-sm">
