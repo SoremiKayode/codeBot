@@ -16,9 +16,15 @@ const ui = {
   dashboardEmail: document.getElementById('dashboardEmail'),
   dashboardCredits: document.getElementById('dashboardCredits'),
   dashboardTheme: document.getElementById('dashboardTheme'),
+  dashboardUsernameSecondary: document.getElementById('dashboardUsernameSecondary'),
+  dashboardEmailSecondary: document.getElementById('dashboardEmailSecondary'),
+  dashboardCreditsSecondary: document.getElementById('dashboardCreditsSecondary'),
+  dashboardThemeSecondary: document.getElementById('dashboardThemeSecondary'),
   whatsappPhone: document.getElementById('whatsappPhone'),
   logoutButton: document.getElementById('logoutButton'),
   themeToggle: document.getElementById('themeToggle'),
+  menuToggle: document.getElementById('menuToggle'),
+  headerNavPanel: document.getElementById('headerNavPanel'),
   loginForm: document.getElementById('loginForm'),
   signupForm: document.getElementById('signupForm'),
   enquiryForm: document.getElementById('enquiryForm'),
@@ -117,9 +123,15 @@ function showToast(message) {
   showToast.timer = setTimeout(() => ui.toast.classList.add('hidden'), 3200);
 }
 
+function closeMenu() {
+  document.querySelector('.app-header')?.classList.remove('menu-open');
+  ui.menuToggle?.setAttribute('aria-expanded', 'false');
+}
+
 function navigate(route) {
   const targetRoute = ['dashboard', 'tasks'].includes(route) && !appState.user ? 'login' : route;
   setRoute(targetRoute);
+  closeMenu();
   Object.entries(views).forEach(([key, view]) => view.classList.toggle('active', key === targetRoute));
   if (targetRoute === 'tasks' && appState.user) {
     loadAudience();
@@ -137,7 +149,12 @@ function updateUserUI() {
   ui.dashboardUsername.textContent = user?.username || '-';
   ui.dashboardEmail.textContent = user?.email || '-';
   ui.dashboardCredits.textContent = String(user?.credits || 0);
-  ui.dashboardTheme.textContent = user?.theme === 'dark' ? 'Dark' : 'Light';
+  const themeLabel = user?.theme === 'dark' ? 'Dark' : 'Light';
+  ui.dashboardTheme.textContent = themeLabel;
+  if (ui.dashboardUsernameSecondary) ui.dashboardUsernameSecondary.textContent = user?.username || '-';
+  if (ui.dashboardEmailSecondary) ui.dashboardEmailSecondary.textContent = user?.email || '-';
+  if (ui.dashboardCreditsSecondary) ui.dashboardCreditsSecondary.textContent = String(user?.credits || 0);
+  if (ui.dashboardThemeSecondary) ui.dashboardThemeSecondary.textContent = themeLabel;
   document.documentElement.dataset.theme = user?.theme || localStorage.getItem('wa_theme') || 'light';
 }
 
@@ -217,6 +234,13 @@ async function syncWhatsAppStatus() {
 function startWhatsAppPolling() {
   stopPoller();
   appState.poller = setInterval(syncWhatsAppStatus, 3000);
+}
+
+function syncUserFromPayload(payload) {
+  if (payload?.user) {
+    setUser(payload.user);
+    updateUserUI();
+  }
 }
 
 async function handleAuthSuccess(payload, successMessage) {
@@ -522,6 +546,7 @@ async function handleTextGeneration() {
   ui.aiTextStatus.textContent = 'Generating text...';
   try {
     const data = await api.generateText({ prompt });
+    syncUserFromPayload(data);
     ui.aiTextStatus.textContent = data.text;
     taskBuilderState.quill.root.innerHTML = `<p>${escapeHtml(data.text).replace(/\n/g, '<br>')}</p>`;
     setTaskTab('message');
@@ -542,6 +567,7 @@ async function handleImageGeneration() {
   ui.aiImageStatus.textContent = 'Generating image...';
   try {
     const data = await api.generateImage({ prompt });
+    syncUserFromPayload(data);
     taskBuilderState.pendingImage = { name: 'AI generated image', type: 'image', dataUrl: data.imageUrl, source: 'ai' };
     ui.aiImageStatus.innerHTML = `<article class="media-card"><img src="${data.imageUrl}" alt="AI generated" /></article>`;
     ui.regenerateImageButton.classList.remove('hidden');
@@ -623,7 +649,7 @@ async function scheduleTask() {
   }
 
   try {
-    await api.createTask({
+    const payload = await api.createTask({
       title,
       type: 'WhatsApp automation',
       description: translateTags(messageText).slice(0, 240),
@@ -637,6 +663,7 @@ async function scheduleTask() {
       },
       schedule: buildScheduleConfig(),
     });
+    syncUserFromPayload(payload);
     resetTaskBuilder();
     await loadTasks();
     showToast('Task scheduled successfully.');
@@ -745,6 +772,7 @@ ui.goToTasksButton.addEventListener('click', () => navigate('tasks'));
 ui.connectWhatsappButton.addEventListener('click', async () => {
   try {
     const data = await api.connectWhatsApp();
+    syncUserFromPayload(data);
     ui.whatsappStatusText.textContent = data.message || 'Waiting for QR code.';
     ui.whatsappStatusBadge.textContent = data.status || 'connecting';
     ui.whatsappPhone.textContent = data.phoneNumber || 'Not available';
@@ -885,6 +913,12 @@ document.querySelectorAll('[data-share]').forEach((link) => link.addEventListene
 }));
 
 attachRouteButtons();
+ui.menuToggle?.addEventListener('click', () => {
+  const header = document.querySelector('.app-header');
+  const nextState = !header?.classList.contains('menu-open');
+  header?.classList.toggle('menu-open', nextState);
+  ui.menuToggle.setAttribute('aria-expanded', String(nextState));
+});
 applyTheme(localStorage.getItem('wa_theme') || 'light');
 updateUserUI();
 initQuill();

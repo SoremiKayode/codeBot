@@ -25,45 +25,74 @@
           <h1>CodeBot</h1>
         </div>
       </button>
-      <nav class="header-nav">
-        <button class="nav-link" data-route="home">Home</button>
-        <button class="nav-link" data-route="dashboard">Dashboard</button>
-        <button class="nav-link auth-only" data-route="tasks">Tasks</button>
-        <button class="nav-link guest-only" data-route="login">Login</button>
-        <button class="nav-link guest-only" data-route="signup">Sign up</button>
-      </nav>
-      <div class="header-actions">
-        <div class="theme-switch">
-          <span>Theme</span>
-          <button id="themeToggle" class="secondary-button" type="button">Toggle</button>
+
+      <button id="menuToggle" class="icon-button menu-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false" aria-controls="headerNavPanel">
+        <span></span><span></span><span></span>
+      </button>
+
+      <div id="headerNavPanel" class="header-panel">
+        <nav class="header-nav">
+          <button class="nav-link" data-route="home">Home</button>
+          <button class="nav-link" data-route="dashboard">Dashboard</button>
+          <button class="nav-link auth-only" data-route="tasks">Tasks</button>
+          <button class="nav-link guest-only" data-route="login">Login</button>
+          <button class="nav-link guest-only" data-route="signup">Sign up</button>
+        </nav>
+        <div class="header-actions">
+          <button id="themeToggle" class="icon-button theme-toggle" type="button" aria-label="Toggle theme" title="Toggle theme">
+            <span class="theme-icon theme-icon--sun">☀</span>
+            <span class="theme-icon theme-icon--moon">☾</span>
+          </button>
+          <div class="user-chip">
+            <span id="headerUsername">Guest</span>
+            <strong><span id="headerCredits">0</span> credits</strong>
+          </div>
+          <button id="logoutButton" class="secondary-button auth-only" type="button">Logout</button>
         </div>
-        <div class="user-chip">
-          <span id="headerUsername">Guest</span>
-          <strong><span id="headerCredits">0</span> credits</strong>
-        </div>
-        <button id="logoutButton" class="secondary-button auth-only" type="button">Logout</button>
       </div>
     </header>
 
     <main class="main-content">
       <section id="homeView" class="view active">
-        <div class="hero-panel home-grid">
-          <article class="hero-copy info-card hero-card">
-            <p class="eyebrow">Persistent WhatsApp productivity for fast-growing teams</p>
-            <h2>Turn conversations into automated workflows, scheduled campaigns, and reliable follow-up from one polished workspace.</h2>
-            <p class="muted">CodeBot helps businesses connect WhatsApp, create reusable tasks, manage credits, and keep their workspace ready whenever they return. New users receive <strong>150 starter credits</strong>—enough for many teams to test and stretch usage for months, and for lighter use cases it can last up to a year.</p>
-            <div class="hero-actions">
-              <button id="startButton" class="primary-button" type="button">Go to dashboard</button>
-              <button class="secondary-button" type="button" data-route="signup">Claim 150 credits</button>
+        <div class="hero-panel home-grid hero-shell">
+          <article class="info-card hero-card banner-card">
+            <div class="hero-banner-art" aria-hidden="true">
+              <div class="hero-orb hero-orb--one"></div>
+              <div class="hero-orb hero-orb--two"></div>
+              <div class="hero-mockup hero-mockup--dashboard">
+                <div class="hero-mockup__top"></div>
+                <div class="hero-mockup__rows">
+                  <span></span><span></span><span></span>
+                </div>
+              </div>
+              <div class="hero-mockup hero-mockup--phone">
+                <div class="chat-bubble"></div>
+                <div class="chat-bubble chat-bubble--light"></div>
+                <div class="chat-bubble"></div>
+              </div>
             </div>
-            <div class="hero-metrics">
-              <div class="metric-card"><strong>150</strong><span>free starter credits</span></div>
-              <div class="metric-card"><strong>24/7</strong><span>persistent browser sessions</span></div>
-              <div class="metric-card"><strong>1</strong><span>workspace for tasks and WhatsApp</span></div>
+            <div class="hero-copy stack">
+              <p class="eyebrow">Persistent WhatsApp productivity for fast-growing teams</p>
+              <h2>Turn conversations into automated workflows, scheduled campaigns, and reliable follow-up from one polished workspace.</h2>
+              <p class="muted">CodeBot helps businesses connect WhatsApp, create reusable tasks, manage credits, and keep their workspace ready whenever they return. New users receive <strong>150 starter credits</strong>—enough for many teams to test and stretch usage for months, and for lighter use cases it can last up to a year.</p>
+              <div class="banner-highlight-grid">
+                <div class="banner-highlight"><strong>Campaign-ready plans</strong><span>Build reminders, follow-ups, and repeatable outreach.</span></div>
+                <div class="banner-highlight"><strong>QR onboarding</strong><span>Connect WhatsApp and keep the state saved for the next visit.</span></div>
+                <div class="banner-highlight"><strong>Live workspace insight</strong><span>Track credits, connection health, theme, and task activity.</span></div>
+              </div>
+              <div class="hero-actions">
+                <button id="startButton" class="primary-button" type="button">Go to dashboard</button>
+                <button id="claimCreditsButton" class="secondary-button guest-only" type="button" data-route="signup">Claim 150 credits</button>
+              </div>
+              <div class="hero-metrics">
+                <div class="metric-card"><strong>150</strong><span>credits awarded</span></div>
+                <div class="metric-card"><strong>24/7</strong><span>persistent browser sessions</span></div>
+                <div class="metric-card"><strong>1</strong><span>workspace for tasks and WhatsApp</span></div>
+              </div>
             </div>
           </article>
 
-          <aside class="info-card stack">
+          <aside class="info-card stack elevated-sidecard">
             <h3>Why teams choose CodeBot</h3>
             <ul class="feature-list">
               <li>Create task plans for campaigns, reminders, and customer follow-ups.</li>
@@ -120,7 +149,7 @@
             <h3>Create your first automation task in minutes.</h3>
             <p class="muted">Sign up, connect WhatsApp, and move directly into a task workspace built for action.</p>
             <div class="hero-actions">
-              <button class="primary-button" type="button" data-route="signup">Create free account</button>
+              <button class="primary-button guest-only" type="button" data-route="signup">Create free account</button>
               <button class="secondary-button" type="button" data-route="login">I already have an account</button>
             </div>
           </article>
@@ -192,69 +221,108 @@
       </section>
 
       <section id="dashboardView" class="view">
-        <div class="dashboard-grid dashboard-grid--full">
-          <article class="info-card stack">
-            <div class="section-heading">
-              <div>
-                <p class="eyebrow">Account summary</p>
-                <h2>Workspace overview</h2>
+        <div class="dashboard-showcase stack">
+          <article class="dashboard-hero info-card">
+            <div class="dashboard-hero__copy stack">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Command center</p>
+                  <h2>Run your WhatsApp workspace with confidence</h2>
+                </div>
+                <button id="goToTasksButton" class="primary-button compact-button" type="button">Go to task page</button>
               </div>
-              <button id="goToTasksButton" class="primary-button compact-button" type="button">Go to task page</button>
+              <p class="muted">See your live credit balance, workspace identity, theme preference, and connection readiness in one premium dashboard built for repeat daily use.</p>
+              <div class="dashboard-kpis">
+                <div class="kpi-card accent-kpi">
+                  <span>Available credits</span>
+                  <strong id="dashboardCredits">0</strong>
+                  <small>Updated as you create tasks and use AI tools.</small>
+                </div>
+                <div class="kpi-card">
+                  <span>Workspace owner</span>
+                  <strong id="dashboardUsername">-</strong>
+                  <small id="dashboardEmail">-</small>
+                </div>
+                <div class="kpi-card">
+                  <span>Theme mode</span>
+                  <strong id="dashboardTheme">Light</strong>
+                  <small>Instantly synced across this session.</small>
+                </div>
+              </div>
             </div>
-            <div class="summary-grid">
-              <div class="summary-item">
-                <span>Username</span>
-                <strong id="dashboardUsername">-</strong>
-              </div>
-              <div class="summary-item">
-                <span>Email</span>
-                <strong id="dashboardEmail">-</strong>
-              </div>
-              <div class="summary-item">
-                <span>Credits</span>
-                <strong id="dashboardCredits">0</strong>
-              </div>
-              <div class="summary-item">
-                <span>Theme</span>
-                <strong id="dashboardTheme">Light</strong>
+            <div class="dashboard-hero__visual">
+              <div class="insight-card">
+                <span class="eyebrow">Workspace signal</span>
+                <h3>Healthy operations start with visibility.</h3>
+                <p class="muted">Monitor authentication, account state, credits, and messaging readiness before launching the next campaign.</p>
               </div>
             </div>
           </article>
 
-          <article class="info-card stack">
-            <div class="section-heading">
-              <div>
-                <p class="eyebrow">WhatsApp connection</p>
-                <h2>Persistent session setup</h2>
+          <div class="dashboard-grid dashboard-grid--full">
+            <article class="info-card stack gradient-card">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Account summary</p>
+                  <h2>Workspace overview</h2>
+                </div>
               </div>
-              <button id="connectWhatsappButton" class="primary-button compact-button" type="button">Connect WhatsApp</button>
-            </div>
-            <div class="summary-grid summary-grid--status">
-              <div class="status-banner">
-                <span>Status</span>
-                <strong id="whatsappStatusBadge">idle</strong>
+              <div class="summary-grid">
+                <div class="summary-item">
+                  <span>Username</span>
+                  <strong id="dashboardUsernameSecondary">-</strong>
+                </div>
+                <div class="summary-item">
+                  <span>Email</span>
+                  <strong id="dashboardEmailSecondary">-</strong>
+                </div>
+                <div class="summary-item">
+                  <span>Credits</span>
+                  <strong id="dashboardCreditsSecondary">0</strong>
+                </div>
+                <div class="summary-item">
+                  <span>Theme</span>
+                  <strong id="dashboardThemeSecondary">Light</strong>
+                </div>
               </div>
-              <div class="status-banner">
-                <span>Connected phone</span>
-                <strong id="whatsappPhone">Not available</strong>
+            </article>
+
+            <article class="info-card stack connection-card">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">WhatsApp connection</p>
+                  <h2>Persistent session setup</h2>
+                </div>
+                <button id="connectWhatsappButton" class="primary-button compact-button" type="button">Connect WhatsApp</button>
               </div>
-            </div>
-            <p id="whatsappStatusText" class="muted">Connect your WhatsApp account to generate a QR code and save the session state.</p>
-            <div id="qrWrapper" class="qr-wrapper empty">
-              <div id="qrCode"></div>
-              <p id="qrHint" class="muted">QR code will appear here after you start the connection.</p>
-            </div>
-          </article>
+              <div class="summary-grid summary-grid--status">
+                <div class="status-banner">
+                  <span>Status</span>
+                  <strong id="whatsappStatusBadge">idle</strong>
+                </div>
+                <div class="status-banner">
+                  <span>Connected phone</span>
+                  <strong id="whatsappPhone">Not available</strong>
+                </div>
+              </div>
+              <p id="whatsappStatusText" class="muted">Connect your WhatsApp account to generate a QR code and save the session state.</p>
+              <div id="qrWrapper" class="qr-wrapper empty">
+                <div id="qrCode"></div>
+                <p id="qrHint" class="muted">QR code will appear here after you start the connection.</p>
+              </div>
+            </article>
+          </div>
         </div>
       </section>
 
       <section id="tasksView" class="view">
         <div class="task-workspace stack">
-          <article class="info-card stack">
+          <article class="info-card stack task-hero-card">
             <div class="section-heading">
               <div>
                 <p class="eyebrow">Task builder</p>
                 <h2>Create a WhatsApp task with AI-assisted content</h2>
+                <p class="muted">Design the message, choose the audience, and lock the schedule from a more polished campaign builder.</p>
               </div>
               <div class="pill-row">
                 <span class="pill">Responsive</span>
@@ -273,7 +341,7 @@
             <div class="task-panel active" data-task-panel="message">
               <div class="task-panel-grid">
                 <div class="stack">
-                  <div class="tip-card">
+                  <div class="tip-card premium-tip">
                     <strong>Supported tags</strong>
                     <p class="muted">Insert tags like <code>{current_date}</code>, <code>{current_time}</code>, <code>{first_monday}</code>, <code>{last_friday}</code> inside the message. They are translated into exact dates before preview and when the task runs.</p>
                   </div>
@@ -312,7 +380,7 @@
                     <button id="messageNextButton" class="primary-button" type="button">Next: audience</button>
                   </div>
                 </div>
-                <aside class="preview-shell">
+                <aside class="preview-shell glass-preview">
                   <div class="whatsapp-preview">
                     <div class="whatsapp-preview__header">
                       <strong>WhatsApp preview</strong>
@@ -339,7 +407,7 @@
                   </div>
                   <div id="aiTextStatus" class="empty-state">AI generated text will appear here before it is inserted into the editor.</div>
                 </div>
-                <aside class="tip-card stack-sm">
+                <aside class="tip-card stack-sm premium-tip">
                   <strong>Model notes</strong>
                   <p class="muted">Text generation uses a SiliconFlow chat-completions model on the server. Keep prompts concise and include tone, audience, and CTA requirements.</p>
                 </aside>
@@ -361,7 +429,7 @@
                   </div>
                   <div id="aiImageStatus" class="empty-state">Generated image will appear here for review.</div>
                 </div>
-                <aside class="tip-card stack-sm">
+                <aside class="tip-card stack-sm premium-tip">
                   <strong>Media workflow</strong>
                   <p class="muted">Generate, review, regenerate if needed, then approve to push the image back to the message tab queue.</p>
                 </aside>
@@ -458,7 +526,7 @@
                     </div>
                   </section>
                   <aside class="stack">
-                    <div id="scheduleSummary" class="tip-card">Choose a frequency to see the exact rule summary.</div>
+                    <div id="scheduleSummary" class="tip-card premium-tip">Choose a frequency to see the exact rule summary.</div>
                     <div class="whatsapp-preview">
                       <div class="whatsapp-preview__header">
                         <strong>Execution preview</strong>
@@ -472,7 +540,7 @@
             </div>
           </article>
 
-          <article class="info-card stack">
+          <article class="info-card stack saved-task-card">
             <div class="section-heading">
               <div>
                 <p class="eyebrow">Saved tasks</p>
