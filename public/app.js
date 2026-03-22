@@ -672,7 +672,12 @@ function attachRouteButtons() {
   document.querySelectorAll('[data-route]').forEach((button) => button.addEventListener('click', () => navigate(button.dataset.route)));
 }
 
-async function handleSocialClick(provider) {
+function resolveAuthMode(trigger) {
+  const mode = trigger?.dataset?.authMode || trigger?.closest?.('[data-auth-mode]')?.dataset?.authMode || '';
+  return mode === 'signup' ? 'signup' : 'login';
+}
+
+async function handleSocialClick(provider, trigger) {
   if (provider === 'microsoft') {
     showToast('Microsoft login is still unavailable in this build.');
     return;
@@ -683,8 +688,8 @@ async function handleSocialClick(provider) {
       showToast(`${data.message} Required: ${data.requiredCredentials.join(', ')}`);
       return;
     }
-    const authCard = document.activeElement?.closest('#signupView') ? 'signup' : 'login';
-    window.location.assign(api.socialAuthUrl(provider, authCard));
+    const authMode = resolveAuthMode(trigger);
+    window.location.assign(api.socialAuthUrl(provider, authMode));
   } catch (error) {
     showToast(error.message);
   }
@@ -1328,7 +1333,7 @@ document.addEventListener('input', (event) => {
   }
 });
 
-document.querySelectorAll('[data-provider]').forEach((button) => button.addEventListener('click', () => handleSocialClick(button.dataset.provider)));
+document.querySelectorAll('[data-provider]').forEach((button) => button.addEventListener('click', () => handleSocialClick(button.dataset.provider, button)));
 document.querySelectorAll('[data-password-toggle]').forEach((button) => button.addEventListener('click', () => {
   const input = document.getElementById(button.dataset.passwordToggle);
   input.type = input.type === 'password' ? 'text' : 'password';
