@@ -80,6 +80,12 @@ const ui = {
   contactNextButton: document.getElementById('contactNextButton'),
   groupPageInfo: document.getElementById('groupPageInfo'),
   contactPageInfo: document.getElementById('contactPageInfo'),
+  taskSearchInput: document.getElementById('taskSearchInput'),
+  taskSortButton: document.getElementById('taskSortButton'),
+  selectAllTasks: document.getElementById('selectAllTasks'),
+  pauseSelectedTasksButton: document.getElementById('pauseSelectedTasksButton'),
+  deleteSelectedTasksButton: document.getElementById('deleteSelectedTasksButton'),
+  taskSelectionSummary: document.getElementById('taskSelectionSummary'),
   recipientSummaryInput: document.getElementById('recipientSummaryInput'),
   startDateInput: document.getElementById('startDateInput'),
   startTimeInput: document.getElementById('startTimeInput'),
@@ -116,6 +122,10 @@ const taskBuilderState = {
   monthlyDays: [],
   groupDeliveryMode: 'group',
   manualRecipients: [],
+  tasks: [],
+  taskSearch: '',
+  taskSortDirection: 'desc',
+  selectedTaskIds: new Set(),
 };
 
 const TASK_DRAFT_STORAGE_KEY = 'wa_task_builder_draft_v1';
@@ -134,6 +144,18 @@ function normalizePhoneRecipient(value = '') {
   if (/@s\.whatsapp\.net$/i.test(trimmed) || /@g\.us$/i.test(trimmed)) return trimmed;
   const digits = trimmed.replace(/\D/g, '');
   return digits.length >= 7 ? `${digits}@s.whatsapp.net` : trimmed;
+}
+
+function normalizeGroupRecipient(value = '') {
+  const trimmed = normalizeWhitespace(value);
+  if (!trimmed) return '';
+  if (/@g\.us$/i.test(trimmed)) return trimmed;
+  const digits = trimmed.replace(/\D/g, '');
+  return digits ? `${digits}@g.us` : trimmed;
+}
+
+function normalizeRecipientToken(value = '', type = 'contact') {
+  return type === 'group' ? normalizeGroupRecipient(value) : normalizePhoneRecipient(value);
 }
 
 function splitRecipientInput(value = '') {
@@ -452,35 +474,178 @@ function renderMediaQueue() {
     </article>`).join('');
 }
 
+function formatTaskDate(value) {
+  if (!value) return '—';
+  return new Date(value).toLocaleString([], { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function getTaskRecipientTokens(task = {}) {
+  const groups = Array.isArray(task.recipients?.groups) ? task.recipients.groups : [];
+  const contacts = Array.isArray(task.recipients?.contacts) ? task.recipients.contacts : [];
+  return [
+    ...groups.map((item) => normalizeRecipientToken(item.id || item.name || '', 'group')).filter(Boolean),
+    ...contacts.map((item) => normalizeRecipientToken(item.id || item.phone || '', 'contact')).filter(Boolean),
+  ];
+}
+
+function matchesTaskSearch(task, search) {
+  if (!search) return true;
+  const haystack = [
+    task.title,
+    task.type,
+    task.status,
+    task.description,
+    task.messageText,
+    task.translatedPreview,
+    ...getTaskRecipientTokens(task),
+    ...(task.recipients?.groups || []).map((item) => item.name),
+    ...(task.recipients?.contacts || []).map((item) => item.name || item.phone),
+  ].filter(Boolean).join(' ').toLowerCase();
+  return haystack.includes(search);
+}
+
+function getFilteredTasks() {
+  const search = taskBuilderState.taskSearch.trim().toLowerCase();
+  return [...taskBuilderState.tasks]
+    .filter((task) => matchesTaskSearch(task, search))
+    .sort((a, b) => (taskBuilderState.taskSortDirection === 'asc'
+      ? new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      : new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+}
+
+function updateTaskSelectionSummary(visibleTasks = []) {
+  const visibleIds = visibleTasks.map((task) => task._id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => taskBuilderState.selectedTaskIds.has(id));
+  ui.selectAllTasks.checked = allVisibleSelected;
+  ui.taskSelectionSummary.textContent = `${taskBuilderState.selectedTaskIds.size} task${taskBuilderState.selectedTaskIds.size === 1 ? '' : 's'} selected.`;
+}
+
 function renderTasks(tasks = []) {
+  updateTaskSelectionSummary(tasks);
   if (!tasks.length) {
-    ui.taskList.innerHTML = '<div class="empty-state">No tasks yet. Use the wizard above to create your first task.</div>';
+    ui.taskList.innerHTML = '<div class="empty-state">No tasks found. Create a task above or adjust your search filters.</div>';
     return;
   }
 
-  ui.taskList.innerHTML = tasks.map((task) => `
-    <article class="task-card">
-      <div class="task-card__row">
-        <div>
-          <h3>${escapeHtml(task.title)}</h3>
-          <p class="muted">${escapeHtml(task.type || 'Automation task')}</p>
+  ui.taskList.innerHTML = `
+    <div class="task-table__head">
+      <span></span>
+      <span>Task</span>
+      <span>Recipients</span>
+      <span>Schedule</span>
+      <span>Status</span>
+      <span>Created</span>
+      <span>Actions</span>
+    </div>
+    ${tasks.map((task) => {
+      const recipientTokens = getTaskRecipientTokens(task);
+      const schedule = task.schedule || {};
+      const groupCount = Array.isArray(task.recipients?.groups) ? task.recipients.groups.length : 0;
+      const contactCount = Array.isArray(task.recipients?.contacts) ? task.recipients.contacts.length : 0;
+      return `
+      <div class="task-table__row">
+        <input class="task-table__checkbox" type="checkbox" data-select-task="${task._id}" ${taskBuilderState.selectedTaskIds.has(task._id) ? 'checked' : ''} />
+        <div class="task-table__cell">
+          <strong>${escapeHtml(task.title)}</strong>
+          <span class="muted">${escapeHtml(task.type || 'Automation task')}</span>
+          <small>${escapeHtml(task.description || 'No description provided.')}</small>
         </div>
-        <span class="task-status ${task.status}">${escapeHtml(task.status)}</span>
-      </div>
-      <p class="muted">${escapeHtml(task.description || 'No description provided.')}</p>
-      <p class="task-meta">Recipients: ${task.recipients?.groups?.length || 0} groups (${task.recipients?.groupDeliveryMode === 'members' ? 'all members' : 'group chat'}), ${task.recipients?.contacts?.length || 0} contacts • Created ${new Date(task.createdAt).toLocaleDateString()}</p>
-    </article>
-  `).join('');
+        <div class="task-table__cell">
+          <span>${groupCount} groups (${task.recipients?.groupDeliveryMode === 'members' ? 'members' : 'group chat'})</span>
+          <span>${contactCount} contacts</span>
+          <div class="task-recipient-list">${recipientTokens.slice(0, 3).map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join('')}${recipientTokens.length > 3 ? `<span class="pill">+${recipientTokens.length - 3} more</span>` : ''}</div>
+        </div>
+        <div class="task-table__cell">
+          <span>${escapeHtml(schedule.frequency || 'Not set')}</span>
+          <small>${escapeHtml(schedule.startDate || 'No date')} ${escapeHtml(schedule.startTime || '')}</small>
+        </div>
+        <div class="task-table__cell">
+          <span class="task-status ${escapeHtml(task.status)}">${escapeHtml(task.status)}</span>
+        </div>
+        <div class="task-table__cell">
+          <span>${escapeHtml(formatTaskDate(task.createdAt))}</span>
+          <small>Updated ${escapeHtml(formatTaskDate(task.updatedAt))}</small>
+        </div>
+        <div class="task-table__actions">
+          <button class="secondary-button" type="button" data-task-action="pause" data-task-id="${task._id}" ${task.status === 'paused' ? 'disabled' : ''}>Pause</button>
+          <button class="secondary-button danger-button" type="button" data-task-action="delete" data-task-id="${task._id}">Delete</button>
+        </div>
+      </div>`;
+    }).join('')}
+  `;
 }
 
 async function loadTasks() {
   if (!appState.user) return;
   try {
     const data = await api.listTasks();
-    renderTasks(data.tasks || []);
+    taskBuilderState.tasks = Array.isArray(data.tasks) ? data.tasks : [];
+    const validIds = new Set(taskBuilderState.tasks.map((task) => task._id));
+    taskBuilderState.selectedTaskIds.forEach((id) => { if (!validIds.has(id)) taskBuilderState.selectedTaskIds.delete(id); });
+    renderTasks(getFilteredTasks());
   } catch (error) {
     showToast(error.message);
   }
+}
+
+async function updateTaskStatus(taskId, status) {
+  try {
+    await api.updateTaskStatus(taskId, status);
+    await loadTasks();
+    showToast(status === 'paused' ? 'Task paused successfully.' : `Task updated to ${status}.`);
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function deleteTask(taskId) {
+  try {
+    await api.deleteTask(taskId);
+    taskBuilderState.selectedTaskIds.delete(taskId);
+    await loadTasks();
+    showToast('Task deleted successfully.');
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function applyBulkTaskAction(action) {
+  const taskIds = Array.from(taskBuilderState.selectedTaskIds);
+  if (!taskIds.length) {
+    showToast(`Select at least one task to ${action}.`);
+    return;
+  }
+  try {
+    await api.bulkTaskAction(action, taskIds);
+    if (action === 'delete') taskBuilderState.selectedTaskIds.clear();
+    await loadTasks();
+    showToast(action === 'pause' ? 'Selected tasks paused.' : 'Selected tasks deleted.');
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+function sanitizeTaskRecipients(groups = [], contacts = []) {
+  const normalizedGroups = groups.map((item) => ({
+    ...item,
+    id: normalizeRecipientToken(item.id || item.name || '', 'group'),
+    name: normalizeWhitespace(item.name || item.id || 'Unnamed group'),
+  })).filter((item) => item.id.endsWith('@g.us'));
+
+  const normalizedContacts = contacts.map((item) => {
+    const id = normalizeRecipientToken(item.id || item.phone || '', 'contact');
+    return {
+      ...item,
+      id,
+      phone: id.endsWith('@s.whatsapp.net') ? `+${id.split('@')[0]}` : normalizeWhitespace(item.phone || ''),
+      name: normalizeWhitespace(item.name || item.phone || id),
+    };
+  }).filter((item) => item.id.endsWith('@s.whatsapp.net'));
+
+  return {
+    groups: dedupeRecipients(normalizedGroups.map((item) => item.id)).map((id) => normalizedGroups.find((item) => item.id === id)).filter(Boolean),
+    contacts: dedupeRecipients(normalizedContacts.map((item) => item.id)).map((id) => normalizedContacts.find((item) => item.id === id)).filter(Boolean),
+  };
 }
 
 function attachRouteButtons() {
@@ -829,6 +994,7 @@ async function scheduleTask() {
     ...selectedContacts.map((item) => item.id),
     ...manualContacts.map((item) => item.id),
   ]).map((id) => selectedContacts.find((item) => item.id === id) || manualContacts.find((item) => item.id === id)).filter(Boolean);
+  const normalizedRecipients = sanitizeTaskRecipients(selectedGroups, contacts);
 
   try {
     const payload = await api.createTask({
@@ -840,8 +1006,8 @@ async function scheduleTask() {
       translatedPreview: translateTags(messageText),
       mediaQueue: taskBuilderState.mediaQueue,
       recipients: {
-        groups: selectedGroups,
-        contacts,
+        groups: normalizedRecipients.groups,
+        contacts: normalizedRecipients.contacts,
         groupDeliveryMode: taskBuilderState.groupDeliveryMode,
       },
       schedule: buildScheduleConfig(),
@@ -992,6 +1158,25 @@ ui.startDateInput.addEventListener('change', updateTaskPreview);
 ui.startTimeInput.addEventListener('change', updateTaskPreview);
 ui.scheduleTaskButton.addEventListener('click', scheduleTask);
 ui.taskTitle.addEventListener('input', updateTaskPreview);
+ui.taskSearchInput.addEventListener('input', (event) => {
+  taskBuilderState.taskSearch = event.target.value;
+  renderTasks(getFilteredTasks());
+});
+ui.taskSortButton.addEventListener('click', () => {
+  taskBuilderState.taskSortDirection = taskBuilderState.taskSortDirection === 'desc' ? 'asc' : 'desc';
+  ui.taskSortButton.textContent = `Sort: ${taskBuilderState.taskSortDirection === 'desc' ? 'Newest first' : 'Oldest first'}`;
+  renderTasks(getFilteredTasks());
+});
+ui.selectAllTasks.addEventListener('change', () => {
+  const visibleTasks = getFilteredTasks();
+  visibleTasks.forEach((task) => {
+    if (ui.selectAllTasks.checked) taskBuilderState.selectedTaskIds.add(task._id);
+    else taskBuilderState.selectedTaskIds.delete(task._id);
+  });
+  renderTasks(visibleTasks);
+});
+ui.pauseSelectedTasksButton.addEventListener('click', () => applyBulkTaskAction('pause'));
+ui.deleteSelectedTasksButton.addEventListener('click', () => applyBulkTaskAction('delete'));
 ui.groupSearch.addEventListener('input', () => { taskBuilderState.groupPage = 1; renderTable('groups'); });
 ui.contactSearch.addEventListener('input', () => { taskBuilderState.contactPage = 1; renderTable('contacts'); });
 ui.groupSortButton.addEventListener('click', () => { taskBuilderState.groupSortAsc = !taskBuilderState.groupSortAsc; ui.groupSortButton.textContent = `Sort: ${taskBuilderState.groupSortAsc ? 'A–Z' : 'Z–A'}`; renderTable('groups'); });
@@ -1027,6 +1212,20 @@ document.addEventListener('click', (event) => {
   if (deleteButton) {
     taskBuilderState.mediaQueue.splice(Number(deleteButton.dataset.deleteMedia), 1);
     updateTaskPreview();
+  }
+
+  const taskCheckbox = event.target.closest('[data-select-task]');
+  if (taskCheckbox) {
+    if (taskCheckbox.checked) taskBuilderState.selectedTaskIds.add(taskCheckbox.dataset.selectTask);
+    else taskBuilderState.selectedTaskIds.delete(taskCheckbox.dataset.selectTask);
+    updateTaskSelectionSummary(getFilteredTasks());
+  }
+
+  const taskActionButton = event.target.closest('[data-task-action]');
+  if (taskActionButton) {
+    const { taskAction, taskId } = taskActionButton.dataset;
+    if (taskAction === 'pause') updateTaskStatus(taskId, 'paused');
+    if (taskAction === 'delete') deleteTask(taskId);
   }
 
   const groupSelect = event.target.closest('[data-select-group]');

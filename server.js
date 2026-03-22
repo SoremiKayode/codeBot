@@ -123,6 +123,50 @@ function normalizePhoneNumber(jid = '') {
   return raw ? `+${raw}` : '';
 }
 
+function normalizePhoneJid(value = '') {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  if (/@s\.whatsapp\.net$/i.test(trimmed)) return trimmed;
+  const digits = trimmed.replace(/\D/g, '');
+  return digits.length >= 7 ? `${digits}@s.whatsapp.net` : '';
+}
+
+function normalizeGroupJid(value = '') {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  if (/@g\.us$/i.test(trimmed)) return trimmed;
+  const digits = trimmed.replace(/\D/g, '');
+  return digits ? `${digits}@g.us` : '';
+}
+
+function sanitizeTaskRecipients(recipients = {}) {
+  const groups = Array.isArray(recipients.groups) ? recipients.groups : [];
+  const contacts = Array.isArray(recipients.contacts) ? recipients.contacts : [];
+  const seenGroups = new Set();
+  const seenContacts = new Set();
+
+  return {
+    groups: groups.map((group) => {
+      const id = normalizeGroupJid(group.id || group.name || '');
+      return {
+        id,
+        name: String(group.name || id || 'Unnamed group').trim(),
+        members: Number(group.members || 0),
+        category: String(group.category || 'Group').trim(),
+      };
+    }).filter((group) => group.id && !seenGroups.has(group.id) && seenGroups.add(group.id)),
+    contacts: contacts.map((contact) => {
+      const id = normalizePhoneJid(contact.id || contact.phone || '');
+      return {
+        id,
+        name: String(contact.name || normalizePhoneNumber(id) || id).trim(),
+        phone: normalizePhoneNumber(contact.phone || id),
+        segment: String(contact.segment || 'Contact').trim(),
+      };
+    }).filter((contact) => contact.id && !seenContacts.has(contact.id) && seenContacts.add(contact.id)),
+  };
+}
+
 function normalizeGroup(group) {
   return {
     id: String(group.id || ''),
@@ -243,7 +287,7 @@ const taskSchema = new mongoose.Schema({
   mediaQueue: { type: Array, default: [] },
   recipients: { type: Object, default: { groups: [], contacts: [] } },
   schedule: { type: Object, default: {} },
-  status: { type: String, enum: ['draft', 'active', 'completed'], default: 'active' },
+  status: { type: String, enum: ['draft', 'active', 'paused', 'completed'], default: 'active' },
 }, { timestamps: true });
 
 const enquirySchema = new mongoose.Schema({
@@ -771,6 +815,7 @@ app.post('/api/tasks', authenticateRequest, async (req, res) => {
 
   const recipients = req.body.recipients || {};
   const groupDeliveryMode = recipients.groupDeliveryMode === 'members' ? 'members' : 'group';
+  const normalizedRecipients = sanitizeTaskRecipients(recipients);
   const task = await Task.create({
     userId: String(req.user._id),
     title,
@@ -781,8 +826,8 @@ app.post('/api/tasks', authenticateRequest, async (req, res) => {
     translatedPreview: String(req.body.translatedPreview || ''),
     mediaQueue: Array.isArray(req.body.mediaQueue) ? req.body.mediaQueue.slice(0, 10) : [],
     recipients: {
-      groups: Array.isArray(recipients.groups) ? recipients.groups : [],
-      contacts: Array.isArray(recipients.contacts) ? recipients.contacts : [],
+      groups: normalizedRecipients.groups,
+      contacts: normalizedRecipients.contacts,
       groupDeliveryMode,
     },
     schedule: req.body.schedule || {},
@@ -834,6 +879,45 @@ app.post('/api/ai/image', authenticateRequest, async (req, res) => {
 app.get('/api/tasks', authenticateRequest, async (req, res) => {
   const tasks = await Task.find({ userId: String(req.user._id) }).sort({ createdAt: -1 }).lean();
   res.json({ tasks });
+});
+
+app.patch('/api/tasks/:taskId/status', authenticateRequest, async (req, res) => {
+  const status = String(req.body.status || '').trim().toLowerCase();
+  if (!['active', 'paused', 'completed'].includes(status)) {
+    return res.status(400).json({ error: 'Invalid task status.' });
+  }
+
+  const task = await Task.findOneAndUpdate(
+    { _id: req.params.taskId, userId: String(req.user._id) },
+    { status },
+    { new: true },
+  );
+  if (!task) return res.status(404).json({ error: 'Task not found.' });
+  res.json({ task });
+});
+
+app.delete('/api/tasks/:taskId', authenticateRequest, async (req, res) => {
+  const task = await Task.findOneAndDelete({ _id: req.params.taskId, userId: String(req.user._id) });
+  if (!task) return res.status(404).json({ error: 'Task not found.' });
+  res.json({ success: true });
+});
+
+app.post('/api/tasks/bulk-action', authenticateRequest, async (req, res) => {
+  const action = String(req.body.action || '').trim().toLowerCase();
+  const taskIds = Array.isArray(req.body.taskIds) ? req.body.taskIds.map((id) => String(id || '').trim()).filter(Boolean) : [];
+  if (!taskIds.length) return res.status(400).json({ error: 'Select at least one task.' });
+
+  if (action === 'pause') {
+    await Task.updateMany({ _id: { $in: taskIds }, userId: String(req.user._id) }, { status: 'paused' });
+    return res.json({ success: true, action });
+  }
+
+  if (action === 'delete') {
+    await Task.deleteMany({ _id: { $in: taskIds }, userId: String(req.user._id) });
+    return res.json({ success: true, action });
+  }
+
+  return res.status(400).json({ error: 'Unsupported bulk action.' });
 });
 
 app.post('/api/enquiries', async (req, res) => {
