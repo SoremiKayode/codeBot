@@ -695,6 +695,21 @@ async function handleSocialClick(provider, trigger) {
   }
 }
 
+function handleOAuthCodeRedirect() {
+  const url = new URL(window.location.href);
+  const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
+  const error = url.searchParams.get('error');
+  if ((!code || !state) && !error) return false;
+
+  const callbackUrl = new URL('/api/auth/oauth/callback', window.location.origin);
+  if (code) callbackUrl.searchParams.set('code', code);
+  if (state) callbackUrl.searchParams.set('state', state);
+  if (error) callbackUrl.searchParams.set('error', error);
+  window.location.replace(callbackUrl.toString());
+  return true;
+}
+
 async function handleOAuthRedirectState() {
   const url = new URL(window.location.href);
   const authStatus = url.searchParams.get('auth');
@@ -1396,6 +1411,9 @@ renderFrequencyOptions();
 updateTaskPreview();
 
 (async () => {
+  const handedOffOAuthCode = handleOAuthCodeRedirect();
+  if (handedOffOAuthCode) return;
+
   const handledOAuthRedirect = await handleOAuthRedirectState();
   if (handledOAuthRedirect) return;
 

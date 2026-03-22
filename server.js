@@ -135,10 +135,11 @@ function createOAuthState(provider, mode) {
   return state;
 }
 
-function consumeOAuthState(state, provider) {
+function consumeOAuthState(state, provider = null) {
   const payload = oauthStateStore.get(state);
   oauthStateStore.delete(state);
-  if (!payload || payload.provider !== provider) return null;
+  if (!payload) return null;
+  if (provider && payload.provider !== provider) return null;
   if (Date.now() - payload.createdAt > 10 * 60 * 1000) return null;
   return payload;
 }
@@ -1236,21 +1237,25 @@ app.get('/api/auth/oauth/:provider/start', (req, res) => {
 });
 
 async function handleOAuthCallback(req, res) {
-  const provider = String(req.params.provider || '').toLowerCase();
-  if (!['google', 'github'].includes(provider)) {
-    return res.redirect(buildOAuthErrorRedirect(provider, `${provider} OAuth is not supported.`));
+  const requestedProvider = String(req.params.provider || '').toLowerCase();
+  if (requestedProvider && !['google', 'github'].includes(requestedProvider)) {
+    return res.redirect(buildOAuthErrorRedirect(requestedProvider, `${requestedProvider} OAuth is not supported.`));
   }
-  const config = getOAuthProviderConfig(provider);
+
   const error = String(req.query.error || '').trim();
+  const code = String(req.query.code || '');
+  const state = String(req.query.state || '');
+  const statePayload = consumeOAuthState(state, requestedProvider || null);
+  const provider = requestedProvider || statePayload?.provider || 'google';
+  const config = getOAuthProviderConfig(provider);
+
   if (error) {
     return res.redirect(buildOAuthErrorRedirect(provider, `${provider} authorization failed: ${error}`));
   }
-  const code = String(req.query.code || '');
-  const state = String(req.query.state || '');
-  const statePayload = consumeOAuthState(state, provider);
   if (!config?.available || !code || !statePayload) {
     return res.redirect(buildOAuthErrorRedirect(provider, 'The OAuth callback was invalid or has expired. Please try again.'));
   }
+
   try {
     const profile = provider === 'google'
       ? await exchangeGoogleCodeForProfile(code, config)
@@ -1265,6 +1270,7 @@ async function handleOAuthCallback(req, res) {
   }
 }
 
+app.get('/api/auth/oauth/callback', handleOAuthCallback);
 app.get('/api/auth/oauth/:provider/callback', handleOAuthCallback);
 app.get('/auth/:provider/callback', handleOAuthCallback);
 
