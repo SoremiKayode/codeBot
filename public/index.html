@@ -346,10 +346,10 @@
                   </div>
                   <div class="stack-sm">
                     <label>
-                      <span>Upload media (image, video, or text file, max 20MB)</span>
-                      <input id="mediaFileInput" type="file" accept="image/*,video/*,.txt,text/plain" />
+                      <span>Upload file from your computer (images, videos, documents, archives, and more, max 20MB)</span>
+                      <input id="mediaFileInput" type="file" />
                     </label>
-                    <small class="muted">You can upload your own image, video, or text file directly, or generate an AI image and approve it into the same queue.</small>
+                    <small class="muted">You can upload almost any file from your device, or generate an AI image and approve it into the same queue.</small>
                     <button id="openAiMediaTabButton" class="secondary-button" type="button">Generate media with AI</button>
                   </div>
                   <div class="stack-sm">
@@ -436,20 +436,24 @@
                 </div>
                 <div class="audience-grid">
                   <section class="table-card">
-                    <div class="stack-sm audience-mode-card">
-                      <strong>How to send to selected groups</strong>
-                      <label class="radio-option">
-                        <input type="radio" name="groupDeliveryMode" value="group" checked />
-                        <span>Send to the group chat only</span>
-                      </label>
-                      <label class="radio-option">
-                        <input type="radio" name="groupDeliveryMode" value="members" />
-                        <span>Send individually to all members of each selected group</span>
-                      </label>
-                    </div>
-                    <div class="table-toolbar">
-                      <strong>Groups</strong>
-                      <label class="search-field"><span>Search</span><input id="groupSearch" type="search" placeholder="Search groups" /></label>
+                    <div class="table-toolbar table-toolbar--stacked audience-toolbar">
+                      <div class="stack-sm audience-mode-card">
+                        <strong>How to send to selected groups</strong>
+                        <div class="audience-mode-options">
+                          <label class="radio-option">
+                            <input type="radio" name="groupDeliveryMode" value="group" checked />
+                            <span>Send to the group chat only</span>
+                          </label>
+                          <label class="radio-option">
+                            <input type="radio" name="groupDeliveryMode" value="members" />
+                            <span>Send individually to all members of each selected group</span>
+                          </label>
+                        </div>
+                      </div>
+                      <div class="table-toolbar__row">
+                        <strong>Groups</strong>
+                        <label class="search-field"><span>Search</span><input id="groupSearch" type="search" placeholder="Search groups" /></label>
+                      </div>
                     </div>
                     <div class="table-actions">
                       <button id="groupSortButton" class="secondary-button" type="button">Sort: A–Z</button>

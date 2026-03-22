@@ -355,7 +355,7 @@ function renderMediaQueue() {
         <strong>${escapeHtml(item.name)}</strong>
         <span class="pill">${escapeHtml(item.type)}</span>
       </div>
-      ${item.type === 'image' ? `<img src="${item.dataUrl}" alt="${escapeHtml(item.name)}" />` : item.type === 'video' ? `<video src="${item.dataUrl}" controls></video>` : `<div class="empty-state">${escapeHtml(item.previewText || 'Text file ready to send.')}</div>`}
+      ${item.type === 'image' ? `<img src="${item.dataUrl}" alt="${escapeHtml(item.name)}" />` : item.type === 'video' ? `<video src="${item.dataUrl}" controls></video>` : `<div class="file-card-preview"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.mimeType || 'File ready to send.')}</span><small>${escapeHtml(item.previewText || 'File ready to send.')}</small></div>`}
       <div class="media-card__actions">
         <button class="secondary-button" type="button" data-delete-media="${index}">Delete</button>
       </div>
@@ -565,7 +565,7 @@ async function handleTextGeneration() {
     updateTaskPreview();
     showToast('AI message inserted into the editor.');
   } catch (error) {
-    ui.aiTextStatus.textContent = error.message.includes('Not enough credits') ? 'You do not have enough credits to generate text right now.' : error.message;
+    ui.aiTextStatus.textContent = /Not enough credits|account balance is insufficient/i.test(error.message) ? 'The AI provider rejected the request because its balance is insufficient. This is separate from your app credits.' : error.message;
     showToast(error.message);
   }
 }
@@ -586,7 +586,7 @@ async function handleImageGeneration() {
     ui.approveImageButton.classList.remove('hidden');
     showToast('AI image generated. Approve it to add to the queue.');
   } catch (error) {
-    ui.aiImageStatus.textContent = error.message.includes('Not enough credits') ? 'You do not have enough credits to generate an image right now.' : error.message;
+    ui.aiImageStatus.textContent = /Not enough credits|account balance is insufficient/i.test(error.message) ? 'The AI provider rejected the request because its balance is insufficient. This is separate from your app credits.' : error.message;
     showToast(error.message);
   }
 }
@@ -603,18 +603,18 @@ function approvePendingImage() {
   showToast('Image approved and added to the queue.');
 }
 
+function getReadableFileKind(file) {
+  if (file.type.startsWith('image/')) return 'image';
+  if (file.type.startsWith('video/')) return 'video';
+  if (file.type.startsWith('audio/')) return 'audio';
+  if (file.type === 'text/plain' || file.name.toLowerCase().endsWith('.txt')) return 'text';
+  return 'file';
+}
+
 async function handleFileUpload(file) {
   if (!file) return;
-  const allowedText = ['text/plain'];
-  const isImage = file.type.startsWith('image/');
-  const isVideo = file.type.startsWith('video/');
-  const isText = allowedText.includes(file.type) || file.name.endsWith('.txt');
-  if (!isImage && !isVideo && !isText) {
-    showToast('Only image, video, and text files are supported.');
-    return;
-  }
   if (file.size > 20 * 1024 * 1024) {
-    showToast('Media files must be 20MB or smaller.');
+    showToast('Files must be 20MB or smaller.');
     return;
   }
   const dataUrl = await new Promise((resolve, reject) => {
@@ -623,11 +623,18 @@ async function handleFileUpload(file) {
     reader.onerror = () => reject(new Error('Unable to read the selected file.'));
     reader.readAsDataURL(file);
   });
-  const mediaType = isImage ? 'image' : isVideo ? 'video' : 'text';
-  taskBuilderState.mediaQueue.push({ name: file.name, type: mediaType, dataUrl, previewText: isText ? 'Text file added to queue.' : '' });
+  const mediaType = getReadableFileKind(file);
+  taskBuilderState.mediaQueue.push({
+    name: file.name,
+    type: mediaType,
+    dataUrl,
+    mimeType: file.type || 'application/octet-stream',
+    size: file.size,
+    previewText: mediaType === 'text' ? 'Text file added to queue.' : `Ready to send: ${file.name}`,
+  });
   ui.mediaFileInput.value = '';
   updateTaskPreview();
-  showToast('Media added to the queue.');
+  showToast('File added to the queue.');
 }
 
 function buildScheduleConfig() {
