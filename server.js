@@ -471,6 +471,18 @@ async function callHuggingFaceText(prompt) {
   return text;
 }
 
+function fallbackText(prompt) {
+  const cleanedPrompt = String(prompt || '').replace(/\s+/g, ' ').trim();
+  const preview = cleanedPrompt.length > 140 ? `${cleanedPrompt.slice(0, 137)}...` : cleanedPrompt;
+  return [
+    'Hello there! 👋',
+    '',
+    `Here's a polished draft based on your request: ${preview}`,
+    '',
+    'If you want, I can also help tailor this into a promotional, reminder, follow-up, or announcement-style WhatsApp message.',
+  ].join('\n');
+}
+
 async function callHuggingFaceImage(prompt) {
   const payload = await callHuggingFaceSpace(HUGGINGFACE_IMAGE_SPACE_ID, HUGGINGFACE_IMAGE_API_NAME, [
     prompt,
@@ -760,9 +772,20 @@ app.post('/api/ai/text', authenticateRequest, async (req, res) => {
 
     ensureCredits(req.user, CREDIT_COSTS.generateText, 'generate AI text');
 
-    const text = await callHuggingFaceText(prompt);
-    await applyCreditActivity(req.user, CREDIT_COSTS.generateText, 'ai_text');
-    res.json({ text, user: sanitizeUser(req.user) });
+    let text;
+    let model = 'hugging-face-space';
+    let reason = 'ai_text';
+    try {
+      text = await callHuggingFaceText(prompt);
+    } catch (providerError) {
+      logger.warn({ error: providerError.message }, 'Hugging Face text generation failed, returning fallback text');
+      text = fallbackText(prompt);
+      model = 'fallback-template';
+      reason = 'ai_text_fallback';
+    }
+
+    await applyCreditActivity(req.user, CREDIT_COSTS.generateText, reason);
+    res.json({ text, model, user: sanitizeUser(req.user) });
   } catch (error) {
     res.status(500).json({ error: error.message || 'Unable to generate AI text.' });
   }
