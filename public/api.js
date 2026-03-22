@@ -30,6 +30,7 @@ export const api = {
   me: () => request('/api/auth/me'),
   setTheme: (theme) => request('/api/users/theme', { method: 'PATCH', body: JSON.stringify({ theme }) }),
   providerStatus: (provider) => request(`/api/auth/providers/${provider}`),
+  socialAuthUrl: (provider, mode = 'login') => `/api/auth/oauth/${encodeURIComponent(provider)}/start?mode=${encodeURIComponent(mode)}`,
   connectWhatsApp: () => request('/api/whatsapp/connect', { method: 'POST' }),
   whatsappStatus: () => request('/api/whatsapp/status'),
   whatsappAudience: () => request('/api/whatsapp/audience'),

@@ -90,6 +90,26 @@ const connectionStateStore = new Map();
 const socketStore = new Map();
 const audienceStore = new Map();
 const huggingFaceClientStore = new Map();
+const oauthStateStore = new Map();
+
+const OAUTH_PROVIDERS = {
+  google: {
+    clientIdEnv: 'GOOGLE_CLIENT_ID',
+    clientSecretEnv: 'GOOGLE_CLIENT_SECRET',
+    callbackEnv: 'GOOGLE_CALLBACK_URL',
+    authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+    tokenUrl: 'https://oauth2.googleapis.com/token',
+    scopes: ['openid', 'email', 'profile'],
+  },
+  github: {
+    clientIdEnv: 'GITHUB_CLIENT_ID',
+    clientSecretEnv: 'GITHUB_CLIENT_SECRET',
+    callbackEnv: 'GITHUB_CALLBACK_URL',
+    authorizationUrl: 'https://github.com/login/oauth/authorize',
+    tokenUrl: 'https://github.com/login/oauth/access_token',
+    scopes: ['read:user', 'user:email'],
+  },
+};
 
 function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -97,6 +117,24 @@ function sha256(value) {
 
 function createToken() {
   return crypto.randomBytes(24).toString('hex');
+}
+
+function createOAuthState(provider, mode) {
+  const state = crypto.randomBytes(24).toString('hex');
+  oauthStateStore.set(state, {
+    provider,
+    mode,
+    createdAt: Date.now(),
+  });
+  return state;
+}
+
+function consumeOAuthState(state, provider) {
+  const payload = oauthStateStore.get(state);
+  oauthStateStore.delete(state);
+  if (!payload || payload.provider !== provider) return null;
+  if (Date.now() - payload.createdAt > 10 * 60 * 1000) return null;
+  return payload;
 }
 
 function derivePasswordHash(password, salt = crypto.randomBytes(16).toString('hex')) {
@@ -111,6 +149,28 @@ function verifyPassword(password, passwordHash = '') {
   const expected = Buffer.from(stored, 'hex');
   return expected.length === derived.length && crypto.timingSafeEqual(expected, derived);
 }
+
+function getOAuthProviderConfig(provider) {
+  const definition = OAUTH_PROVIDERS[provider];
+  if (!definition) return null;
+  const clientId = process.env[definition.clientIdEnv] || '';
+  const clientSecret = process.env[definition.clientSecretEnv] || '';
+  const callbackUrl = process.env[definition.callbackEnv] || '';
+  return {
+    ...definition,
+    clientId,
+    clientSecret,
+    callbackUrl,
+    available: Boolean(clientId && clientSecret && callbackUrl),
+  };
+}
+
+setInterval(() => {
+  const cutoff = Date.now() - (10 * 60 * 1000);
+  for (const [state, value] of oauthStateStore.entries()) {
+    if (value.createdAt < cutoff) oauthStateStore.delete(state);
+  }
+}, 60000).unref();
 
 function slugify(value = '') {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 48) || `workspace-${Date.now()}`;
@@ -921,16 +981,131 @@ function startTaskScheduler() {
 }
 
 function buildSocialProviderResponse(provider) {
+  const config = getOAuthProviderConfig(provider);
+  const requiredCredentials = provider === 'google'
+    ? ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_CALLBACK_URL']
+    : provider === 'github'
+      ? ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET', 'GITHUB_CALLBACK_URL']
+      : ['MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_CALLBACK_URL'];
   return {
     provider,
-    available: false,
-    message: `Provide ${provider} OAuth client credentials to enable this login flow.`,
-    requiredCredentials: provider === 'google'
-      ? ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_CALLBACK_URL']
-      : provider === 'github'
-        ? ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET', 'GITHUB_CALLBACK_URL']
-        : ['MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_CALLBACK_URL'],
+    available: Boolean(config?.available),
+    message: config?.available
+      ? `${provider[0].toUpperCase()}${provider.slice(1)} OAuth is configured and ready.`
+      : `Provide ${provider} OAuth client credentials to enable this login flow.`,
+    requiredCredentials,
   };
+}
+
+function buildOAuthErrorRedirect(provider, message) {
+  return `/auth/callback.html?error=${encodeURIComponent(message)}&provider=${encodeURIComponent(provider)}`;
+}
+
+function buildOAuthSuccessRedirect(session, provider, mode) {
+  const params = new URLSearchParams({
+    token: session.token,
+    provider,
+    mode,
+    message: mode === 'signup' ? 'Account created successfully.' : 'Logged in successfully.',
+  });
+  return `/auth/callback.html?${params.toString()}`;
+}
+
+async function exchangeGoogleCodeForProfile(code, config) {
+  const tokenResponse = await fetch(config.tokenUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      code,
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      redirect_uri: config.callbackUrl,
+      grant_type: 'authorization_code',
+    }),
+  });
+  const tokenData = await tokenResponse.json().catch(() => ({}));
+  if (!tokenResponse.ok || !tokenData.access_token) throw new Error(tokenData.error_description || tokenData.error || 'Google token exchange failed.');
+  const profileResponse = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+    headers: { Authorization: `Bearer ${tokenData.access_token}` },
+  });
+  const profile = await profileResponse.json().catch(() => ({}));
+  if (!profileResponse.ok || !profile.email) throw new Error(profile.error_description || 'Google profile lookup failed.');
+  return {
+    email: String(profile.email).toLowerCase(),
+    username: String(profile.name || profile.given_name || profile.email.split('@')[0] || 'Google User').trim(),
+    providerUserId: String(profile.sub || ''),
+  };
+}
+
+async function exchangeGitHubCodeForProfile(code, config) {
+  const tokenResponse = await fetch(config.tokenUrl, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      code,
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      redirect_uri: config.callbackUrl,
+    }),
+  });
+  const tokenData = await tokenResponse.json().catch(() => ({}));
+  if (!tokenResponse.ok || !tokenData.access_token) throw new Error(tokenData.error_description || tokenData.error || 'GitHub token exchange failed.');
+  const headers = { Authorization: `Bearer ${tokenData.access_token}`, Accept: 'application/vnd.github+json', 'User-Agent': 'CodeBot OAuth' };
+  const [userResponse, emailsResponse] = await Promise.all([
+    fetch('https://api.github.com/user', { headers }),
+    fetch('https://api.github.com/user/emails', { headers }),
+  ]);
+  const user = await userResponse.json().catch(() => ({}));
+  const emails = await emailsResponse.json().catch(() => ([]));
+  const primaryEmail = Array.isArray(emails)
+    ? emails.find((entry) => entry.primary && entry.verified)?.email || emails.find((entry) => entry.verified)?.email
+    : '';
+  const email = String(primaryEmail || user.email || '').toLowerCase();
+  if (!email) throw new Error('GitHub did not return a verified email address.');
+  return {
+    email,
+    username: String(user.name || user.login || email.split('@')[0] || 'GitHub User').trim(),
+    providerUserId: String(user.id || ''),
+  };
+}
+
+async function findOrCreateSocialUser(provider, profile, mode = 'login') {
+  let user = await User.findOne({ email: profile.email });
+  let tenant;
+  let membership;
+  let created = false;
+  const providerPath = `socialProviders.${provider}`;
+
+  if (!user) {
+    if (mode === 'login') throw new Error(`No account found for ${profile.email}. Use sign up with ${provider[0].toUpperCase()}${provider.slice(1)} first.`);
+    const workspaceName = `${profile.username}'s Workspace`;
+    const slugBase = slugify(workspaceName);
+    let slug = slugBase;
+    let suffix = 1;
+    while (await Tenant.findOne({ slug })) slug = `${slugBase}-${suffix++}`;
+    user = await User.create({
+      username: profile.username,
+      email: profile.email,
+      passwordHash: derivePasswordHash(createToken()),
+      socialProviders: { [provider]: true },
+    });
+    tenant = await Tenant.create({ name: workspaceName, slug, timezone: DEFAULT_TIMEZONE, billingEmail: profile.email, credits: CREDIT_SIGNUP_BONUS });
+    membership = await TenantMembership.create({ tenantId: tenant._id, userId: user._id, role: 'owner', status: 'active' });
+    await CreditLedger.create({ tenantId: String(tenant._id), userId: String(user._id), type: 'signup_bonus', delta: CREDIT_SIGNUP_BONUS, balanceAfter: tenant.credits, metadata: { source: `${provider}_oauth_signup`, providerUserId: profile.providerUserId } });
+    created = true;
+  } else {
+    if (!user.socialProviders?.[provider]) {
+      user.set(providerPath, true);
+      if (!user.username || user.username === user.email) user.username = profile.username;
+      await user.save();
+    }
+    membership = await TenantMembership.findOne({ userId: user._id, status: 'active' }).sort({ createdAt: 1 });
+    if (!membership) throw new Error('No active workspace membership found for this account.');
+    tenant = await Tenant.findById(membership.tenantId);
+    if (!tenant) throw new Error('Workspace not found for this account.');
+  }
+
+  return { user, tenant, membership, created };
 }
 
 async function startWhatsAppSession(user, tenant) {
@@ -1030,6 +1205,58 @@ app.get('/api/auth/providers/:provider', (req, res) => {
   const provider = String(req.params.provider || '').toLowerCase();
   if (!['google', 'github', 'microsoft'].includes(provider)) return res.status(404).json({ error: 'Unsupported provider.' });
   res.json(buildSocialProviderResponse(provider));
+});
+
+app.get('/api/auth/oauth/:provider/start', (req, res) => {
+  const provider = String(req.params.provider || '').toLowerCase();
+  const mode = String(req.query.mode || 'login').toLowerCase() === 'signup' ? 'signup' : 'login';
+  if (!['google', 'github'].includes(provider)) {
+    return res.redirect(buildOAuthErrorRedirect(provider, `${provider} OAuth is not available in this build.`));
+  }
+  const config = getOAuthProviderConfig(provider);
+  if (!config?.available) {
+    return res.redirect(buildOAuthErrorRedirect(provider, `Missing ${provider} OAuth configuration.`));
+  }
+  const state = createOAuthState(provider, mode);
+  const params = new URLSearchParams({
+    client_id: config.clientId,
+    redirect_uri: config.callbackUrl,
+    response_type: 'code',
+    scope: config.scopes.join(' '),
+    state,
+  });
+  if (provider === 'google') params.set('access_type', 'offline');
+  res.redirect(`${config.authorizationUrl}?${params.toString()}`);
+});
+
+app.get('/api/auth/oauth/:provider/callback', async (req, res) => {
+  const provider = String(req.params.provider || '').toLowerCase();
+  if (!['google', 'github'].includes(provider)) {
+    return res.redirect(buildOAuthErrorRedirect(provider, `${provider} OAuth is not supported.`));
+  }
+  const config = getOAuthProviderConfig(provider);
+  const error = String(req.query.error || '').trim();
+  if (error) {
+    return res.redirect(buildOAuthErrorRedirect(provider, `${provider} authorization failed: ${error}`));
+  }
+  const code = String(req.query.code || '');
+  const state = String(req.query.state || '');
+  const statePayload = consumeOAuthState(state, provider);
+  if (!config?.available || !code || !statePayload) {
+    return res.redirect(buildOAuthErrorRedirect(provider, 'The OAuth callback was invalid or has expired. Please try again.'));
+  }
+  try {
+    const profile = provider === 'google'
+      ? await exchangeGoogleCodeForProfile(code, config)
+      : await exchangeGitHubCodeForProfile(code, config);
+    const { user, tenant, membership, created } = await findOrCreateSocialUser(provider, profile, statePayload.mode);
+    const session = await issueSession(user, tenant, membership);
+    const mode = created ? 'signup' : statePayload.mode;
+    res.redirect(buildOAuthSuccessRedirect(session, provider, mode));
+  } catch (oauthError) {
+    logger.warn({ provider, error: oauthError.message }, 'OAuth callback failed');
+    res.redirect(buildOAuthErrorRedirect(provider, oauthError.message || 'Unable to complete social login.'));
+  }
 });
 
 app.post('/api/whatsapp/connect', authenticateRequest, requirePermission('whatsapp:connect'), async (req, res) => {

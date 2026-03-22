@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Completing sign-in…</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="main-content" style="min-height: 100vh; display: grid; place-items: center; padding: 2rem;">
+    <section class="auth-card stack" style="max-width: 32rem;">
+      <p class="eyebrow">CodeBot</p>
+      <h1 style="margin: 0; font-size: 1.6rem;">Completing sign-in…</h1>
+      <p id="authCallbackMessage" class="muted">Please wait while we finish your authentication.</p>
+    </section>
+  </main>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    const provider = params.get('provider') || 'social';
+    const mode = params.get('mode') || 'login';
+    const message = document.getElementById('authCallbackMessage');
+    const redirectUrl = new URL('/', window.location.origin);
+
+    if (token) {
+      localStorage.setItem('wa_token', token);
+      redirectUrl.searchParams.set('auth', 'success');
+      redirectUrl.searchParams.set('provider', provider);
+      redirectUrl.searchParams.set('mode', mode);
+      redirectUrl.searchParams.set('message', params.get('message') || '');
+      message.textContent = `Signed in with ${provider}. Redirecting to your dashboard…`;
+      window.location.replace(redirectUrl.toString());
+    } else {
+      redirectUrl.searchParams.set('auth', 'error');
+      redirectUrl.searchParams.set('provider', provider);
+      redirectUrl.searchParams.set('message', params.get('error') || 'Authentication failed.');
+      message.textContent = 'Authentication failed. Redirecting back to the app…';
+      window.location.replace(redirectUrl.toString());
+    }
+  </script>
+</body>
+</html>

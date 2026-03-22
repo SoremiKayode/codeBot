@@ -673,12 +673,39 @@ function attachRouteButtons() {
 }
 
 async function handleSocialClick(provider) {
+  if (provider === 'microsoft') {
+    showToast('Microsoft login is still unavailable in this build.');
+    return;
+  }
   try {
     const data = await api.providerStatus(provider);
-    showToast(`${data.message} Required: ${data.requiredCredentials.join(', ')}`);
+    if (!data.available) {
+      showToast(`${data.message} Required: ${data.requiredCredentials.join(', ')}`);
+      return;
+    }
+    const authCard = document.activeElement?.closest('#signupView') ? 'signup' : 'login';
+    window.location.assign(api.socialAuthUrl(provider, authCard));
   } catch (error) {
     showToast(error.message);
   }
+}
+
+function handleOAuthRedirectState() {
+  const url = new URL(window.location.href);
+  const authStatus = url.searchParams.get('auth');
+  if (!authStatus) return false;
+  const provider = url.searchParams.get('provider') || 'social provider';
+  const mode = url.searchParams.get('mode') || 'login';
+  const message = url.searchParams.get('message') || (authStatus === 'success'
+    ? `${provider} ${mode === 'signup' ? 'sign-up' : 'login'} completed successfully.`
+    : 'Authentication failed.');
+  url.searchParams.delete('auth');
+  url.searchParams.delete('provider');
+  url.searchParams.delete('mode');
+  url.searchParams.delete('message');
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  showToast(message);
+  return authStatus === 'success';
 }
 
 function getFilteredData(items, search, sortAsc) {
@@ -1340,6 +1367,8 @@ restoreTaskDraft();
 renderAudienceTables();
 renderFrequencyOptions();
 updateTaskPreview();
+
+handleOAuthRedirectState();
 
 const existingToken = localStorage.getItem('wa_token');
 if (existingToken) {
