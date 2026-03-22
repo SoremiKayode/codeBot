@@ -23,10 +23,21 @@ const IS_LOCAL = process.env.USE_LOCAL === 'true';
 const MONGO_URI = IS_LOCAL ? 'mongodb://localhost:27017/whatsapp_bot' : process.env.CLOUD_MONGO_URI;
 const PORT = Number(process.env.PORT || 3000);
 const CREDIT_SIGNUP_BONUS = Number(process.env.DEFAULT_SIGNUP_CREDITS || 150);
-const SILICONFLOW_API_KEY = process.env.SILICONFLOW_API_KEY || '';
-const SILICONFLOW_BASE_URL = process.env.SILICONFLOW_BASE_URL || 'https://api.siliconflow.cn/v1';
-const SILICONFLOW_TEXT_MODEL = process.env.SILICONFLOW_TEXT_MODEL || 'Qwen/Qwen2.5-7B-Instruct';
-const SILICONFLOW_IMAGE_MODEL = process.env.SILICONFLOW_IMAGE_MODEL || 'Qwen/Qwen-Image';
+const HUGGINGFACE_TEXT_SPACE_ID = process.env.HUGGINGFACE_TEXT_SPACE_ID || 'codeignite/text-engine-space-name';
+const HUGGINGFACE_IMAGE_SPACE_ID = process.env.HUGGINGFACE_IMAGE_SPACE_ID || 'codeignite/whatsappbot';
+const HUGGINGFACE_TEXT_API_NAME = process.env.HUGGINGFACE_TEXT_API_NAME || '/chat';
+const HUGGINGFACE_IMAGE_API_NAME = process.env.HUGGINGFACE_IMAGE_API_NAME || '/predict';
+const HUGGINGFACE_TEXT_SYSTEM_PROMPT = process.env.HUGGINGFACE_TEXT_SYSTEM_PROMPT || 'You write concise WhatsApp-ready marketing and operational messages.';
+const HUGGINGFACE_TEXT_MAX_TOKENS = Number(process.env.HUGGINGFACE_TEXT_MAX_TOKENS || 512);
+const HUGGINGFACE_TEXT_TEMPERATURE = Number(process.env.HUGGINGFACE_TEXT_TEMPERATURE || 0.7);
+const HUGGINGFACE_TEXT_TOP_P = Number(process.env.HUGGINGFACE_TEXT_TOP_P || 0.95);
+const HUGGINGFACE_IMAGE_NEGATIVE_PROMPT = process.env.HUGGINGFACE_IMAGE_NEGATIVE_PROMPT || '';
+const HUGGINGFACE_IMAGE_SEED = Number(process.env.HUGGINGFACE_IMAGE_SEED || 0);
+const HUGGINGFACE_IMAGE_RANDOMIZE_SEED = process.env.HUGGINGFACE_IMAGE_RANDOMIZE_SEED !== 'false';
+const HUGGINGFACE_IMAGE_WIDTH = Number(process.env.HUGGINGFACE_IMAGE_WIDTH || 512);
+const HUGGINGFACE_IMAGE_HEIGHT = Number(process.env.HUGGINGFACE_IMAGE_HEIGHT || 512);
+const HUGGINGFACE_IMAGE_GUIDANCE_SCALE = Number(process.env.HUGGINGFACE_IMAGE_GUIDANCE_SCALE || 0);
+const HUGGINGFACE_IMAGE_STEPS = Number(process.env.HUGGINGFACE_IMAGE_STEPS || 2);
 const CREDIT_COSTS = {
   whatsappConnect: Number(process.env.CREDIT_COST_WHATSAPP_CONNECT || 5),
   createTask: Number(process.env.CREDIT_COST_CREATE_TASK || 10),
@@ -361,29 +372,120 @@ async function issueSession(user) {
   return { token, user: sanitizeUser(user) };
 }
 
-async function callSiliconFlow(path, payload) {
-  if (!SILICONFLOW_API_KEY) {
-    throw new Error('Missing SILICONFLOW_API_KEY on the server. Add it to your environment before using AI generation.');
-  }
+function buildHuggingFaceSpaceUrl(spaceId) {
+  if (/^https?:\/\//i.test(spaceId)) return spaceId.replace(/\/$/, '');
+  return `https://${spaceId.replace('/', '-')}.hf.space`;
+}
 
-  const response = await fetch(`${SILICONFLOW_BASE_URL}${path}`, {
+async function callHuggingFaceSpace(spaceId, apiName, data) {
+  const baseUrl = buildHuggingFaceSpaceUrl(spaceId);
+  const normalizedApiName = apiName.startsWith('/') ? apiName : `/${apiName}`;
+  const submitResponse = await fetch(`${baseUrl}/gradio_api/call${normalizedApiName}`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${SILICONFLOW_API_KEY}`,
-    },
-    body: JSON.stringify(payload),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data }),
   });
 
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const providerMessage = data.message || data.error?.message || 'SiliconFlow request failed.';
-    if (/account balance is insufficient/i.test(providerMessage)) {
-      throw new Error(`SiliconFlow error: ${providerMessage}`);
-    }
-    throw new Error(providerMessage);
+  const submitPayload = await submitResponse.json().catch(() => ({}));
+  if (!submitResponse.ok || !submitPayload.event_id) {
+    throw new Error(submitPayload.error || 'Unable to start Hugging Face Space request.');
   }
-  return data;
+
+  const streamResponse = await fetch(`${baseUrl}/gradio_api/call${normalizedApiName}/${submitPayload.event_id}`);
+  if (!streamResponse.ok) {
+    throw new Error(`Hugging Face Space stream failed with status ${streamResponse.status}.`);
+  }
+
+  const streamText = await streamResponse.text();
+  const eventBlocks = streamText.split(/\n\n+/).map((block) => block.trim()).filter(Boolean);
+
+  for (const block of eventBlocks.reverse()) {
+    const lines = block.split('\n');
+    const eventName = lines.find((line) => line.startsWith('event:'))?.slice(6).trim();
+    const dataLines = lines.filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim());
+    const rawData = dataLines.join('\n');
+
+    if (eventName === 'error') {
+      throw new Error(rawData || 'Hugging Face Space request failed.');
+    }
+
+    if (eventName === 'complete' && rawData) {
+      return JSON.parse(rawData);
+    }
+  }
+
+  throw new Error('No completion payload was returned by the Hugging Face Space.');
+}
+
+function extractTextFromSpaceResult(payload) {
+  if (typeof payload === 'string' && payload.trim()) return payload.trim();
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const extracted = extractTextFromSpaceResult(item);
+      if (extracted) return extracted;
+    }
+  }
+  if (payload && typeof payload === 'object') {
+    for (const value of Object.values(payload)) {
+      const extracted = extractTextFromSpaceResult(value);
+      if (extracted) return extracted;
+    }
+  }
+  return '';
+}
+
+function extractImageUrlFromSpaceResult(payload) {
+  if (typeof payload === 'string' && /^https?:\/\//i.test(payload)) return payload;
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const extracted = extractImageUrlFromSpaceResult(item);
+      if (extracted) return extracted;
+    }
+  }
+  if (payload && typeof payload === 'object') {
+    if (typeof payload.url === 'string' && payload.url) return payload.url;
+    if (typeof payload.path === 'string' && payload.path) {
+      const prefix = payload.path.startsWith('/') ? '' : '/';
+      return `${buildHuggingFaceSpaceUrl(HUGGINGFACE_IMAGE_SPACE_ID)}/gradio_api/file=${prefix}${payload.path}`;
+    }
+    for (const value of Object.values(payload)) {
+      const extracted = extractImageUrlFromSpaceResult(value);
+      if (extracted) return extracted;
+    }
+  }
+  return '';
+}
+
+async function callHuggingFaceText(prompt) {
+  const payload = await callHuggingFaceSpace(HUGGINGFACE_TEXT_SPACE_ID, HUGGINGFACE_TEXT_API_NAME, [
+    prompt,
+    [],
+    HUGGINGFACE_TEXT_SYSTEM_PROMPT,
+    HUGGINGFACE_TEXT_MAX_TOKENS,
+    HUGGINGFACE_TEXT_TEMPERATURE,
+    HUGGINGFACE_TEXT_TOP_P,
+  ]);
+
+  const text = extractTextFromSpaceResult(payload);
+  if (!text) throw new Error('No text was returned by the Hugging Face Space.');
+  return text;
+}
+
+async function callHuggingFaceImage(prompt) {
+  const payload = await callHuggingFaceSpace(HUGGINGFACE_IMAGE_SPACE_ID, HUGGINGFACE_IMAGE_API_NAME, [
+    prompt,
+    HUGGINGFACE_IMAGE_NEGATIVE_PROMPT,
+    HUGGINGFACE_IMAGE_SEED,
+    HUGGINGFACE_IMAGE_RANDOMIZE_SEED,
+    HUGGINGFACE_IMAGE_WIDTH,
+    HUGGINGFACE_IMAGE_HEIGHT,
+    HUGGINGFACE_IMAGE_GUIDANCE_SCALE,
+    HUGGINGFACE_IMAGE_STEPS,
+  ]);
+
+  const imageUrl = extractImageUrlFromSpaceResult(payload);
+  if (!imageUrl) throw new Error('No image was returned by the Hugging Face Space.');
+  return imageUrl;
 }
 
 function fallbackImage(prompt) {
@@ -658,17 +760,7 @@ app.post('/api/ai/text', authenticateRequest, async (req, res) => {
 
     ensureCredits(req.user, CREDIT_COSTS.generateText, 'generate AI text');
 
-    const data = await callSiliconFlow('/chat/completions', {
-      model: SILICONFLOW_TEXT_MODEL,
-      messages: [
-        { role: 'system', content: 'You write concise WhatsApp-ready marketing and operational messages.' },
-        { role: 'user', content: prompt },
-      ],
-      temperature: 0.7,
-    });
-
-    const text = data.choices?.[0]?.message?.content?.trim();
-    if (!text) throw new Error('No text was returned by the AI provider.');
+    const text = await callHuggingFaceText(prompt);
     await applyCreditActivity(req.user, CREDIT_COSTS.generateText, 'ai_text');
     res.json({ text, user: sanitizeUser(req.user) });
   } catch (error) {
@@ -683,19 +775,14 @@ app.post('/api/ai/image', authenticateRequest, async (req, res) => {
 
     ensureCredits(req.user, CREDIT_COSTS.generateImage, 'generate AI image');
 
-    if (!SILICONFLOW_API_KEY) {
+    let imageUrl;
+    try {
+      imageUrl = await callHuggingFaceImage(prompt);
+    } catch (providerError) {
+      logger.warn({ error: providerError.message }, 'Hugging Face image generation failed, returning fallback image');
       await applyCreditActivity(req.user, CREDIT_COSTS.generateImage, 'ai_image_fallback');
       return res.json({ imageUrl: fallbackImage(prompt), model: 'fallback-placeholder', user: sanitizeUser(req.user) });
     }
-
-    const data = await callSiliconFlow('/images/generations', {
-      model: SILICONFLOW_IMAGE_MODEL,
-      prompt,
-      size: '1024x1024',
-    });
-
-    const imageUrl = data.images?.[0]?.url || data.data?.[0]?.url || data.data?.[0]?.b64_json && `data:image/png;base64,${data.data[0].b64_json}`;
-    if (!imageUrl) throw new Error('No image was returned by the AI provider.');
     await applyCreditActivity(req.user, CREDIT_COSTS.generateImage, 'ai_image');
     res.json({ imageUrl, user: sanitizeUser(req.user) });
   } catch (error) {
@@ -735,7 +822,7 @@ app.get('/api/config/required-credentials', (req, res) => {
       github: ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET', 'GITHUB_CALLBACK_URL'],
       microsoft: ['MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_CALLBACK_URL'],
     },
-    optional: ['PORT', 'DEFAULT_SIGNUP_CREDITS'],
+    optional: ['PORT', 'DEFAULT_SIGNUP_CREDITS', 'HUGGINGFACE_TEXT_SPACE_ID', 'HUGGINGFACE_IMAGE_SPACE_ID', 'HUGGINGFACE_TEXT_SYSTEM_PROMPT'],
   });
 });
 
