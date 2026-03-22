@@ -49,6 +49,7 @@ const ui = {
   scheduleBackButton: document.getElementById('scheduleBackButton'),
   mediaFileInput: document.getElementById('mediaFileInput'),
   mediaQueue: document.getElementById('mediaQueue'),
+  mediaFileInputLabel: document.getElementById('mediaFileInputLabel'),
   generateMoreMediaButton: document.getElementById('generateMoreMediaButton'),
   messagePreview: document.getElementById('messagePreview'),
   messagePreviewMedia: document.getElementById('messagePreviewMedia'),
@@ -429,11 +430,7 @@ function renderMediaQueue() {
   const items = taskBuilderState.mediaQueue;
   ui.generateMoreMediaButton.classList.toggle('hidden', items.length === 0);
   ui.previewMediaStrip.innerHTML = items.map((item) => `<span class="pill">${escapeHtml(item.type)}</span>`).join('');
-  const previewMarkup = items.map((item) => {
-    if (item.type === 'image') return `<img src="${item.dataUrl}" alt="${escapeHtml(item.name)}" />`;
-    if (item.type === 'video') return `<video src="${item.dataUrl}" controls></video>`;
-    return `<div class="preview-file-chip"><strong>${escapeHtml(item.name)}</strong><br>${escapeHtml(item.previewText || item.mimeType || 'File ready to send.')}</div>`;
-  }).join('');
+  const previewMarkup = items.map((item) => renderMediaItem(item, 'preview')).join('');
   ui.messagePreviewMedia.innerHTML = previewMarkup;
   ui.finalPreviewMedia.innerHTML = previewMarkup;
   if (!items.length) {
@@ -448,7 +445,7 @@ function renderMediaQueue() {
         <strong>${escapeHtml(item.name)}</strong>
         <span class="pill">${escapeHtml(item.type)}</span>
       </div>
-      ${item.type === 'image' ? `<img src="${item.dataUrl}" alt="${escapeHtml(item.name)}" />` : item.type === 'video' ? `<video src="${item.dataUrl}" controls></video>` : `<div class="file-card-preview"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.mimeType || 'File ready to send.')}</span><small>${escapeHtml(item.previewText || 'File ready to send.')}</small></div>`}
+      ${renderMediaItem(item)}
       <div class="media-card__actions">
         <button class="secondary-button" type="button" data-delete-media="${index}">Delete</button>
       </div>
@@ -710,17 +707,47 @@ function getReadableFileKind(file) {
   if (file.type.startsWith('image/')) return 'image';
   if (file.type.startsWith('video/')) return 'video';
   if (file.type.startsWith('audio/')) return 'audio';
+  if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) return 'document';
   if (file.type === 'text/plain' || file.name.toLowerCase().endsWith('.txt')) return 'text';
-  return 'file';
+  return 'document';
+}
+
+function formatFileSize(bytes = 0) {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function updateFileInputLabel(files = []) {
+  const names = Array.from(files).map((file) => file.name);
+  ui.mediaFileInputLabel.textContent = names.length ? names.join(', ') : 'No file selected yet.';
+}
+
+function renderMediaItem(item, mode = 'queue') {
+  const meta = `${item.mimeType || 'File ready to send'} • ${item.sizeLabel || 'Unknown size'}`;
+  if (item.type === 'image') return `<img src="${item.dataUrl}" alt="${escapeHtml(item.name)}" />`;
+  if (item.type === 'video') return `<video src="${item.dataUrl}" controls></video>`;
+  if (item.type === 'audio') return `<audio src="${item.dataUrl}" controls></audio>`;
+  if (item.mimeType === 'application/pdf') {
+    return `<div class="document-preview-card"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(meta)}</span><iframe src="${item.dataUrl}" title="${escapeHtml(item.name)}"></iframe></div>`;
+  }
+  return mode === 'preview'
+    ? `<div class="preview-file-chip"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(meta)}</span><small>${escapeHtml(item.previewText || 'Document ready to send.')}</small></div>`
+    : `<div class="file-card-preview"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(meta)}</span><small>${escapeHtml(item.previewText || 'Document ready to send.')}</small></div>`;
 }
 
 async function handleFileUpload(files) {
   const fileList = Array.from(files || []).filter(Boolean);
-  if (!fileList.length) return;
+  if (!fileList.length) {
+    updateFileInputLabel([]);
+    return;
+  }
+
+  updateFileInputLabel(fileList);
+  let addedCount = 0;
 
   for (const file of fileList) {
-    if (file.size > 20 * 1024 * 1024) {
-      showToast(`${file.name} is larger than 20MB and was skipped.`);
+    if (file.size > 16 * 1024 * 1024) {
+      showToast(`${file.name} is larger than 16MB and was skipped.`);
       continue;
     }
     const dataUrl = await new Promise((resolve, reject) => {
@@ -736,13 +763,20 @@ async function handleFileUpload(files) {
       dataUrl,
       mimeType: file.type || 'application/octet-stream',
       size: file.size,
-      previewText: mediaType === 'text' ? 'Text file added to queue.' : `Ready to send: ${file.name}`,
+      sizeLabel: formatFileSize(file.size),
+      previewText: mediaType === 'document' ? 'Document added to queue.' : `Ready to send: ${file.name}`,
     });
+    addedCount += 1;
   }
 
   ui.mediaFileInput.value = '';
+  if (!addedCount) {
+    updateTaskPreview();
+    showToast('No files were added because they exceeded the 16MB limit.');
+    return;
+  }
   updateTaskPreview();
-  showToast(fileList.length === 1 ? 'File added to the queue.' : 'Files added to the queue.');
+  showToast(addedCount === 1 ? 'File added to the queue.' : 'Files added to the queue.');
 }
 
 function buildScheduleConfig() {
@@ -845,6 +879,8 @@ function resetTaskBuilder() {
   ui.aiImageStatus.textContent = 'Generated image will appear here for review.';
   ui.regenerateImageButton.classList.add('hidden');
   ui.approveImageButton.classList.add('hidden');
+  ui.mediaFileInput.value = '';
+  updateFileInputLabel([]);
   ui.startDateInput.value = '';
   ui.startTimeInput.value = '';
   ui.frequencySelect.value = '';
