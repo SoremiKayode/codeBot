@@ -1235,7 +1235,7 @@ app.get('/api/auth/oauth/:provider/start', (req, res) => {
   res.redirect(`${config.authorizationUrl}?${params.toString()}`);
 });
 
-app.get('/api/auth/oauth/:provider/callback', async (req, res) => {
+async function handleOAuthCallback(req, res) {
   const provider = String(req.params.provider || '').toLowerCase();
   if (!['google', 'github'].includes(provider)) {
     return res.redirect(buildOAuthErrorRedirect(provider, `${provider} OAuth is not supported.`));
@@ -1258,12 +1258,15 @@ app.get('/api/auth/oauth/:provider/callback', async (req, res) => {
     const { user, tenant, membership, created } = await findOrCreateSocialUser(provider, profile, statePayload.mode);
     const session = await issueSession(user, tenant, membership);
     const mode = created ? 'signup' : statePayload.mode;
-    res.redirect(buildOAuthSuccessRedirect(session, provider, mode));
+    return res.redirect(buildOAuthSuccessRedirect(session, provider, mode));
   } catch (oauthError) {
     logger.warn({ provider, error: oauthError.message }, 'OAuth callback failed');
-    res.redirect(buildOAuthErrorRedirect(provider, oauthError.message || 'Unable to complete social login.'));
+    return res.redirect(buildOAuthErrorRedirect(provider, oauthError.message || 'Unable to complete social login.'));
   }
-});
+}
+
+app.get('/api/auth/oauth/:provider/callback', handleOAuthCallback);
+app.get('/auth/:provider/callback', handleOAuthCallback);
 
 app.post('/api/whatsapp/connect', authenticateRequest, requirePermission('whatsapp:connect'), async (req, res) => {
   try {
