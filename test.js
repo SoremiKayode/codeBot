@@ -49,87 +49,80 @@
 
 const url = "https://codeignite-whatsapptext.hf.space/gradio_api/call/respond";
 
-
 async function runTutor() {
     try {
         console.log("Connecting to CodeIgnite AI...");
 
-        // 1. Submit the request to get an Event ID
+        const payload = {
+            data: [
+                "Create a funtion code to add two number in python", // [0] message (string)
+                [],        // [1] history (Required by ChatInterface, usually an empty array)
+                "You are the CodeIgnite AI tutor. Help students learn coding by being encouraging and clear.", // [2] system_message
+                512,       // [3] max_tokens (number)
+                0.7,       // [4] temperature (number)
+                0.95       // [5] top_p (number)
+            ]
+        };
+
+        // 1. Submit the request
         const submitReq = await fetch(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                data: [
-                    "Hello!!", // User Message
-                    "You are the CodeIgnite AI tutor. Help students learn coding by being encouraging and clear.", // System Message
-                    2048, // Max new tokens
-                    4,  // Temperature
-                    1.0   // Top-p
-                ]
-            })
+            body: JSON.stringify(payload)
         });
 
-        if (!submitReq.ok) throw new Error(`Submit failed: ${submitReq.statusText}`);
+        if (!submitReq.ok) {
+            const errorText = await submitReq.text();
+            throw new Error(`Submit failed: ${submitReq.status} - ${errorText}`);
+        }
         
         const { event_id } = await submitReq.json();
         console.log(`Event ID: ${event_id}`);
+        console.log("--- Tutor Response ---");
 
         // 2. Open the stream
         const response = await fetch(`${url}/${event_id}`);
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
 
-        let fullResponse = "";
+        let lastText = "";
 
         while (true) {
             const { value, done } = await reader.read();
             if (done) break;
 
             const chunk = decoder.decode(value);
-            
-            // SSE format splits messages by double newlines
             const messages = chunk.split("\n\n");
 
             for (const msg of messages) {
-                if (msg.includes("event: error")) {
-                    console.error("\n[Server Error]:", msg);
-                    return;
-                }
-
                 if (msg.includes("data: ")) {
-                    // Extract the content after "data: "
                     const dataLine = msg.split("\n").find(line => line.startsWith("data: "));
                     if (dataLine) {
                         const rawData = dataLine.replace("data: ", "").trim();
-                        
-                        // Skip heartbeats or empty data
-                        if (rawData === "null" || rawData === "[]") continue;
+                        if (rawData === "null") continue;
 
                         try {
-                            // Gradio usually sends data as a JSON array [string]
                             const parsed = JSON.parse(rawData);
-                            const text = Array.isArray(parsed) ? parsed[0] : parsed;
-                            
-                            // If the API sends the full accumulated text, 
-                            // we only print the new part
-                            if (text && text.length > fullResponse.length) {
-                                const newChar = text.slice(fullResponse.length);
-                                process.stdout.write(newChar); 
-                                fullResponse = text;
+                            // Gradio's yield response is usually the first element of an array
+                            const currentFullText = Array.isArray(parsed) ? parsed[0] : parsed;
+
+                            if (currentFullText && currentFullText.length > lastText.length) {
+                                // Print only the new part of the string
+                                const newChars = currentFullText.slice(lastText.length);
+                                process.stdout.write(newChars);
+                                lastText = currentFullText;
                             }
                         } catch (e) {
-                            // If it's not JSON, just print it raw
-                            if (rawData !== "null") process.stdout.write(rawData);
+                            // Ignore parsing errors for heartbeat/non-json lines
                         }
                     }
                 }
             }
         }
-
-        console.log("\n\n--- Done ---");
+        console.log("\n--- Finished ---");
 
     } catch (error) {
-        console.error("Error:", error.message);
+        console.error("\n[Error]:", error.message);
     }
 }
 
