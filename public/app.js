@@ -7,6 +7,7 @@ const views = {
   signup: document.getElementById('signupView'),
   dashboard: document.getElementById('dashboardView'),
   tasks: document.getElementById('tasksView'),
+  'task-list': document.getElementById('taskListView'),
 };
 
 const ui = {
@@ -29,6 +30,7 @@ const ui = {
   signupForm: document.getElementById('signupForm'),
   enquiryForm: document.getElementById('enquiryForm'),
   taskList: document.getElementById('taskList'),
+  taskListTabSummary: document.getElementById('taskListTabSummary'),
   toast: document.getElementById('toast'),
   startButton: document.getElementById('startButton'),
   goToTasksButton: document.getElementById('goToTasksButton'),
@@ -249,15 +251,17 @@ function closeMenu() {
 }
 
 function navigate(route) {
-  const targetRoute = ['dashboard', 'tasks'].includes(route) && !appState.user ? 'login' : route;
+  const targetRoute = ['dashboard', 'tasks', 'task-list'].includes(route) && !appState.user ? 'login' : route;
   setRoute(targetRoute);
   closeMenu();
   Object.entries(views).forEach(([key, view]) => view.classList.toggle('active', key === targetRoute));
-  if (targetRoute === 'tasks' && appState.user) {
-    loadAudience();
-    renderAudienceTables();
-    renderFrequencyOptions();
-    updateTaskPreview();
+  if (['tasks', 'task-list'].includes(targetRoute) && appState.user) {
+    if (targetRoute === 'tasks') {
+      loadAudience();
+      renderAudienceTables();
+      renderFrequencyOptions();
+      updateTaskPreview();
+    }
     loadTasks();
   }
 }
@@ -520,14 +524,12 @@ function updateTaskSelectionSummary(visibleTasks = []) {
   ui.taskSelectionSummary.textContent = `${taskBuilderState.selectedTaskIds.size} task${taskBuilderState.selectedTaskIds.size === 1 ? '' : 's'} selected.`;
 }
 
-function renderTasks(tasks = []) {
-  updateTaskSelectionSummary(tasks);
+function buildTaskRowsMarkup(tasks = [], { selectable = true, emptyMessage = 'No tasks found. Create a task above or adjust your search filters.' } = {}) {
   if (!tasks.length) {
-    ui.taskList.innerHTML = '<div class="empty-state">No tasks found. Create a task above or adjust your search filters.</div>';
-    return;
+    return `<div class="empty-state">${escapeHtml(emptyMessage)}</div>`;
   }
 
-  ui.taskList.innerHTML = `
+  return `
     <div class="task-table__head">
       <span></span>
       <span>Task</span>
@@ -544,7 +546,9 @@ function renderTasks(tasks = []) {
       const contactCount = Array.isArray(task.recipients?.contacts) ? task.recipients.contacts.length : 0;
       return `
       <div class="task-table__row">
-        <input class="task-table__checkbox" type="checkbox" data-select-task="${task._id}" ${taskBuilderState.selectedTaskIds.has(task._id) ? 'checked' : ''} />
+        ${selectable
+          ? `<input class="task-table__checkbox" type="checkbox" data-select-task="${task._id}" ${taskBuilderState.selectedTaskIds.has(task._id) ? 'checked' : ''} />`
+          : '<span class="task-table__checkbox task-table__checkbox--placeholder"></span>'}
         <div class="task-table__cell">
           <strong>${escapeHtml(task.title)}</strong>
           <span class="muted">${escapeHtml(task.type || 'Automation task')}</span>
@@ -573,6 +577,22 @@ function renderTasks(tasks = []) {
       </div>`;
     }).join('')}
   `;
+}
+
+function renderTasks(tasks = []) {
+  updateTaskSelectionSummary(tasks);
+  ui.taskList.innerHTML = buildTaskRowsMarkup(tasks);
+
+  if (ui.taskListTabSummary) {
+    const recentTasks = tasks.slice(0, 5);
+    ui.taskListTabSummary.innerHTML = `
+      <div class="task-list-embedded__header">
+        <span class="muted">Showing ${recentTasks.length} of ${tasks.length} task${tasks.length === 1 ? '' : 's'}.</span>
+      </div>
+      <div class="task-table-shell">
+        <div class="task-table">${buildTaskRowsMarkup(recentTasks, { selectable: false, emptyMessage: 'No saved tasks yet. Schedule a task to see it here.' })}</div>
+      </div>`;
+  }
 }
 
 async function loadTasks() {

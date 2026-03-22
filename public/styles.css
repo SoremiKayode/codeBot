@@ -487,6 +487,26 @@ input, textarea, select {
 }
 .saved-task-card { background: linear-gradient(180deg, color-mix(in srgb, var(--surface-solid) 96%, transparent), color-mix(in srgb, var(--surface-alt) 90%, transparent)); }
 
+.task-list-page-card {
+  min-height: 22rem;
+}
+.task-list-embedded {
+  display: grid;
+  gap: 1rem;
+}
+.task-list-embedded__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.task-table__checkbox--placeholder {
+  width: 1rem;
+  height: 1rem;
+  display: inline-block;
+}
+
 .app-footer { padding: 2rem; background: var(--surface-solid); border-top: 1px solid var(--border); margin-top: auto; }
 .footer-grid { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 2rem; }
 .footer-section h3 { margin: 0 0 .75rem; }
