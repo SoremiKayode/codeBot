@@ -3,6 +3,7 @@ import express from 'express';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import pino from 'pino';
+import { Client } from '@gradio/client';
 
 const {
   default: makeWASocket,
@@ -456,16 +457,26 @@ function extractImageUrlFromSpaceResult(payload) {
   return '';
 }
 
-async function callHuggingFaceText(prompt) {
-  const payload = await callHuggingFaceSpace(HUGGINGFACE_TEXT_SPACE_ID, HUGGINGFACE_TEXT_API_NAME, [
-    prompt,
-    HUGGINGFACE_TEXT_SYSTEM_PROMPT,
-    HUGGINGFACE_TEXT_MAX_TOKENS,
-    HUGGINGFACE_TEXT_TEMPERATURE,
-    HUGGINGFACE_TEXT_TOP_P,
-  ]);
+const huggingFaceClientStore = new Map();
 
-  const text = extractTextFromSpaceResult(payload);
+async function getHuggingFaceClient(spaceId) {
+  if (!huggingFaceClientStore.has(spaceId)) {
+    huggingFaceClientStore.set(spaceId, Client.connect(spaceId));
+  }
+  return huggingFaceClientStore.get(spaceId);
+}
+
+async function callHuggingFaceText(prompt) {
+  const client = await getHuggingFaceClient(HUGGINGFACE_TEXT_SPACE_ID);
+  const result = await client.predict(HUGGINGFACE_TEXT_API_NAME, {
+    message: prompt,
+    system_message: HUGGINGFACE_TEXT_SYSTEM_PROMPT,
+    max_tokens: HUGGINGFACE_TEXT_MAX_TOKENS,
+    temperature: HUGGINGFACE_TEXT_TEMPERATURE,
+    top_p: HUGGINGFACE_TEXT_TOP_P,
+  });
+
+  const text = extractTextFromSpaceResult(result?.data);
   if (!text) throw new Error('No text was returned by the Hugging Face Space.');
   return text;
 }
