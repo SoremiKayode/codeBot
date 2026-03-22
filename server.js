@@ -35,8 +35,8 @@ const HUGGINGFACE_TEXT_TOP_P = Number(process.env.HUGGINGFACE_TEXT_TOP_P || 0.95
 const HUGGINGFACE_IMAGE_NEGATIVE_PROMPT = process.env.HUGGINGFACE_IMAGE_NEGATIVE_PROMPT || '';
 const HUGGINGFACE_IMAGE_SEED = Number(process.env.HUGGINGFACE_IMAGE_SEED || 0);
 const HUGGINGFACE_IMAGE_RANDOMIZE_SEED = process.env.HUGGINGFACE_IMAGE_RANDOMIZE_SEED !== 'false';
-const HUGGINGFACE_IMAGE_WIDTH = Number(process.env.HUGGINGFACE_IMAGE_WIDTH || 512);
-const HUGGINGFACE_IMAGE_HEIGHT = Number(process.env.HUGGINGFACE_IMAGE_HEIGHT || 512);
+const HUGGINGFACE_IMAGE_WIDTH = Number(process.env.HUGGINGFACE_IMAGE_WIDTH || 384);
+const HUGGINGFACE_IMAGE_HEIGHT = Number(process.env.HUGGINGFACE_IMAGE_HEIGHT || 384);
 const HUGGINGFACE_IMAGE_GUIDANCE_SCALE = Number(process.env.HUGGINGFACE_IMAGE_GUIDANCE_SCALE || 0);
 const HUGGINGFACE_IMAGE_STEPS = Number(process.env.HUGGINGFACE_IMAGE_STEPS || 2);
 const CREDIT_COSTS = {
@@ -482,20 +482,50 @@ async function callHuggingFaceText(prompt) {
 }
 
 async function callHuggingFaceImage(prompt) {
-  const payload = await callHuggingFaceSpace(HUGGINGFACE_IMAGE_SPACE_ID, HUGGINGFACE_IMAGE_API_NAME, [
-    prompt,
-    HUGGINGFACE_IMAGE_NEGATIVE_PROMPT,
-    HUGGINGFACE_IMAGE_SEED,
-    HUGGINGFACE_IMAGE_RANDOMIZE_SEED,
-    HUGGINGFACE_IMAGE_WIDTH,
-    HUGGINGFACE_IMAGE_HEIGHT,
-    HUGGINGFACE_IMAGE_GUIDANCE_SCALE,
-    HUGGINGFACE_IMAGE_STEPS,
-  ]);
+  const client = await getHuggingFaceClient(HUGGINGFACE_IMAGE_SPACE_ID);
+  const attempts = [
+    async () => client.predict(HUGGINGFACE_IMAGE_API_NAME, {
+      prompt,
+      seed: HUGGINGFACE_IMAGE_SEED,
+      randomize_seed: HUGGINGFACE_IMAGE_RANDOMIZE_SEED,
+      width: HUGGINGFACE_IMAGE_WIDTH,
+      height: HUGGINGFACE_IMAGE_HEIGHT,
+    }),
+    async () => client.predict(HUGGINGFACE_IMAGE_API_NAME, {
+      prompt,
+      negative_prompt: HUGGINGFACE_IMAGE_NEGATIVE_PROMPT,
+      seed: HUGGINGFACE_IMAGE_SEED,
+      randomize_seed: HUGGINGFACE_IMAGE_RANDOMIZE_SEED,
+      width: HUGGINGFACE_IMAGE_WIDTH,
+      height: HUGGINGFACE_IMAGE_HEIGHT,
+      guidance_scale: HUGGINGFACE_IMAGE_GUIDANCE_SCALE,
+      num_inference_steps: HUGGINGFACE_IMAGE_STEPS,
+    }),
+    async () => callHuggingFaceSpace(HUGGINGFACE_IMAGE_SPACE_ID, HUGGINGFACE_IMAGE_API_NAME, [
+      prompt,
+      HUGGINGFACE_IMAGE_NEGATIVE_PROMPT,
+      HUGGINGFACE_IMAGE_SEED,
+      HUGGINGFACE_IMAGE_RANDOMIZE_SEED,
+      HUGGINGFACE_IMAGE_WIDTH,
+      HUGGINGFACE_IMAGE_HEIGHT,
+      HUGGINGFACE_IMAGE_GUIDANCE_SCALE,
+      HUGGINGFACE_IMAGE_STEPS,
+    ]),
+  ];
 
-  const imageUrl = extractImageUrlFromSpaceResult(payload);
-  if (!imageUrl) throw new Error('No image was returned by the Hugging Face Space.');
-  return imageUrl;
+  let lastError;
+  for (const attempt of attempts) {
+    try {
+      const result = await attempt();
+      const payload = result?.data ?? result;
+      const imageUrl = extractImageUrlFromSpaceResult(payload);
+      if (imageUrl) return imageUrl;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error('No image was returned by the Hugging Face Space.');
 }
 
 function fallbackImage(prompt) {
