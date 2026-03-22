@@ -1086,6 +1086,27 @@ async function exchangeGitHubCodeForProfile(code, config) {
   };
 }
 
+async function resolveActiveWorkspaceMembership(user) {
+  let membership = await TenantMembership.findOne({ userId: user._id, status: 'active' }).sort({ createdAt: 1 });
+  if (membership) {
+    const tenant = await Tenant.findById(membership.tenantId);
+    if (tenant) return { membership, tenant };
+  }
+
+  const tenant = await Tenant.findOne({ billingEmail: user.email }).sort({ createdAt: 1 });
+  if (!tenant) return { membership: null, tenant: null };
+
+  membership = await TenantMembership.findOne({ tenantId: tenant._id, userId: user._id });
+  if (!membership) {
+    membership = await TenantMembership.create({ tenantId: tenant._id, userId: user._id, role: 'owner', status: 'active' });
+    logger.info({ userId: String(user._id), tenantId: String(tenant._id) }, 'Recovered missing workspace membership for existing account');
+  } else if (membership.status !== 'active') {
+    return { membership: null, tenant: null };
+  }
+
+  return { membership, tenant };
+}
+
 async function findOrCreateSocialUser(provider, profile, mode = 'login') {
   let user = await User.findOne({ email: profile.email });
   let tenant;
@@ -1116,9 +1137,8 @@ async function findOrCreateSocialUser(provider, profile, mode = 'login') {
       if (!user.username || user.username === user.email) user.username = profile.username;
       await user.save();
     }
-    membership = await TenantMembership.findOne({ userId: user._id, status: 'active' }).sort({ createdAt: 1 });
+    ({ membership, tenant } = await resolveActiveWorkspaceMembership(user));
     if (!membership) throw new Error('No active workspace membership found for this account.');
-    tenant = await Tenant.findById(membership.tenantId);
     if (!tenant) throw new Error('Workspace not found for this account.');
   }
 
@@ -1195,9 +1215,8 @@ app.post('/api/auth/login', async (req, res) => {
   const password = String(req.body.password || '');
   const user = await User.findOne({ email });
   if (!user || !verifyPassword(password, user.passwordHash)) return res.status(401).json({ error: 'Invalid email or password.' });
-  const membership = await TenantMembership.findOne({ userId: user._id, status: 'active' }).sort({ createdAt: 1 });
+  const { membership, tenant } = await resolveActiveWorkspaceMembership(user);
   if (!membership) return res.status(403).json({ error: 'No active workspace membership found.' });
-  const tenant = await Tenant.findById(membership.tenantId);
   if (!tenant) return res.status(403).json({ error: 'Workspace not found.' });
   const session = await issueSession(user, tenant, membership);
   res.json(session);
