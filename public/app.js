@@ -85,6 +85,7 @@ const ui = {
   scheduleSummary: document.getElementById('scheduleSummary'),
   nextRunBadge: document.getElementById('nextRunBadge'),
   scheduleTaskButton: document.getElementById('scheduleTaskButton'),
+  groupDeliveryModeInputs: document.querySelectorAll('input[name="groupDeliveryMode"]'),
 };
 
 const audienceState = {
@@ -110,6 +111,7 @@ const taskBuilderState = {
   weeklySlots: [{ day: 'Monday', time: '09:00' }],
   monthlyWeeks: [],
   monthlyDays: [],
+  groupDeliveryMode: 'group',
 };
 
 function escapeHtml(value = '') {
@@ -216,6 +218,7 @@ async function syncWhatsAppStatus() {
     ui.whatsappStatusText.textContent = status.message || 'Waiting for update.';
     ui.whatsappStatusBadge.textContent = status.status || 'idle';
     ui.whatsappPhone.textContent = status.phoneNumber || 'Not available';
+    ui.whatsappPhone.title = status.phoneNumber || 'Not available';
     if (status.qr) renderQrCode(status.qr);
     else if (status.status === 'connected') {
       ui.qrCode.innerHTML = '';
@@ -314,15 +317,24 @@ function updateTaskPreview() {
   ui.previewFrequencyPill.textContent = taskBuilderState.frequency || 'Not scheduled';
   ui.nextRunBadge.textContent = buildScheduleLabel();
 
+  const selectedGroups = getSelectedItems(audienceState.groups, taskBuilderState.selectedGroups);
+  const selectedContacts = getSelectedItems(audienceState.contacts, taskBuilderState.selectedContacts);
   const selectedNames = [
-    ...getSelectedItems(audienceState.groups, taskBuilderState.selectedGroups).map((item) => item.name),
-    ...getSelectedItems(audienceState.contacts, taskBuilderState.selectedContacts).map((item) => item.name),
+    ...selectedGroups.map((item) => `${item.name}${taskBuilderState.groupDeliveryMode === 'members' ? ' (all members)' : ' (group chat)'}`),
+    ...selectedContacts.map((item) => item.name),
   ];
   ui.selectedAudienceSummary.innerHTML = selectedNames.length
     ? selectedNames.map((name) => `<span class="pill">${escapeHtml(name)}</span>`).join('')
     : '<span class="muted">No audience selected yet.</span>';
 
-  ui.recipientSummaryInput.value = selectedNames.join(', ');
+  const recipientLines = [];
+  if (selectedGroups.length) {
+    recipientLines.push(`Groups (${taskBuilderState.groupDeliveryMode === 'members' ? 'all members individually' : 'group chat only'}): ${selectedGroups.map((item) => item.name).join(', ')}`);
+  }
+  if (selectedContacts.length) {
+    recipientLines.push(`Contacts: ${selectedContacts.map((item) => item.name).join(', ')}`);
+  }
+  ui.recipientSummaryInput.value = recipientLines.join('\n');
   renderMediaQueue();
   ui.scheduleSummary.textContent = buildScheduleDescription();
 }
@@ -366,7 +378,7 @@ function renderTasks(tasks = []) {
         <span class="task-status ${task.status}">${escapeHtml(task.status)}</span>
       </div>
       <p class="muted">${escapeHtml(task.description || 'No description provided.')}</p>
-      <p class="task-meta">Recipients: ${task.recipients?.groups?.length || 0} groups, ${task.recipients?.contacts?.length || 0} contacts • Created ${new Date(task.createdAt).toLocaleDateString()}</p>
+      <p class="task-meta">Recipients: ${task.recipients?.groups?.length || 0} groups (${task.recipients?.groupDeliveryMode === 'members' ? 'all members' : 'group chat'}), ${task.recipients?.contacts?.length || 0} contacts • Created ${new Date(task.createdAt).toLocaleDateString()}</p>
     </article>
   `).join('');
 }
@@ -553,7 +565,7 @@ async function handleTextGeneration() {
     updateTaskPreview();
     showToast('AI message inserted into the editor.');
   } catch (error) {
-    ui.aiTextStatus.textContent = error.message;
+    ui.aiTextStatus.textContent = error.message.includes('Not enough credits') ? 'You do not have enough credits to generate text right now.' : error.message;
     showToast(error.message);
   }
 }
@@ -574,7 +586,7 @@ async function handleImageGeneration() {
     ui.approveImageButton.classList.remove('hidden');
     showToast('AI image generated. Approve it to add to the queue.');
   } catch (error) {
-    ui.aiImageStatus.textContent = error.message;
+    ui.aiImageStatus.textContent = error.message.includes('Not enough credits') ? 'You do not have enough credits to generate an image right now.' : error.message;
     showToast(error.message);
   }
 }
@@ -660,6 +672,7 @@ async function scheduleTask() {
       recipients: {
         groups: getSelectedItems(audienceState.groups, taskBuilderState.selectedGroups),
         contacts: getSelectedItems(audienceState.contacts, taskBuilderState.selectedContacts),
+        groupDeliveryMode: taskBuilderState.groupDeliveryMode,
       },
       schedule: buildScheduleConfig(),
     });
@@ -686,6 +699,8 @@ function resetTaskBuilder() {
   taskBuilderState.weeklySlots = [{ day: 'Monday', time: '09:00' }];
   taskBuilderState.monthlyWeeks = [];
   taskBuilderState.monthlyDays = [];
+  taskBuilderState.groupDeliveryMode = 'group';
+  ui.groupDeliveryModeInputs.forEach((input) => { input.checked = input.value === 'group'; });
   ui.aiTextPrompt.value = '';
   ui.aiImagePrompt.value = '';
   ui.aiTextStatus.textContent = 'AI generated text will appear here before it is inserted into the editor.';
@@ -776,6 +791,7 @@ ui.connectWhatsappButton.addEventListener('click', async () => {
     ui.whatsappStatusText.textContent = data.message || 'Waiting for QR code.';
     ui.whatsappStatusBadge.textContent = data.status || 'connecting';
     ui.whatsappPhone.textContent = data.phoneNumber || 'Not available';
+    ui.whatsappPhone.title = data.phoneNumber || 'Not available';
     startWhatsAppPolling();
     await syncWhatsAppStatus();
     await loadAudience(true);
@@ -821,6 +837,10 @@ ui.selectAllContacts.addEventListener('change', () => {
   renderTable('contacts');
   updateTaskPreview();
 });
+ui.groupDeliveryModeInputs.forEach((input) => input.addEventListener('change', (event) => {
+  taskBuilderState.groupDeliveryMode = event.target.value === 'members' ? 'members' : 'group';
+  updateTaskPreview();
+}));
 
 document.addEventListener('click', (event) => {
   const tabButton = event.target.closest('[data-task-tab]');

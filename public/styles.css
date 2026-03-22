@@ -79,16 +79,14 @@ code { background: var(--surface-alt); padding: .15rem .35rem; border-radius: .4
 .brand-logo {
   width: 3.2rem;
   height: 3.2rem;
-  border-radius: 1rem;
   display: grid;
   place-items: center;
-  background: linear-gradient(135deg, rgba(15, 23, 42, 0.88), rgba(37, 211, 102, 0.3));
-  color: #fff;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--card-glow) 55%, transparent), 0 16px 30px rgba(15, 23, 42, 0.18);
   overflow: hidden;
+  background: transparent;
+  box-shadow: none;
 }
 .brand-logo--small { width: 2.6rem; height: 2.6rem; }
-.brand-logo__image { width: 100%; height: 100%; object-fit: cover; display: block; }
+.brand-logo__image { width: 100%; height: 100%; object-fit: contain; display: block; background: transparent; }
 .eyebrow {
   margin: 0 0 .35rem;
   font-size: .78rem;
@@ -244,6 +242,29 @@ html[data-theme='dark'] .theme-icon--moon { opacity: 1; transform: translateY(0)
 .metric-card { color: #f8fffb; background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.12); display: grid; gap: .35rem; box-shadow: 0 16px 30px rgba(3, 10, 24, 0.22), 0 0 0 1px rgba(255,255,255,0.05), 0 0 24px rgba(125, 211, 252, 0.14); }
 .metric-card strong { font-size: 1.5rem; }
 .summary-item span, .muted, .task-meta, .password-strength, .page-counter, .kpi-card small { color: var(--muted); }
+#whatsappPhone {
+  display: inline-block;
+  max-width: min(100%, 15rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+.audience-mode-card {
+  padding: 1rem;
+  margin-bottom: 1rem;
+  border-radius: 1rem;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--surface-alt), var(--surface-soft));
+}
+.radio-option {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+}
+.radio-option input {
+  margin: 0;
+}
 
 .dashboard-showcase { margin-top: 1rem; }
 .dashboard-hero {
