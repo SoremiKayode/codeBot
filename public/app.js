@@ -114,10 +114,103 @@ const taskBuilderState = {
   monthlyWeeks: [],
   monthlyDays: [],
   groupDeliveryMode: 'group',
+  manualRecipients: [],
 };
+
+const TASK_DRAFT_STORAGE_KEY = 'wa_task_builder_draft_v1';
 
 function escapeHtml(value = '') {
   return value.replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
+}
+
+function normalizeWhitespace(value = '') {
+  return String(value).replace(/\s+/g, ' ').trim();
+}
+
+function normalizePhoneRecipient(value = '') {
+  const trimmed = normalizeWhitespace(value);
+  if (!trimmed) return '';
+  if (/@s\.whatsapp\.net$/i.test(trimmed) || /@g\.us$/i.test(trimmed)) return trimmed;
+  const digits = trimmed.replace(/\D/g, '');
+  return digits.length >= 7 ? `${digits}@s.whatsapp.net` : trimmed;
+}
+
+function splitRecipientInput(value = '') {
+  return String(value).split(',').map((item) => normalizeWhitespace(item)).filter(Boolean);
+}
+
+function dedupeRecipients(values = []) {
+  const seen = new Set();
+  return values.filter((value) => {
+    const key = normalizePhoneRecipient(value).toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function syncManualRecipientsFromInput() {
+  taskBuilderState.manualRecipients = dedupeRecipients(splitRecipientInput(ui.recipientSummaryInput.value));
+}
+
+function getSelectedRecipientLabels() {
+  const selectedGroups = getSelectedItems(audienceState.groups, taskBuilderState.selectedGroups);
+  const selectedContacts = getSelectedItems(audienceState.contacts, taskBuilderState.selectedContacts);
+  return [
+    ...selectedGroups.map((item) => `${item.name}${taskBuilderState.groupDeliveryMode === 'members' ? ' (all members)' : ' (group chat)'}`),
+    ...selectedContacts.map((item) => item.name),
+  ];
+}
+
+function getCombinedRecipientTokens() {
+  return dedupeRecipients([...getSelectedRecipientLabels(), ...taskBuilderState.manualRecipients]);
+}
+
+function saveTaskDraft() {
+  if (!taskBuilderState.quill) return;
+  const draft = {
+    title: ui.taskTitle.value,
+    messageHtml: extractMessageHtml(),
+    mediaQueue: taskBuilderState.mediaQueue,
+    selectedGroups: Array.from(taskBuilderState.selectedGroups),
+    selectedContacts: Array.from(taskBuilderState.selectedContacts),
+    manualRecipients: taskBuilderState.manualRecipients,
+    startDate: ui.startDateInput.value,
+    startTime: ui.startTimeInput.value,
+    frequency: ui.frequencySelect.value,
+    dailyTimes: taskBuilderState.dailyTimes,
+    weeklySlots: taskBuilderState.weeklySlots,
+    monthlyWeeks: taskBuilderState.monthlyWeeks,
+    monthlyDays: taskBuilderState.monthlyDays,
+    groupDeliveryMode: taskBuilderState.groupDeliveryMode,
+  };
+  localStorage.setItem(TASK_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+}
+
+function restoreTaskDraft() {
+  const raw = localStorage.getItem(TASK_DRAFT_STORAGE_KEY);
+  if (!raw || !taskBuilderState.quill) return;
+  try {
+    const draft = JSON.parse(raw);
+    ui.taskTitle.value = draft.title || '';
+    taskBuilderState.quill.root.innerHTML = draft.messageHtml || '';
+    taskBuilderState.mediaQueue = Array.isArray(draft.mediaQueue) ? draft.mediaQueue : [];
+    taskBuilderState.selectedGroups = new Set(Array.isArray(draft.selectedGroups) ? draft.selectedGroups : []);
+    taskBuilderState.selectedContacts = new Set(Array.isArray(draft.selectedContacts) ? draft.selectedContacts : []);
+    taskBuilderState.manualRecipients = dedupeRecipients(Array.isArray(draft.manualRecipients) ? draft.manualRecipients : []);
+    taskBuilderState.dailyTimes = Array.isArray(draft.dailyTimes) && draft.dailyTimes.length ? draft.dailyTimes : ['09:00'];
+    taskBuilderState.weeklySlots = Array.isArray(draft.weeklySlots) && draft.weeklySlots.length ? draft.weeklySlots : [{ day: 'Monday', time: '09:00' }];
+    taskBuilderState.monthlyWeeks = Array.isArray(draft.monthlyWeeks) ? draft.monthlyWeeks : [];
+    taskBuilderState.monthlyDays = Array.isArray(draft.monthlyDays) ? draft.monthlyDays : [];
+    taskBuilderState.groupDeliveryMode = draft.groupDeliveryMode === 'members' ? 'members' : 'group';
+    ui.groupDeliveryModeInputs.forEach((input) => { input.checked = input.value === taskBuilderState.groupDeliveryMode; });
+    ui.startDateInput.value = draft.startDate || '';
+    ui.startTimeInput.value = draft.startTime || '';
+    ui.frequencySelect.value = draft.frequency || '';
+  } catch (error) {
+    console.warn('Unable to restore saved task draft.', error);
+    localStorage.removeItem(TASK_DRAFT_STORAGE_KEY);
+  }
 }
 
 function showToast(message) {
@@ -321,24 +414,15 @@ function updateTaskPreview() {
 
   const selectedGroups = getSelectedItems(audienceState.groups, taskBuilderState.selectedGroups);
   const selectedContacts = getSelectedItems(audienceState.contacts, taskBuilderState.selectedContacts);
-  const selectedNames = [
-    ...selectedGroups.map((item) => `${item.name}${taskBuilderState.groupDeliveryMode === 'members' ? ' (all members)' : ' (group chat)'}`),
-    ...selectedContacts.map((item) => item.name),
-  ];
+  const selectedNames = getCombinedRecipientTokens();
   ui.selectedAudienceSummary.innerHTML = selectedNames.length
     ? selectedNames.map((name) => `<span class="pill">${escapeHtml(name)}</span>`).join('')
     : '<span class="muted">No audience selected yet.</span>';
 
-  const recipientLines = [];
-  if (selectedGroups.length) {
-    recipientLines.push(`Groups (${taskBuilderState.groupDeliveryMode === 'members' ? 'all members individually' : 'group chat only'}): ${selectedGroups.map((item) => item.name).join(', ')}`);
-  }
-  if (selectedContacts.length) {
-    recipientLines.push(`Contacts: ${selectedContacts.map((item) => item.name).join(', ')}`);
-  }
-  ui.recipientSummaryInput.value = recipientLines.join('\n');
+  ui.recipientSummaryInput.value = selectedNames.join(', ');
   renderMediaQueue();
   ui.scheduleSummary.textContent = buildScheduleDescription();
+  saveTaskDraft();
 }
 
 function renderMediaQueue() {
@@ -630,30 +714,35 @@ function getReadableFileKind(file) {
   return 'file';
 }
 
-async function handleFileUpload(file) {
-  if (!file) return;
-  if (file.size > 20 * 1024 * 1024) {
-    showToast('Files must be 20MB or smaller.');
-    return;
+async function handleFileUpload(files) {
+  const fileList = Array.from(files || []).filter(Boolean);
+  if (!fileList.length) return;
+
+  for (const file of fileList) {
+    if (file.size > 20 * 1024 * 1024) {
+      showToast(`${file.name} is larger than 20MB and was skipped.`);
+      continue;
+    }
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error('Unable to read the selected file.'));
+      reader.readAsDataURL(file);
+    });
+    const mediaType = getReadableFileKind(file);
+    taskBuilderState.mediaQueue.push({
+      name: file.name,
+      type: mediaType,
+      dataUrl,
+      mimeType: file.type || 'application/octet-stream',
+      size: file.size,
+      previewText: mediaType === 'text' ? 'Text file added to queue.' : `Ready to send: ${file.name}`,
+    });
   }
-  const dataUrl = await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error('Unable to read the selected file.'));
-    reader.readAsDataURL(file);
-  });
-  const mediaType = getReadableFileKind(file);
-  taskBuilderState.mediaQueue.push({
-    name: file.name,
-    type: mediaType,
-    dataUrl,
-    mimeType: file.type || 'application/octet-stream',
-    size: file.size,
-    previewText: mediaType === 'text' ? 'Text file added to queue.' : `Ready to send: ${file.name}`,
-  });
+
   ui.mediaFileInput.value = '';
   updateTaskPreview();
-  showToast('File added to the queue.');
+  showToast(fileList.length === 1 ? 'File added to the queue.' : 'Files added to the queue.');
 }
 
 function buildScheduleConfig() {
@@ -669,22 +758,43 @@ function buildScheduleConfig() {
 }
 
 async function scheduleTask() {
+  syncManualRecipientsFromInput();
   const title = ui.taskTitle.value.trim() || 'Untitled WhatsApp task';
   const messageText = extractMessageText();
+  const selectedContacts = getSelectedItems(audienceState.contacts, taskBuilderState.selectedContacts);
+  const selectedGroups = getSelectedItems(audienceState.groups, taskBuilderState.selectedGroups);
+  const manualRecipientValues = taskBuilderState.manualRecipients.map((value) => normalizePhoneRecipient(value));
+  const manualContacts = manualRecipientValues
+    .filter((value) => /@s\.whatsapp\.net$/i.test(value))
+    .map((jid) => ({ id: jid, name: jid, phone: `+${jid.split('@')[0]}`, segment: 'Manual entry' }));
+  const invalidManualRecipients = taskBuilderState.manualRecipients.filter((value) => {
+    const normalized = normalizePhoneRecipient(value);
+    return !/@s\.whatsapp\.net$/i.test(normalized) && !/@g\.us$/i.test(normalized);
+  });
+
   if (!messageText) {
     showToast('Enter or generate a message before scheduling.');
     setTaskTab('message');
     return;
   }
-  if (!taskBuilderState.selectedGroups.size && !taskBuilderState.selectedContacts.size) {
-    showToast('Select at least one group or contact.');
+  if (!selectedGroups.length && !selectedContacts.length && !manualContacts.length) {
+    showToast('Select at least one group or contact, or paste a phone number.');
     setTaskTab('audience');
+    return;
+  }
+  if (invalidManualRecipients.length) {
+    showToast(`These recipients are invalid: ${invalidManualRecipients.join(', ')}`);
     return;
   }
   if (!ui.frequencySelect.value || !ui.startDateInput.value || !ui.startTimeInput.value) {
     showToast('Complete the scheduling inputs first.');
     return;
   }
+
+  const contacts = dedupeRecipients([
+    ...selectedContacts.map((item) => item.id),
+    ...manualContacts.map((item) => item.id),
+  ]).map((id) => selectedContacts.find((item) => item.id === id) || manualContacts.find((item) => item.id === id)).filter(Boolean);
 
   try {
     const payload = await api.createTask({
@@ -696,14 +806,15 @@ async function scheduleTask() {
       translatedPreview: translateTags(messageText),
       mediaQueue: taskBuilderState.mediaQueue,
       recipients: {
-        groups: getSelectedItems(audienceState.groups, taskBuilderState.selectedGroups),
-        contacts: getSelectedItems(audienceState.contacts, taskBuilderState.selectedContacts),
+        groups: selectedGroups,
+        contacts,
         groupDeliveryMode: taskBuilderState.groupDeliveryMode,
       },
       schedule: buildScheduleConfig(),
     });
     syncUserFromPayload(payload);
     resetTaskBuilder();
+    localStorage.removeItem(TASK_DRAFT_STORAGE_KEY);
     await loadTasks();
     showToast('Task scheduled successfully.');
   } catch (error) {
@@ -726,6 +837,7 @@ function resetTaskBuilder() {
   taskBuilderState.monthlyWeeks = [];
   taskBuilderState.monthlyDays = [];
   taskBuilderState.groupDeliveryMode = 'group';
+  taskBuilderState.manualRecipients = [];
   ui.groupDeliveryModeInputs.forEach((input) => { input.checked = input.value === 'group'; });
   ui.aiTextPrompt.value = '';
   ui.aiImagePrompt.value = '';
@@ -838,7 +950,7 @@ ui.generateTextButton.addEventListener('click', handleTextGeneration);
 ui.generateImageButton.addEventListener('click', handleImageGeneration);
 ui.regenerateImageButton.addEventListener('click', handleImageGeneration);
 ui.approveImageButton.addEventListener('click', approvePendingImage);
-ui.mediaFileInput.addEventListener('change', (event) => handleFileUpload(event.target.files?.[0]));
+ui.mediaFileInput.addEventListener('change', (event) => handleFileUpload(event.target.files));
 ui.frequencySelect.addEventListener('change', renderFrequencyOptions);
 ui.startDateInput.addEventListener('change', updateTaskPreview);
 ui.startTimeInput.addEventListener('change', updateTaskPreview);
@@ -928,8 +1040,9 @@ document.addEventListener('input', (event) => {
     updateTaskPreview();
   }
   if (event.target.id === 'recipientSummaryInput') {
-    // allow manual additions for display only
-    ui.selectedAudienceSummary.innerHTML = event.target.value.split(',').map((item) => item.trim()).filter(Boolean).map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join('') || '<span class="muted">No audience selected yet.</span>';
+    syncManualRecipientsFromInput();
+    ui.selectedAudienceSummary.innerHTML = getCombinedRecipientTokens().map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join('') || '<span class="muted">No audience selected yet.</span>';
+    saveTaskDraft();
   }
 });
 
@@ -968,7 +1081,9 @@ ui.menuToggle?.addEventListener('click', () => {
 applyTheme(localStorage.getItem('wa_theme') || 'light');
 updateUserUI();
 initQuill();
+restoreTaskDraft();
 renderAudienceTables();
+renderFrequencyOptions();
 updateTaskPreview();
 
 const existingToken = localStorage.getItem('wa_token');

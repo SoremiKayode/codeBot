@@ -77,15 +77,15 @@ code { background: var(--surface-alt); padding: .15rem .35rem; border-radius: .4
 .brand-block, .header-actions, .header-nav { display: flex; align-items: center; gap: 1rem; }
 .brand-button { border: none; background: transparent; padding: 0; }
 .brand-logo {
-  width: 3.2rem;
-  height: 3.2rem;
+  width: 4.6rem;
+  height: 4.6rem;
   display: grid;
   place-items: center;
   overflow: hidden;
   background: transparent;
   box-shadow: none;
 }
-.brand-logo--small { width: 2.6rem; height: 2.6rem; }
+.brand-logo--small { width: 3.2rem; height: 3.2rem; }
 .brand-logo__image { width: 100%; height: 100%; object-fit: contain; display: block; background: transparent; }
 .eyebrow {
   margin: 0 0 .35rem;
