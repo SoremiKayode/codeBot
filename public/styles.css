@@ -345,6 +345,16 @@ input, textarea, select {
 .preview-media-strip, .media-queue { display: grid; gap: 1rem; }
 .media-card { background: var(--surface-soft); border: 1px solid var(--border); border-radius: 1rem; padding: 1rem; display: grid; gap: .75rem; }
 .media-card img, .media-card video { width: 100%; max-height: 220px; object-fit: cover; border-radius: .85rem; border: 1px solid var(--border); }
+
+.file-card-preview { display: grid; gap: .35rem; padding: 1rem; border: 1px dashed var(--border); border-radius: .85rem; background: var(--surface-alt); }
+.file-card-preview strong { word-break: break-word; }
+.file-card-preview span, .file-card-preview small { color: var(--muted); word-break: break-word; }
+.audience-toolbar { gap: 1rem; align-items: stretch; }
+.table-toolbar--stacked { display: grid; gap: 1rem; }
+.table-toolbar__row { display: flex; justify-content: space-between; gap: 1rem; align-items: end; flex-wrap: wrap; }
+.audience-mode-options { display: grid; gap: .75rem; }
+.radio-option { display: flex; gap: .65rem; align-items: flex-start; padding: .85rem 1rem; border: 1px solid var(--border); border-radius: 1rem; background: var(--surface-alt); }
+.radio-option input { width: auto; margin-top: .2rem; }
 .media-card__actions { display: flex; gap: .75rem; justify-content: flex-end; flex-wrap: wrap; }
 .audience-summary { display: flex; gap: .5rem; flex-wrap: wrap; }
 .pill {

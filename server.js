@@ -377,7 +377,11 @@ async function callSiliconFlow(path, payload) {
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.message || data.error?.message || 'SiliconFlow request failed.');
+    const providerMessage = data.message || data.error?.message || 'SiliconFlow request failed.';
+    if (/account balance is insufficient/i.test(providerMessage)) {
+      throw new Error(`SiliconFlow error: ${providerMessage}`);
+    }
+    throw new Error(providerMessage);
   }
   return data;
 }
