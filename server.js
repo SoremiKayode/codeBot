@@ -23,9 +23,9 @@ const IS_LOCAL = process.env.USE_LOCAL === 'true';
 const MONGO_URI = IS_LOCAL ? 'mongodb://localhost:27017/whatsapp_bot' : process.env.CLOUD_MONGO_URI;
 const PORT = Number(process.env.PORT || 3000);
 const CREDIT_SIGNUP_BONUS = Number(process.env.DEFAULT_SIGNUP_CREDITS || 150);
-const HUGGINGFACE_TEXT_SPACE_ID = process.env.HUGGINGFACE_TEXT_SPACE_ID || 'codeignite/text-engine-space-name';
+const HUGGINGFACE_TEXT_SPACE_ID = process.env.HUGGINGFACE_TEXT_SPACE_ID || 'codeignite/whatsappText';
 const HUGGINGFACE_IMAGE_SPACE_ID = process.env.HUGGINGFACE_IMAGE_SPACE_ID || 'codeignite/whatsappbot';
-const HUGGINGFACE_TEXT_API_NAME = process.env.HUGGINGFACE_TEXT_API_NAME || '/chat';
+const HUGGINGFACE_TEXT_API_NAME = process.env.HUGGINGFACE_TEXT_API_NAME || '/respond';
 const HUGGINGFACE_IMAGE_API_NAME = process.env.HUGGINGFACE_IMAGE_API_NAME || '/predict';
 const HUGGINGFACE_TEXT_SYSTEM_PROMPT = process.env.HUGGINGFACE_TEXT_SYSTEM_PROMPT || 'You write concise WhatsApp-ready marketing and operational messages.';
 const HUGGINGFACE_TEXT_MAX_TOKENS = Number(process.env.HUGGINGFACE_TEXT_MAX_TOKENS || 512);
@@ -459,7 +459,6 @@ function extractImageUrlFromSpaceResult(payload) {
 async function callHuggingFaceText(prompt) {
   const payload = await callHuggingFaceSpace(HUGGINGFACE_TEXT_SPACE_ID, HUGGINGFACE_TEXT_API_NAME, [
     prompt,
-    [],
     HUGGINGFACE_TEXT_SYSTEM_PROMPT,
     HUGGINGFACE_TEXT_MAX_TOKENS,
     HUGGINGFACE_TEXT_TEMPERATURE,
