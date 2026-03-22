@@ -345,11 +345,18 @@
                     <div id="messageEditor" class="quill-host"></div>
                   </div>
                   <div class="stack-sm">
-                    <label>
-                      <span>Upload file from your computer (images, videos, documents, archives, and more, max 20MB)</span>
-                      <input id="mediaFileInput" type="file" accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.txt,.csv,.json,.xml,.mp3,.wav" multiple />
-                    </label>
-                    <small class="muted">You can upload almost any file from your device, or generate an AI image and approve it into the same queue.</small>
+                    <div class="file-picker-card stack-sm">
+                      <div>
+                        <strong>Select files from your device</strong>
+                        <p class="muted">Choose images, videos, or documents and preview them immediately before scheduling. Maximum size per file: 16MB.</p>
+                      </div>
+                      <label class="file-picker-input" for="mediaFileInput">
+                        <span class="primary-button" aria-hidden="true">Select file</span>
+                        <span id="mediaFileInputLabel">No file selected yet.</span>
+                      </label>
+                      <input id="mediaFileInput" type="file" accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.txt,.csv,.json,.xml,.mp3,.wav" multiple hidden />
+                    </div>
+                    <small class="muted">Selected files appear below as image, video, audio, or document previews in the same media queue used for approved AI images.</small>
                     <button id="openAiMediaTabButton" class="secondary-button" type="button">Generate media with AI</button>
                   </div>
                   <div class="stack-sm">

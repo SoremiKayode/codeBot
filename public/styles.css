@@ -87,6 +87,10 @@ code { background: var(--surface-alt); padding: .15rem .35rem; border-radius: .4
 }
 .brand-logo--small { width: 3.2rem; height: 3.2rem; }
 .brand-logo__image { width: 100%; height: 100%; object-fit: contain; display: block; background: transparent; }
+.file-picker-card { padding: 1rem; border: 1px dashed var(--border-strong); border-radius: 1rem; background: var(--surface-soft); }
+.file-picker-input { display: flex; align-items: center; gap: .85rem; flex-wrap: wrap; cursor: pointer; }
+.file-picker-input .primary-button { pointer-events: none; }
+.file-picker-input span:last-child { font-weight: 600; color: var(--text); }
 .eyebrow {
   margin: 0 0 .35rem;
   font-size: .78rem;
@@ -345,7 +349,10 @@ input, textarea, select {
 .preview-media-strip, .media-queue { display: grid; gap: 1rem; }
 .preview-media-stack { display: grid; gap: .75rem; }
 .preview-media-stack:empty { display: none; }
-.preview-media-stack img, .preview-media-stack video { width: 100%; max-height: 240px; object-fit: cover; border-radius: 1rem; border: 1px solid var(--border); background: var(--surface-soft); }
+.preview-media-stack img, .preview-media-stack video, .preview-media-stack audio, .preview-media-stack iframe { width: 100%; max-height: 240px; object-fit: cover; border-radius: 1rem; border: 1px solid var(--border); background: var(--surface-soft); }
+.preview-media-stack audio { padding: .75rem; }
+.preview-file-chip, .document-preview-card { background: var(--surface-soft); border: 1px solid var(--border); border-radius: 1rem; padding: 1rem; display: grid; gap: .35rem; }
+.document-preview-card iframe { min-height: 240px; background: #fff; }
 .preview-file-chip {
   padding: .85rem 1rem;
   border-radius: .9rem;
@@ -354,7 +361,9 @@ input, textarea, select {
   color: var(--muted);
 }
 .media-card { background: var(--surface-soft); border: 1px solid var(--border); border-radius: 1rem; padding: 1rem; display: grid; gap: .75rem; }
-.media-card img, .media-card video { width: 100%; max-height: 220px; object-fit: cover; border-radius: .85rem; border: 1px solid var(--border); }
+.media-card img, .media-card video, .media-card audio, .media-card iframe { width: 100%; max-height: 220px; object-fit: cover; border-radius: .85rem; border: 1px solid var(--border); }
+.media-card audio { padding: .75rem; background: var(--surface); }
+.media-card iframe { min-height: 260px; background: #fff; }
 
 .file-card-preview { display: grid; gap: .35rem; padding: 1rem; border: 1px dashed var(--border); border-radius: .85rem; background: var(--surface-alt); }
 .file-card-preview strong { word-break: break-word; }
