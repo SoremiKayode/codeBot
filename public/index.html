@@ -347,7 +347,7 @@
                   <div class="stack-sm">
                     <label>
                       <span>Upload file from your computer (images, videos, documents, archives, and more, max 20MB)</span>
-                      <input id="mediaFileInput" type="file" />
+                      <input id="mediaFileInput" type="file" accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.rar,.txt,.csv,.json,.xml,.mp3,.wav" multiple />
                     </label>
                     <small class="muted">You can upload almost any file from your device, or generate an AI image and approve it into the same queue.</small>
                     <button id="openAiMediaTabButton" class="secondary-button" type="button">Generate media with AI</button>
@@ -500,7 +500,7 @@
                   <section class="stack">
                     <label>
                       <span>Selected recipients</span>
-                      <textarea id="recipientSummaryInput" rows="4" placeholder="Selected recipients will appear here."></textarea>
+                      <textarea id="recipientSummaryInput" rows="4" placeholder="Selected recipients stay here. Add phone numbers separated by commas, e.g. 2348123456789, 2348012345678@s.whatsapp.net"></textarea>
                     </label>
                     <div class="stack-sm">
                       <label>
