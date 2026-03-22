@@ -1,4 +1,6 @@
 import crypto from 'crypto';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import express from 'express';
 import mongoose from 'mongoose';
 import cron from 'node-cron';
@@ -16,6 +18,10 @@ const {
 const { initAuthCreds } = await import('@whiskeysockets/baileys/lib/Utils/auth-utils.js');
 
 dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const PUBLIC_DIR = path.join(__dirname, 'public');
 
 const app = express();
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
@@ -51,7 +57,7 @@ setInterval(() => {
 }, 60000).unref();
 
 app.use(express.json({ limit: '20mb' }));
-app.use(express.static('public'));
+app.use(express.static(PUBLIC_DIR));
 
 const IS_LOCAL = process.env.USE_LOCAL === 'true';
 const MONGO_URI = IS_LOCAL ? 'mongodb://localhost:27017/whatsapp_bot' : process.env.CLOUD_MONGO_URI;
@@ -1414,7 +1420,7 @@ app.get('/api/config/required-credentials', (req, res) => {
 });
 
 app.use((req, res) => {
-  res.sendFile(new URL('./public/index.html', import.meta.url).pathname);
+  res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
 });
 
 connectDatabase()
