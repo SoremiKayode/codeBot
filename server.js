@@ -96,7 +96,8 @@ const connectionStateStore = new Map();
 const socketStore = new Map();
 const audienceStore = new Map();
 const huggingFaceClientStore = new Map();
-const oauthStateStore = new Map();
+const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000;
+const OAUTH_STATE_SECRET = process.env.OAUTH_STATE_SECRET || process.env.APP_SECRET || process.env.SESSION_SECRET || 'dev-oauth-state-secret';
 
 const OAUTH_PROVIDERS = {
   google: {
@@ -126,21 +127,36 @@ function createToken() {
 }
 
 function createOAuthState(provider, mode) {
-  const state = crypto.randomBytes(24).toString('hex');
-  oauthStateStore.set(state, {
+  const payload = {
     provider,
     mode,
     createdAt: Date.now(),
-  });
-  return state;
+    nonce: crypto.randomBytes(12).toString('hex'),
+  };
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto.createHmac('sha256', OAUTH_STATE_SECRET).update(encodedPayload).digest('base64url');
+  return `${encodedPayload}.${signature}`;
 }
 
 function consumeOAuthState(state, provider = null) {
-  const payload = oauthStateStore.get(state);
-  oauthStateStore.delete(state);
-  if (!payload) return null;
+  const [encodedPayload, signature] = String(state || '').split('.');
+  if (!encodedPayload || !signature) return null;
+
+  const expectedSignature = crypto.createHmac('sha256', OAUTH_STATE_SECRET).update(encodedPayload).digest('base64url');
+  const signatureBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expectedSignature);
+  if (signatureBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) return null;
+
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
+
+  if (!payload?.provider || !payload?.mode || !payload?.createdAt) return null;
   if (provider && payload.provider !== provider) return null;
-  if (Date.now() - payload.createdAt > 10 * 60 * 1000) return null;
+  if (Date.now() - Number(payload.createdAt) > OAUTH_STATE_MAX_AGE_MS) return null;
   return payload;
 }
 
@@ -172,12 +188,6 @@ function getOAuthProviderConfig(provider) {
   };
 }
 
-setInterval(() => {
-  const cutoff = Date.now() - (10 * 60 * 1000);
-  for (const [state, value] of oauthStateStore.entries()) {
-    if (value.createdAt < cutoff) oauthStateStore.delete(state);
-  }
-}, 60000).unref();
 
 function slugify(value = '') {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 48) || `workspace-${Date.now()}`;
