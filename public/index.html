@@ -555,9 +555,25 @@
               <div>
                 <p class="eyebrow">Saved tasks</p>
                 <h2>Your task list</h2>
+                <p class="muted">Search, sort by date, select multiple tasks, and pause or delete them from one responsive table.</p>
               </div>
             </div>
-            <div id="taskList" class="task-list"></div>
+            <div class="task-table-toolbar">
+              <label class="search-field task-search-field">
+                <span>Search tasks</span>
+                <input id="taskSearchInput" type="search" placeholder="Search title, message, status, or recipients" />
+              </label>
+              <div class="table-actions task-table-actions">
+                <button id="taskSortButton" class="secondary-button" type="button">Sort: Newest first</button>
+                <label class="checkbox-inline"><input id="selectAllTasks" type="checkbox" /> Select all</label>
+                <button id="pauseSelectedTasksButton" class="secondary-button" type="button">Pause selected</button>
+                <button id="deleteSelectedTasksButton" class="secondary-button danger-button" type="button">Delete selected</button>
+              </div>
+            </div>
+            <div id="taskSelectionSummary" class="muted">0 tasks selected.</div>
+            <div class="task-table-shell">
+              <div id="taskList" class="task-table"></div>
+            </div>
           </article>
         </div>
       </section>
