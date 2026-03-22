@@ -51,7 +51,9 @@ const ui = {
   mediaQueue: document.getElementById('mediaQueue'),
   generateMoreMediaButton: document.getElementById('generateMoreMediaButton'),
   messagePreview: document.getElementById('messagePreview'),
+  messagePreviewMedia: document.getElementById('messagePreviewMedia'),
   finalPreview: document.getElementById('finalPreview'),
+  finalPreviewMedia: document.getElementById('finalPreviewMedia'),
   previewMediaStrip: document.getElementById('previewMediaStrip'),
   selectedAudienceSummary: document.getElementById('selectedAudienceSummary'),
   previewFrequencyPill: document.getElementById('previewFrequencyPill'),
@@ -343,6 +345,13 @@ function renderMediaQueue() {
   const items = taskBuilderState.mediaQueue;
   ui.generateMoreMediaButton.classList.toggle('hidden', items.length === 0);
   ui.previewMediaStrip.innerHTML = items.map((item) => `<span class="pill">${escapeHtml(item.type)}</span>`).join('');
+  const previewMarkup = items.map((item) => {
+    if (item.type === 'image') return `<img src="${item.dataUrl}" alt="${escapeHtml(item.name)}" />`;
+    if (item.type === 'video') return `<video src="${item.dataUrl}" controls></video>`;
+    return `<div class="preview-file-chip"><strong>${escapeHtml(item.name)}</strong><br>${escapeHtml(item.previewText || item.mimeType || 'File ready to send.')}</div>`;
+  }).join('');
+  ui.messagePreviewMedia.innerHTML = previewMarkup;
+  ui.finalPreviewMedia.innerHTML = previewMarkup;
   if (!items.length) {
     ui.mediaQueue.className = 'media-queue empty-state';
     ui.mediaQueue.textContent = 'No media selected yet.';
@@ -580,7 +589,14 @@ async function handleImageGeneration() {
   try {
     const data = await api.generateImage({ prompt });
     syncUserFromPayload(data);
-    taskBuilderState.pendingImage = { name: 'AI generated image', type: 'image', dataUrl: data.imageUrl, source: 'ai' };
+    taskBuilderState.pendingImage = {
+      name: data.fileName || `AI generated image ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+      type: 'image',
+      dataUrl: data.imageUrl,
+      source: 'ai',
+      mimeType: data.mimeType || 'image/png',
+      previewText: 'AI-generated image ready for WhatsApp preview.',
+    };
     ui.aiImageStatus.innerHTML = `<article class="media-card"><img src="${data.imageUrl}" alt="AI generated" /></article>`;
     ui.regenerateImageButton.classList.remove('hidden');
     ui.approveImageButton.classList.remove('hidden');
@@ -598,6 +614,9 @@ function approvePendingImage() {
   }
   taskBuilderState.mediaQueue.push(taskBuilderState.pendingImage);
   taskBuilderState.pendingImage = null;
+  ui.aiImageStatus.textContent = 'Generated image approved and added to the WhatsApp preview.';
+  ui.regenerateImageButton.classList.add('hidden');
+  ui.approveImageButton.classList.add('hidden');
   setTaskTab('message');
   updateTaskPreview();
   showToast('Image approved and added to the queue.');
