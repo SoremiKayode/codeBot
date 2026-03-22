@@ -695,7 +695,7 @@ async function handleSocialClick(provider, trigger) {
   }
 }
 
-function handleOAuthRedirectState() {
+async function handleOAuthRedirectState() {
   const url = new URL(window.location.href);
   const authStatus = url.searchParams.get('auth');
   if (!authStatus) return false;
@@ -709,8 +709,30 @@ function handleOAuthRedirectState() {
   url.searchParams.delete('mode');
   url.searchParams.delete('message');
   window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+
+  if (authStatus !== 'success') {
+    showToast(message);
+    return false;
+  }
+
+  const existingToken = localStorage.getItem('wa_token');
+  if (!existingToken) {
+    showToast('Authentication succeeded, but no session was saved. Please try logging in again.');
+    return false;
+  }
+
+  setToken(existingToken);
+  const user = await refreshUser();
+  if (!user) {
+    showToast('Authentication succeeded, but we could not restore your session. Please try logging in again.');
+    return false;
+  }
+
+  navigate('dashboard');
+  await syncWhatsAppStatus();
+  await loadTasks();
   showToast(message);
-  return authStatus === 'success';
+  return true;
 }
 
 function getFilteredData(items, search, sortAsc) {
@@ -1373,18 +1395,21 @@ renderAudienceTables();
 renderFrequencyOptions();
 updateTaskPreview();
 
-handleOAuthRedirectState();
+(async () => {
+  const handledOAuthRedirect = await handleOAuthRedirectState();
+  if (handledOAuthRedirect) return;
 
-const existingToken = localStorage.getItem('wa_token');
-if (existingToken) {
-  setToken(existingToken);
-  refreshUser().then(async (user) => {
+  const existingToken = localStorage.getItem('wa_token');
+  if (existingToken) {
+    setToken(existingToken);
+    const user = await refreshUser();
     navigate(user ? 'dashboard' : 'home');
     if (user) {
       await syncWhatsAppStatus();
       await loadTasks();
     }
-  });
-} else {
+    return;
+  }
+
   navigate('home');
-}
+})();
