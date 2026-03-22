@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import express from 'express';
 import mongoose from 'mongoose';
+import cron from 'node-cron';
 import dotenv from 'dotenv';
 import pino from 'pino';
 import { Client } from '@gradio/client';
@@ -288,6 +289,9 @@ const taskSchema = new mongoose.Schema({
   recipients: { type: Object, default: { groups: [], contacts: [] } },
   schedule: { type: Object, default: {} },
   status: { type: String, enum: ['draft', 'active', 'paused', 'completed'], default: 'active' },
+  lastRunAt: { type: Date, default: null },
+  lastRunKey: { type: String, default: '' },
+  completedAt: { type: Date, default: null },
 }, { timestamps: true });
 
 const enquirySchema = new mongoose.Schema({
@@ -575,6 +579,185 @@ async function callHuggingFaceImage(prompt) {
 function fallbackImage(prompt) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect width="100%" height="100%" fill="#0f172a"/><rect x="64" y="64" width="896" height="896" rx="48" fill="#25d366" opacity="0.16"/><text x="80" y="220" fill="white" font-size="56" font-family="Arial">AI image placeholder</text><text x="80" y="320" fill="white" font-size="28" font-family="Arial">${String(prompt).replace(/[<&>]/g, '')}</text></svg>`;
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
+}
+
+function normalizeTimeValue(value = '') {
+  const trimmed = String(value || '').trim();
+  return /^\d{2}:\d{2}$/.test(trimmed) ? trimmed : '';
+}
+
+function normalizeDayName(value = '') {
+  const trimmed = String(value || '').trim().toLowerCase();
+  if (!trimmed) return '';
+  return `${trimmed[0].toUpperCase()}${trimmed.slice(1)}`;
+}
+
+function getWeekOfMonth(date) {
+  const dayOfMonth = date.getUTCDate();
+  const lastDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+  if (dayOfMonth + 7 > lastDay) return 'last week';
+  if (dayOfMonth <= 7) return 'first week';
+  if (dayOfMonth <= 14) return 'second week';
+  if (dayOfMonth <= 21) return 'third week';
+  return 'fourth week';
+}
+
+function buildRunKey(date, frequency, timeValue) {
+  const isoDate = date.toISOString().slice(0, 10);
+  return `${frequency || 'once'}:${isoDate}:${timeValue || '00:00'}`;
+}
+
+function shouldRunTaskNow(task, now = new Date()) {
+  const schedule = task?.schedule || {};
+  const startDate = String(schedule.startDate || '').trim();
+  const startTime = normalizeTimeValue(schedule.startTime);
+  const frequency = String(schedule.frequency || '').trim().toLowerCase();
+
+  if (!startDate || !startTime || !frequency) return { due: false, reason: 'missing_schedule' };
+
+  const today = now.toISOString().slice(0, 10);
+  const currentTime = `${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`;
+  if (today < startDate) return { due: false, reason: 'before_start_date' };
+
+  const dayName = new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(now);
+  let due = false;
+
+  if (frequency === 'once') {
+    due = today === startDate;
+  } else if (frequency === 'daily') {
+    const times = Array.isArray(schedule.dailyTimes) ? schedule.dailyTimes.map(normalizeTimeValue).filter(Boolean) : [];
+    due = times.length ? times.includes(currentTime) : currentTime === startTime;
+  } else if (frequency === 'weekly') {
+    const slots = Array.isArray(schedule.weeklySlots) ? schedule.weeklySlots : [];
+    due = slots.some((slot) => normalizeDayName(slot?.day) === dayName && normalizeTimeValue(slot?.time) === currentTime);
+  } else if (frequency === 'monthly') {
+    const monthlyDays = Array.isArray(schedule.monthlyDays) ? schedule.monthlyDays.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value >= 1 && value <= 31) : [];
+    const monthlyWeeks = Array.isArray(schedule.monthlyWeeks) ? schedule.monthlyWeeks.map((value) => String(value || '').trim().toLowerCase()) : [];
+    const weekLabel = getWeekOfMonth(now);
+    due = monthlyDays.includes(now.getUTCDate()) || (monthlyWeeks.includes(weekLabel) && currentTime === startTime);
+  }
+
+  if (!due) return { due: false, reason: 'rule_mismatch' };
+
+  const runKey = buildRunKey(now, frequency, currentTime);
+  if (task.lastRunKey === runKey) return { due: false, reason: 'already_ran', runKey };
+  return { due: true, runKey, frequency, currentTime };
+}
+
+function dataUrlToBuffer(dataUrl = '') {
+  const match = String(dataUrl || '').match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) return null;
+  return { mimeType: match[1], buffer: Buffer.from(match[2], 'base64') };
+}
+
+async function buildMessagePayload(task) {
+  const text = String(task.messageText || task.translatedPreview || task.description || '').trim();
+  const firstMedia = Array.isArray(task.mediaQueue) ? task.mediaQueue[0] : null;
+  if (!firstMedia?.dataUrl) return text ? { text } : null;
+
+  const parsed = dataUrlToBuffer(firstMedia.dataUrl);
+  if (!parsed?.buffer) return text ? { text } : null;
+
+  const caption = text || undefined;
+  const fileName = String(firstMedia.name || 'attachment');
+  if (firstMedia.type === 'image') return { image: parsed.buffer, mimetype: parsed.mimeType, fileName, caption };
+  if (firstMedia.type === 'video') return { video: parsed.buffer, mimetype: parsed.mimeType, fileName, caption };
+  if (firstMedia.type === 'audio') return { audio: parsed.buffer, mimetype: parsed.mimeType, fileName, ptt: false };
+  return { document: parsed.buffer, mimetype: parsed.mimeType, fileName, caption };
+}
+
+async function resolveTaskRecipients(task, sock) {
+  const recipients = task?.recipients || {};
+  const recipientIds = new Set();
+
+  for (const contact of Array.isArray(recipients.contacts) ? recipients.contacts : []) {
+    const jid = normalizePhoneJid(contact?.id || contact?.phone || '');
+    if (jid) recipientIds.add(jid);
+  }
+
+  const groups = Array.isArray(recipients.groups) ? recipients.groups : [];
+  if (groups.length) {
+    if (recipients.groupDeliveryMode === 'members') {
+      for (const group of groups) {
+        const jid = normalizeGroupJid(group?.id || '');
+        if (!jid) continue;
+        try {
+          const metadata = await sock.groupMetadata(jid);
+          for (const participant of metadata.participants || []) {
+            const memberJid = normalizePhoneJid(participant?.id || '');
+            if (memberJid) recipientIds.add(memberJid);
+          }
+        } catch (error) {
+          logger.warn({ taskId: String(task._id), groupId: jid, error: error.message }, 'Unable to load group members for scheduled task');
+        }
+      }
+    } else {
+      for (const group of groups) {
+        const jid = normalizeGroupJid(group?.id || '');
+        if (jid) recipientIds.add(jid);
+      }
+    }
+  }
+
+  return Array.from(recipientIds);
+}
+
+async function processDueTasks() {
+  const now = new Date();
+  const activeTasks = await Task.find({ status: 'active' });
+
+  for (const task of activeTasks) {
+    const timing = shouldRunTaskNow(task, now);
+    if (!timing.due) continue;
+
+    const userId = String(task.userId || '');
+    const sock = socketStore.get(userId);
+    if (!sock) {
+      logger.warn({ taskId: String(task._id), userId }, 'Skipping scheduled task because WhatsApp is not connected');
+      continue;
+    }
+
+    const messagePayload = await buildMessagePayload(task);
+    if (!messagePayload) {
+      logger.warn({ taskId: String(task._id) }, 'Skipping scheduled task because no sendable message payload was available');
+      continue;
+    }
+
+    const recipients = await resolveTaskRecipients(task, sock);
+    if (!recipients.length) {
+      logger.warn({ taskId: String(task._id) }, 'Skipping scheduled task because no recipients were resolved');
+      continue;
+    }
+
+    let deliveredCount = 0;
+    for (const recipient of recipients) {
+      try {
+        await sock.sendMessage(recipient, messagePayload);
+        deliveredCount += 1;
+      } catch (error) {
+        logger.error({ taskId: String(task._id), recipient, error: error.message }, 'Failed to send scheduled WhatsApp message');
+      }
+    }
+
+    task.lastRunAt = now;
+    task.lastRunKey = timing.runKey;
+    if (timing.frequency === 'once') {
+      task.status = 'completed';
+      task.completedAt = now;
+    }
+    await task.save();
+    logger.info({ taskId: String(task._id), deliveredCount, attemptedCount: recipients.length }, 'Processed scheduled WhatsApp task');
+  }
+}
+
+function startTaskScheduler() {
+  cron.schedule('* * * * *', async () => {
+    try {
+      await processDueTasks();
+    } catch (error) {
+      logger.error({ error: error.message }, 'Scheduled task processor failed');
+    }
+  }, { timezone: 'UTC' });
 }
 
 function buildSocialProviderResponse(provider) {
@@ -957,6 +1140,7 @@ app.use((req, res) => {
 
 connectDatabase()
   .then(() => {
+    startTaskScheduler();
     app.listen(PORT, () => console.log(`🚀 App running on http://localhost:${PORT}`));
   })
   .catch((error) => {
