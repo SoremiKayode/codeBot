@@ -30,7 +30,8 @@
         <nav class="header-nav">
           <button class="nav-link" data-route="home">Home</button>
           <button class="nav-link" data-route="dashboard">Dashboard</button>
-          <button class="nav-link auth-only" data-route="tasks">Tasks</button>
+          <button class="nav-link auth-only" data-route="tasks">Task builder</button>
+          <button class="nav-link auth-only" data-route="task-list">Task list</button>
           <button class="nav-link guest-only" data-route="login">Login</button>
           <button class="nav-link guest-only" data-route="signup">Sign up</button>
         </nav>
@@ -320,6 +321,7 @@
               <button class="task-tab active" type="button" data-task-tab="message">1. Message</button>
               <button class="task-tab" type="button" data-task-tab="audience">2. Audience</button>
               <button class="task-tab" type="button" data-task-tab="schedule">3. Schedule</button>
+              <button class="task-tab" type="button" data-task-tab="task-list">4. Task list</button>
               <button class="task-tab" type="button" data-task-tab="ai-text">AI text</button>
               <button class="task-tab" type="button" data-task-tab="ai-media">AI image</button>
             </div>
@@ -385,6 +387,23 @@
                     <div id="selectedAudienceSummary" class="audience-summary"></div>
                   </div>
                 </aside>
+              </div>
+            </div>
+
+            <div class="task-panel" data-task-panel="task-list">
+              <div class="stack">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Saved tasks</p>
+                    <h3>Review your scheduled task list without leaving the builder</h3>
+                    <p class="muted">Check recent tasks, pause or delete them, or open the dedicated task list page for full management controls.</p>
+                  </div>
+                  <div class="hero-actions">
+                    <button class="secondary-button" type="button" data-route="task-list">Open full task list page</button>
+                    <button class="secondary-button" type="button" data-task-back="schedule">Back to schedule</button>
+                  </div>
+                </div>
+                <div id="taskListTabSummary" class="task-list-embedded"></div>
               </div>
             </div>
 
@@ -550,12 +569,20 @@
             </div>
           </article>
 
-          <article class="info-card stack saved-task-card">
+        </div>
+      </section>
+
+      <section id="taskListView" class="view">
+        <div class="task-workspace stack">
+          <article class="info-card stack saved-task-card task-list-page-card">
             <div class="section-heading">
               <div>
-                <p class="eyebrow">Saved tasks</p>
+                <p class="eyebrow">Task operations</p>
                 <h2>Your task list</h2>
                 <p class="muted">Search, sort by date, select multiple tasks, and pause or delete them from one responsive table.</p>
+              </div>
+              <div class="hero-actions">
+                <button class="secondary-button" type="button" data-route="tasks">Back to task builder</button>
               </div>
             </div>
             <div class="task-table-toolbar">
@@ -565,12 +592,12 @@
               </label>
               <div class="table-actions task-table-actions">
                 <button id="taskSortButton" class="secondary-button" type="button">Sort: Newest first</button>
-                <label class="checkbox-inline"><input id="selectAllTasks" type="checkbox" /> Select all</label>
+                <label class="checkbox-inline"><input id="selectAllTasks" type="checkbox" /> Select all visible</label>
                 <button id="pauseSelectedTasksButton" class="secondary-button" type="button">Pause selected</button>
                 <button id="deleteSelectedTasksButton" class="secondary-button danger-button" type="button">Delete selected</button>
               </div>
             </div>
-            <div id="taskSelectionSummary" class="muted">0 tasks selected.</div>
+            <p id="taskSelectionSummary" class="muted">0 tasks selected.</p>
             <div class="task-table-shell">
               <div id="taskList" class="task-table"></div>
             </div>
