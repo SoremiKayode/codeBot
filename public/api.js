@@ -31,6 +31,7 @@ export const api = {
   setTheme: (theme) => request('/api/users/theme', { method: 'PATCH', body: JSON.stringify({ theme }) }),
   providerStatus: (provider) => request(`/api/auth/providers/${provider}`),
   socialAuthUrl: (provider, mode = 'login') => `/api/auth/oauth/${encodeURIComponent(provider)}/start?mode=${encodeURIComponent(mode)}`,
+  createWorkspace: (payload) => request('/api/workspaces', { method: 'POST', body: JSON.stringify(payload) }),
   connectWhatsApp: () => request('/api/whatsapp/connect', { method: 'POST' }),
   whatsappStatus: () => request('/api/whatsapp/status'),
   whatsappAudience: () => request('/api/whatsapp/audience'),
