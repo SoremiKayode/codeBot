@@ -731,12 +731,7 @@ async function handleOAuthRedirectState() {
   }
 
   const existingToken = localStorage.getItem('wa_token');
-  if (!existingToken) {
-    showToast('Authentication succeeded, but no session was saved. Please try logging in again.');
-    return false;
-  }
-
-  setToken(existingToken);
+  if (existingToken) setToken(existingToken);
   const user = await refreshUser();
   if (!user) {
     showToast('Authentication succeeded, but we could not restore your session. Please try logging in again.');
@@ -1418,16 +1413,11 @@ updateTaskPreview();
   if (handledOAuthRedirect) return;
 
   const existingToken = localStorage.getItem('wa_token');
-  if (existingToken) {
-    setToken(existingToken);
-    const user = await refreshUser();
-    navigate(user ? 'dashboard' : 'home');
-    if (user) {
-      await syncWhatsAppStatus();
-      await loadTasks();
-    }
-    return;
+  if (existingToken) setToken(existingToken);
+  const user = await refreshUser();
+  navigate(user ? 'dashboard' : 'home');
+  if (user) {
+    await syncWhatsAppStatus();
+    await loadTasks();
   }
-
-  navigate('home');
 })();
