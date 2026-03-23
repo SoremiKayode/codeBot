@@ -780,6 +780,12 @@ async function connectDatabase() {
   } catch (error) {
     logger.warn({ error: error.message }, 'Unable to reconcile WhatsApp connection indexes');
   }
+  try {
+    const indexes = await AuthState.collection.indexes();
+    if (indexes.some((index) => index.name === 'userId_1_key_1' && index.unique)) await AuthState.collection.dropIndex('userId_1_key_1');
+  } catch (error) {
+    logger.warn({ error: error.message }, 'Unable to reconcile auth state indexes');
+  }
   logger.info({ mode: IS_LOCAL ? 'local' : 'cloud' }, 'MongoDB connected');
 }
 
