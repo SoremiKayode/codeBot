@@ -1392,9 +1392,19 @@ async function buildMessagePayload(task) {
   return { document: parsed.buffer, mimetype: parsed.mimeType, fileName, caption };
 }
 
-async function getStatusAudienceJids(tenantId) {
-  const audience = await getAudienceState(tenantId);
-  return Array.from(new Set((audience.contacts || []).map((contact) => normalizePhoneJid(contact?.id || contact?.phone || '')).filter(Boolean)));
+async function getStatusAudienceJids(tenantId, sock = null) {
+  const collectAudienceJids = (audience = {}) => Array.from(new Set(
+    (Array.isArray(audience.contacts) ? audience.contacts : [])
+      .map((contact) => normalizePhoneJid(contact?.id || contact?.phone || ''))
+      .filter(Boolean),
+  ));
+
+  const existingAudience = await getAudienceState(tenantId);
+  const existingJids = collectAudienceJids(existingAudience);
+  if (existingJids.length || !sock) return existingJids;
+
+  const refreshedAudience = await syncAudienceFromSocket(tenantId, sock).catch(() => existingAudience);
+  return collectAudienceJids(refreshedAudience);
 }
 
 async function resolveTaskRecipients(task, sock) {
@@ -1541,7 +1551,7 @@ async function dispatchTask(task, now = new Date()) {
   for (const recipient of recipients) {
     try {
       if (task.mode === 'schedule_status') {
-        const statusJidList = await getStatusAudienceJids(tenantId);
+        const statusJidList = await getStatusAudienceJids(tenantId, sock);
         if (!statusJidList.length) throw new Error('No WhatsApp contacts are available yet for status delivery. Refresh your workspace audience and try again.');
         await sock.sendMessage('status@broadcast', messagePayload, { broadcast: true, statusJidList });
       } else {
