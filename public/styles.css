@@ -788,3 +788,5 @@ body:not(.is-authenticated) .auth-only { display: none !important; }
 .task-builder-nav { display: flex; justify-content: flex-end; gap: .75rem; margin-bottom: .9rem; }
 @media (min-width: 1081px) { .sidecard-cta-panel--guest .compact-button { max-height: 3.15rem; } .sidecard-cta-panel--guest { width: fit-content; } .elevated-sidecard { width: fit-content; min-width: 100%; } }
 @media (max-width: 768px) { .social-buttons--auth, .cta-button-grid--guest { grid-template-columns: 1fr; } .task-builder-nav { justify-content: stretch; } .task-builder-nav .secondary-button { flex: 1 1 0; } }
+
+.task-error-text { color: #b91c1c; font-weight: 600; }

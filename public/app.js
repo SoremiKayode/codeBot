@@ -1019,6 +1019,8 @@ function buildTaskRowsMarkup(tasks = [], { selectable = true, emptyMessage = 'No
         </div>
         <div class="task-table__cell">
           <span class="task-status ${escapeHtml(task.status)}">${escapeHtml(task.status)}</span>
+          <small>${escapeHtml(task.deliveryStats?.delivered ?? 0)} sent / ${escapeHtml(task.deliveryStats?.failed ?? 0)} failed</small>
+          ${task.lastError ? `<small class="task-error-text">Last error: ${escapeHtml(task.lastError)}</small>` : '<small>No recent delivery errors.</small>'}
         </div>
         <div class="task-table__cell">
           <span>${escapeHtml(formatTaskDate(task.createdAt))}</span>

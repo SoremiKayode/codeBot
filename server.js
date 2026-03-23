@@ -1467,6 +1467,18 @@ async function recordDispatch(tenantId, taskId, recipient, status, error = '', m
   });
 }
 
+function logTaskFailure(task, reason, extra = {}) {
+  const details = {
+    taskId: String(task?._id || ''),
+    title: String(task?.title || ''),
+    mode: String(task?.mode || 'broadcast'),
+    reason,
+    ...extra,
+  };
+  logger.error(details, 'Task execution failed');
+  console.error('[task-error]', JSON.stringify(details, null, 2));
+}
+
 async function dispatchTask(task, now = new Date()) {
   const timing = shouldRunTaskNow(task, now);
   if (!timing.due) {
@@ -1479,6 +1491,7 @@ async function dispatchTask(task, now = new Date()) {
   const sock = socketStore.get(tenantId);
   if (!sock) {
     task.lastError = 'WhatsApp is not connected for this workspace.';
+    logTaskFailure(task, task.lastError, { tenantId });
     task.nextRunAt = computeNextRunAt(task.schedule, task.timezone, new Date(now.getTime() + 60000));
     task.claimToken = '';
     task.claimExpiresAt = null;
@@ -1488,6 +1501,7 @@ async function dispatchTask(task, now = new Date()) {
   const messagePayload = await buildMessagePayload(task);
   if (!messagePayload) {
     task.lastError = 'No sendable message payload was available.';
+    logTaskFailure(task, task.lastError, { tenantId });
     task.claimToken = '';
     task.claimExpiresAt = null;
     await task.save();
@@ -1496,6 +1510,7 @@ async function dispatchTask(task, now = new Date()) {
   const recipients = await resolveTaskRecipients(task, sock);
   if (!recipients.length) {
     task.lastError = 'No recipients were resolved.';
+    logTaskFailure(task, task.lastError, { tenantId });
     task.claimToken = '';
     task.claimExpiresAt = null;
     await task.save();
@@ -1517,12 +1532,14 @@ async function dispatchTask(task, now = new Date()) {
     } catch (error) {
       failedCount += 1;
       await recordDispatch(tenantId, String(task._id), recipient, 'failed', error.message, messagePayload);
-      logger.error({ taskId: String(task._id), recipient, error: error.message }, 'Failed to send scheduled WhatsApp message');
+      logger.error({ taskId: String(task._id), recipient, error: error.message, stack: error.stack }, 'Failed to send scheduled WhatsApp message');
+      console.error(`[task-send-error] task=${String(task._id)} recipient=${recipient}`, error);
     }
   }
   task.lastRunAt = now;
   task.lastRunKey = timing.runKey;
   task.lastError = failedCount ? `Failed for ${failedCount} recipient(s).` : '';
+  if (failedCount) logTaskFailure(task, task.lastError, { tenantId, attempted: recipients.length, delivered: deliveredCount, failed: failedCount });
   task.deliveryStats = { attempted: recipients.length, delivered: deliveredCount, failed: failedCount };
   task.nextRunAt = ['once', 'now'].includes(timing.frequency) ? null : computeNextRunAt(task.schedule, task.timezone, new Date(now.getTime() + 60000));
   if (['once', 'now'].includes(timing.frequency)) {
@@ -1556,7 +1573,7 @@ async function processDueTasks() {
         { claimExpiresAt: null },
         { claimExpiresAt: { $lte: now } },
       ],
-    }, { claimToken, claimExpiresAt }, { new: true });
+    }, { claimToken, claimExpiresAt }, { returnDocument: 'after' });
     if (!task) continue;
     await dispatchTask(task, now);
   }
@@ -1734,48 +1751,53 @@ async function startWhatsAppSession(user, tenant) {
   sock.ev.on('groups.upsert', (groups) => { upsertAudienceGroups(tenantId, groups); });
   sock.ev.on('groups.update', (groups) => { upsertAudienceGroups(tenantId, groups); });
   sock.ev.on('messages.upsert', async ({ messages }) => {
-    const msg = messages[0];
-    if (!msg?.message || msg.key?.fromMe) return;
-    const text = getMessageText(msg);
-    if (!text || isSpamMessage(text)) return;
-    const stopRequested = /^(stop|unsubscribe|cancel)$/i.test(text.trim());
-    const remoteJid = String(msg.key?.remoteJid || '');
-    const derivedUserId = getUserFromSession(`${tenantId}:${remoteJid}`) || String(user._id);
-    const scope = getAutoReplyScope(tenantId, derivedUserId);
-    const existingConversation = await ConversationHistory.findOne({ scopeId: scope.scopeId, remoteJid });
-    if (stopRequested) {
-      unsubscribeStore.add(`${scope.scopeId}:${remoteJid}`);
-      await ConversationHistory.findOneAndUpdate({ scopeId: scope.scopeId, remoteJid }, { unsubscribed: true }, { upsert: true, setDefaultsOnInsert: true });
-      await sock.sendMessage(remoteJid, { text: 'You have been unsubscribed. Reply START anytime to resume updates.' });
-      return;
+    try {
+      const msg = messages[0];
+      if (!msg?.message || msg.key?.fromMe) return;
+      const text = getMessageText(msg);
+      if (!text || isSpamMessage(text)) return;
+      const stopRequested = /^(stop|unsubscribe|cancel)$/i.test(text.trim());
+      const remoteJid = String(msg.key?.remoteJid || '');
+      const derivedUserId = getUserFromSession(`${tenantId}:${remoteJid}`) || String(user._id);
+      const scope = getAutoReplyScope(tenantId, derivedUserId);
+      const existingConversation = await ConversationHistory.findOne({ scopeId: scope.scopeId, remoteJid });
+      if (stopRequested) {
+        unsubscribeStore.add(`${scope.scopeId}:${remoteJid}`);
+        await ConversationHistory.findOneAndUpdate({ scopeId: scope.scopeId, remoteJid }, { unsubscribed: true }, { upsert: true, setDefaultsOnInsert: true });
+        await sock.sendMessage(remoteJid, { text: 'You have been unsubscribed. Reply START anytime to resume updates.' });
+        return;
+      }
+      if (/^start$/i.test(text.trim())) {
+        unsubscribeStore.delete(`${scope.scopeId}:${remoteJid}`);
+        await ConversationHistory.findOneAndUpdate({ scopeId: scope.scopeId, remoteJid }, { unsubscribed: false }, { upsert: true, setDefaultsOnInsert: true });
+      }
+      if (unsubscribeStore.has(`${scope.scopeId}:${remoteJid}`) || existingConversation?.unsubscribed) return;
+      if (!canSendAutoReply(scope.scopeId)) return;
+      if (existingConversation?.lastIncomingAt && Date.now() - new Date(existingConversation.lastIncomingAt).getTime() < 15000) return;
+      const matchingAutomatedTask = await findMatchingAutomatedResponseTask(tenantId, remoteJid);
+      const inMemoryHistory = rememberConversation(remoteJid, 'user', text);
+      const dbHistory = existingConversation?.messages || [];
+      let replyPayload = null;
+      let replyText = '';
+      if (matchingAutomatedTask) {
+        replyPayload = await buildMessagePayload(matchingAutomatedTask);
+        replyText = String(matchingAutomatedTask.messageText || matchingAutomatedTask.translatedPreview || matchingAutomatedTask.description || '').trim();
+      } else {
+        const profile = await getCompanyProfileForScope(scope.scopeId);
+        if (!profile) return;
+        const reply = await craftAutoReply(profile, text, [...dbHistory, ...inMemoryHistory]);
+        replyPayload = { text: reply };
+        replyText = reply;
+      }
+      if (!replyPayload) return;
+      await new Promise((resolve) => setTimeout(resolve, pickReplyDelay()));
+      await sock.sendMessage(remoteJid, replyPayload);
+      rememberConversation(remoteJid, 'assistant', replyText);
+      await upsertConversationHistory(scope, remoteJid, text, replyText);
+    } catch (error) {
+      logger.error({ tenantId, error: error.message, stack: error.stack }, 'Unable to process incoming WhatsApp message');
+      console.error('[messages-upsert-error]', error);
     }
-    if (/^start$/i.test(text.trim())) {
-      unsubscribeStore.delete(`${scope.scopeId}:${remoteJid}`);
-      await ConversationHistory.findOneAndUpdate({ scopeId: scope.scopeId, remoteJid }, { unsubscribed: false }, { upsert: true, setDefaultsOnInsert: true });
-    }
-    if (unsubscribeStore.has(`${scope.scopeId}:${remoteJid}`) || existingConversation?.unsubscribed) return;
-    if (!canSendAutoReply(scope.scopeId)) return;
-    if (existingConversation?.lastIncomingAt && Date.now() - new Date(existingConversation.lastIncomingAt).getTime() < 15000) return;
-    const matchingAutomatedTask = await findMatchingAutomatedResponseTask(tenantId, remoteJid);
-    const inMemoryHistory = rememberConversation(remoteJid, 'user', text);
-    const dbHistory = existingConversation?.messages || [];
-    let replyPayload = null;
-    let replyText = '';
-    if (matchingAutomatedTask) {
-      replyPayload = await buildMessagePayload(matchingAutomatedTask);
-      replyText = String(matchingAutomatedTask.messageText || matchingAutomatedTask.translatedPreview || matchingAutomatedTask.description || '').trim();
-    } else {
-      const profile = await getCompanyProfileForScope(scope.scopeId);
-      if (!profile) return;
-      const reply = await craftAutoReply(profile, text, [...dbHistory, ...inMemoryHistory]);
-      replyPayload = { text: reply };
-      replyText = reply;
-    }
-    if (!replyPayload) return;
-    await new Promise((resolve) => setTimeout(resolve, pickReplyDelay()));
-    await sock.sendMessage(remoteJid, replyPayload);
-    rememberConversation(remoteJid, 'assistant', replyText);
-    await upsertConversationHistory(scope, remoteJid, text, replyText);
   });
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
@@ -1791,6 +1813,8 @@ async function startWhatsAppSession(user, tenant) {
     if (connection === 'close') {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const loggedOut = statusCode === DisconnectReason.loggedOut;
+      logger.error({ tenantId, statusCode, error: lastDisconnect?.error?.message, stack: lastDisconnect?.error?.stack }, 'WhatsApp connection closed');
+      console.error('[whatsapp-connection-close]', { tenantId, statusCode, error: lastDisconnect?.error?.message });
       socketStore.delete(tenantId);
       if (loggedOut) {
         await AuthState.deleteMany({ tenantId });
