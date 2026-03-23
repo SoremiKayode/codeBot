@@ -216,9 +216,13 @@
                   <p class="eyebrow">Command center</p>
                   <h2>Run your WhatsApp workspace with confidence</h2>
                 </div>
-                <button id="createWorkspaceButton" class="primary-button compact-button" type="button">Create workspace</button>
               </div>
               <p class="muted">Manage your account first, then create a workspace only when you are ready to run WhatsApp automation and invite teammates.</p>
+              <div class="hero-actions">
+                <button id="createWorkspaceButton" class="primary-button compact-button" type="button">Create workspace</button>
+                <button id="dashboardScheduleTaskButton" class="secondary-button compact-button auth-only" type="button">Schedule task</button>
+                <button id="goToTasksButton" class="secondary-button compact-button" type="button">Open tasks</button>
+              </div>
               <div class="dashboard-kpis">
                 <div class="kpi-card accent-kpi">
                   <span>Available credits</span>
@@ -242,6 +246,31 @@
                 <span class="eyebrow">Workspace signal</span>
                 <h3 id="workspaceHeadline">No workspace yet.</h3>
                 <p id="workspaceDescription" class="muted">Create a workspace when you want shared automation, WhatsApp setup, and team access.</p>
+              </div>
+              <div class="team-share-card">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Team credits</p>
+                    <h3>Share credits with your team</h3>
+                  </div>
+                </div>
+                <p id="workspaceMembersHint" class="muted">Create a workspace to invite teammates and assign them a role.</p>
+                <form id="workspaceMemberForm" class="team-share-form">
+                  <label>
+                    <span>Teammate email</span>
+                    <input id="workspaceMemberEmail" name="email" type="email" placeholder="teammate@company.com" />
+                  </label>
+                  <label>
+                    <span>Role</span>
+                    <select id="workspaceMemberRole" name="role">
+                      <option value="viewer">Viewer</option>
+                      <option value="operator">Operator</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  </label>
+                  <button id="workspaceMemberSubmit" class="secondary-button compact-button" type="submit">Add teammate</button>
+                </form>
+                <div id="workspaceMembersList" class="stack-sm muted">No workspace members yet.</div>
               </div>
             </div>
           </article>
@@ -289,7 +318,6 @@
                   <h2>Persistent session setup</h2>
                 </div>
                 <button id="connectWhatsappButton" class="primary-button compact-button" type="button">Connect WhatsApp</button>
-                <button id="goToTasksButton" class="secondary-button compact-button" type="button">Open tasks</button>
               </div>
               <div class="summary-grid summary-grid--status">
                 <div class="status-banner">
@@ -320,34 +348,13 @@
                     <li>Hold your phone about 8–12 inches away and increase your screen brightness if needed.</li>
                     <li>If the code expires or looks blurry, use <strong>Refresh status</strong> to fetch a fresh QR code.</li>
                   </ul>
+                  <div class="qr-connected-state">
+                    <div class="qr-connected-state__badge">WhatsApp connected</div>
+                    <h3>Your device is linked and ready.</h3>
+                    <p class="muted">Use the task builder to schedule broadcasts, reminders, and team workflows without showing the QR background again.</p>
+                  </div>
                 </div>
               </div>
-            </article>
-
-            <article class="info-card stack">
-              <div class="section-heading">
-                <div>
-                  <p class="eyebrow">Workspace members</p>
-                  <h2>Share credits with your team</h2>
-                </div>
-              </div>
-              <p id="workspaceMembersHint" class="muted">Create a workspace to invite teammates and assign them a role.</p>
-              <form id="workspaceMemberForm" class="stack">
-                <label>
-                  <span>Teammate email</span>
-                  <input id="workspaceMemberEmail" name="email" type="email" placeholder="teammate@company.com" />
-                </label>
-                <label>
-                  <span>Role</span>
-                  <select id="workspaceMemberRole" name="role">
-                    <option value="viewer">Viewer</option>
-                    <option value="operator">Operator</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </label>
-                <button id="workspaceMemberSubmit" class="secondary-button compact-button" type="submit">Add teammate</button>
-              </form>
-              <div id="workspaceMembersList" class="stack-sm muted">No workspace members yet.</div>
             </article>
           </div>
         </div>

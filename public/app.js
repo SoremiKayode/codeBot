@@ -38,6 +38,7 @@ const ui = {
   toast: document.getElementById('toast'),
   startButton: document.getElementById('startButton'),
   createWorkspaceButton: document.getElementById('createWorkspaceButton'),
+  dashboardScheduleTaskButton: document.getElementById('dashboardScheduleTaskButton'),
   goToTasksButton: document.getElementById('goToTasksButton'),
   connectWhatsappButton: document.getElementById('connectWhatsappButton'),
   workspaceMembersHint: document.getElementById('workspaceMembersHint'),
@@ -311,7 +312,7 @@ function renderWorkspaceMembers() {
       ? `<select data-member-role="${member.id}">${roleOptions}</select>`
       : `<span class="pill">${escapeHtml(member.role)}</span>`;
     return `
-      <article class="info-card">
+      <article class="team-member-row">
         <div class="section-heading">
           <div>
             <strong>${escapeHtml(member.user.username)}</strong>
@@ -412,9 +413,11 @@ async function refreshUser() {
 function renderQrCode(qrValue) {
   ui.qrCode.innerHTML = '';
   if (!qrValue) {
+    ui.qrWrapper.classList.remove('connected');
     ui.qrWrapper.classList.add('empty');
     return;
   }
+  ui.qrWrapper.classList.remove('connected');
   ui.qrWrapper.classList.remove('empty');
   ui.qrHint.textContent = 'Scan this QR code with WhatsApp on your phone. A larger, high-contrast version is shown below.';
   new window.QRCode(ui.qrCode, {
@@ -449,11 +452,16 @@ async function syncWhatsAppStatus() {
     if (status.qr) renderQrCode(status.qr);
     else if (status.status === 'connected') {
       ui.qrCode.innerHTML = '';
-      ui.qrWrapper.classList.add('empty');
+      ui.qrWrapper.classList.remove('empty');
+      ui.qrWrapper.classList.add('connected');
       ui.qrHint.textContent = `Connected as ${status.phoneNumber || 'your WhatsApp account'}.`;
       stopPoller();
       await refreshUser();
       await loadAudience(true);
+    } else {
+      ui.qrWrapper.classList.remove('connected');
+      ui.qrWrapper.classList.add('empty');
+      ui.qrHint.textContent = 'QR code will appear here after you start the connection.';
     }
   } catch (error) {
     stopPoller();
@@ -1362,6 +1370,7 @@ ui.workspaceMemberForm?.addEventListener('submit', async (event) => {
 });
 
 ui.goToTasksButton.addEventListener('click', () => navigate('tasks'));
+ui.dashboardScheduleTaskButton?.addEventListener('click', () => navigate('tasks'));
 ui.refreshQrButton?.addEventListener('click', handleQrRefresh);
 ui.connectWhatsappButton.addEventListener('click', async () => {
   if (!appState.user?.activeTenant) {
