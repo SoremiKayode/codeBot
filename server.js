@@ -62,6 +62,8 @@ app.use(express.static(PUBLIC_DIR));
 const IS_LOCAL = process.env.USE_LOCAL === 'true';
 const MONGO_URI = IS_LOCAL ? 'mongodb://localhost:27017/whatsapp_bot' : process.env.CLOUD_MONGO_URI;
 const PORT = Number(process.env.PORT || 3000);
+const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'wa_session';
+const SESSION_COOKIE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const CREDIT_SIGNUP_BONUS = Number(process.env.DEFAULT_SIGNUP_CREDITS || 150);
 const DEFAULT_TIMEZONE = process.env.DEFAULT_TENANT_TIMEZONE || 'UTC';
 const HUGGINGFACE_TEXT_SPACE_ID = process.env.HUGGINGFACE_TEXT_SPACE_ID || 'codeignite/whatsappText';
@@ -97,6 +99,7 @@ const socketStore = new Map();
 const audienceStore = new Map();
 const huggingFaceClientStore = new Map();
 const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000;
+const TASK_CLAIM_WINDOW_MS = 2 * 60 * 1000;
 const OAUTH_STATE_SECRET = process.env.OAUTH_STATE_SECRET || process.env.APP_SECRET || process.env.SESSION_SECRET || 'dev-oauth-state-secret';
 
 const OAUTH_PROVIDERS = {
@@ -118,6 +121,39 @@ const OAUTH_PROVIDERS = {
   },
 };
 
+
+function parseCookies(header = '') {
+  return String(header || '').split(';').reduce((cookies, part) => {
+    const [rawKey, ...rawValue] = part.trim().split('=');
+    if (!rawKey) return cookies;
+    cookies[decodeURIComponent(rawKey)] = decodeURIComponent(rawValue.join('='));
+    return cookies;
+  }, {});
+}
+
+function buildSessionCookie(token) {
+  const secure = process.env.NODE_ENV === 'production';
+  return [
+    `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    `Max-Age=${Math.floor(SESSION_COOKIE_MAX_AGE_MS / 1000)}`,
+    ...(secure ? ['Secure'] : []),
+  ].join('; ');
+}
+
+function clearSessionCookie() {
+  const secure = process.env.NODE_ENV === 'production';
+  return [
+    `${SESSION_COOKIE_NAME}=`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    'Max-Age=0',
+    ...(secure ? ['Secure'] : []),
+  ].join('; ');
+}
 function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
@@ -416,6 +452,8 @@ const appSessionSchema = new mongoose.Schema({
   tokenHash: { type: String, required: true, unique: true },
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true },
+  provider: { type: String, default: 'password' },
+  lastSeenAt: { type: Date, default: Date.now },
   createdAt: { type: Date, default: Date.now, expires: '14d' },
 });
 
@@ -453,6 +491,8 @@ const taskSchema = new mongoose.Schema({
   nextRunAt: { type: Date, default: null, index: true },
   lastRunAt: { type: Date, default: null },
   lastRunKey: { type: String, default: '' },
+  claimToken: { type: String, default: '' },
+  claimExpiresAt: { type: Date, default: null, index: true },
   completedAt: { type: Date, default: null },
   lastError: { type: String, default: '' },
   deliveryStats: {
@@ -572,7 +612,9 @@ async function useMongooseAuthState(tenantId) {
 
 async function authenticateRequest(req, res, next) {
   const authorization = req.headers.authorization || '';
-  const token = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+  const cookies = parseCookies(req.headers.cookie || '');
+  const bearerToken = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+  const token = bearerToken || cookies[SESSION_COOKIE_NAME] || '';
   if (!token) return res.status(401).json({ error: 'Authentication required.' });
   const session = await AppSession.findOne({ tokenHash: sha256(token) });
   if (!session) return res.status(401).json({ error: 'Session expired. Please log in again.' });
@@ -582,6 +624,8 @@ async function authenticateRequest(req, res, next) {
     TenantMembership.findOne({ tenantId: session.tenantId, userId: session.userId, status: 'active' }),
   ]);
   if (!user || !tenant || !membership) return res.status(401).json({ error: 'Workspace membership is no longer active.' });
+  session.lastSeenAt = new Date();
+  await session.save();
   req.user = user;
   req.tenant = tenant;
   req.membership = membership;
@@ -620,9 +664,9 @@ function validateSignupPayload(payload) {
   return { username, email, password, workspaceName, timezone };
 }
 
-async function issueSession(user, tenant, membership) {
+async function issueSession(user, tenant, membership, provider = 'password') {
   const token = createToken();
-  await AppSession.create({ tokenHash: sha256(token), userId: user._id, tenantId: tenant._id });
+  await AppSession.create({ tokenHash: sha256(token), userId: user._id, tenantId: tenant._id, provider });
   return { token, user: sanitizeUser(user, membership, tenant) };
 }
 
@@ -937,27 +981,57 @@ async function recordDispatch(tenantId, taskId, recipient, status, error = '', m
 
 async function processDueTasks() {
   const now = new Date();
-  const activeTasks = await Task.find({ status: 'active' });
-  for (const task of activeTasks) {
+  const claimToken = createToken();
+  const claimExpiresAt = new Date(now.getTime() + TASK_CLAIM_WINDOW_MS);
+  const activeTasks = await Task.find({
+    status: 'active',
+    nextRunAt: { $ne: null, $lte: new Date(now.getTime() + 60000) },
+    $or: [
+      { claimExpiresAt: null },
+      { claimExpiresAt: { $lte: now } },
+    ],
+  }).sort({ nextRunAt: 1 }).lean();
+  for (const candidate of activeTasks) {
+    const task = await Task.findOneAndUpdate({
+      _id: candidate._id,
+      status: 'active',
+      nextRunAt: candidate.nextRunAt,
+      $or: [
+        { claimExpiresAt: null },
+        { claimExpiresAt: { $lte: now } },
+      ],
+    }, { claimToken, claimExpiresAt }, { new: true });
+    if (!task) continue;
     const timing = shouldRunTaskNow(task, now);
-    if (!timing.due) continue;
+    if (!timing.due) {
+      task.claimToken = '';
+      task.claimExpiresAt = null;
+      await task.save();
+      continue;
+    }
     const tenantId = String(task.tenantId || '');
     const sock = socketStore.get(tenantId);
     if (!sock) {
       task.lastError = 'WhatsApp is not connected for this workspace.';
       task.nextRunAt = computeNextRunAt(task.schedule, task.timezone, new Date(now.getTime() + 60000));
+      task.claimToken = '';
+      task.claimExpiresAt = null;
       await task.save();
       continue;
     }
     const messagePayload = await buildMessagePayload(task);
     if (!messagePayload) {
       task.lastError = 'No sendable message payload was available.';
+      task.claimToken = '';
+      task.claimExpiresAt = null;
       await task.save();
       continue;
     }
     const recipients = await resolveTaskRecipients(task, sock);
     if (!recipients.length) {
       task.lastError = 'No recipients were resolved.';
+      task.claimToken = '';
+      task.claimExpiresAt = null;
       await task.save();
       continue;
     }
@@ -983,6 +1057,8 @@ async function processDueTasks() {
       task.status = 'completed';
       task.completedAt = now;
     }
+    task.claimToken = '';
+    task.claimExpiresAt = null;
     await task.save();
   }
 }
@@ -1203,7 +1279,8 @@ app.post('/api/auth/signup', async (req, res) => {
     const tenant = await Tenant.create({ name: workspaceName, slug, timezone, billingEmail: email, credits: CREDIT_SIGNUP_BONUS });
     const membership = await TenantMembership.create({ tenantId: tenant._id, userId: user._id, role: 'owner', status: 'active' });
     await CreditLedger.create({ tenantId: String(tenant._id), userId: String(user._id), type: 'signup_bonus', delta: CREDIT_SIGNUP_BONUS, balanceAfter: tenant.credits, metadata: { source: 'signup' } });
-    const session = await issueSession(user, tenant, membership);
+    const session = await issueSession(user, tenant, membership, 'password');
+    res.setHeader('Set-Cookie', buildSessionCookie(session.token));
     res.status(201).json(session);
   } catch (error) {
     res.status(400).json({ error: error.message || 'Unable to create account.' });
@@ -1218,12 +1295,14 @@ app.post('/api/auth/login', async (req, res) => {
   const { membership, tenant } = await resolveActiveWorkspaceMembership(user);
   if (!membership) return res.status(403).json({ error: 'No active workspace membership found.' });
   if (!tenant) return res.status(403).json({ error: 'Workspace not found.' });
-  const session = await issueSession(user, tenant, membership);
+  const session = await issueSession(user, tenant, membership, 'password');
+  res.setHeader('Set-Cookie', buildSessionCookie(session.token));
   res.json(session);
 });
 
 app.post('/api/auth/logout', authenticateRequest, async (req, res) => {
   await AppSession.deleteOne({ tokenHash: sha256(req.sessionToken) });
+  res.setHeader('Set-Cookie', clearSessionCookie());
   res.json({ success: true });
 });
 
@@ -1290,8 +1369,9 @@ async function handleOAuthCallback(req, res) {
       ? await exchangeGoogleCodeForProfile(code, config)
       : await exchangeGitHubCodeForProfile(code, config);
     const { user, tenant, membership, created } = await findOrCreateSocialUser(provider, profile, statePayload.mode);
-    const session = await issueSession(user, tenant, membership);
+    const session = await issueSession(user, tenant, membership, provider);
     const mode = created ? 'signup' : statePayload.mode;
+    res.setHeader('Set-Cookie', buildSessionCookie(session.token));
     return res.redirect(buildOAuthSuccessRedirect(session, provider, mode));
   } catch (oauthError) {
     logger.warn({ provider, error: oauthError.message }, 'OAuth callback failed');
