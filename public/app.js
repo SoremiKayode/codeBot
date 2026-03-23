@@ -250,8 +250,8 @@ function saveTaskDraft() {
     selectedGroups: Array.from(taskBuilderState.selectedGroups),
     selectedContacts: Array.from(taskBuilderState.selectedContacts),
     manualRecipients: taskBuilderState.manualRecipients,
-    startDate: ui.startDateInput.value,
-    startTime: ui.startTimeInput.value,
+    startDate: isImmediateSchedule() ? '' : ui.startDateInput.value,
+    startTime: isImmediateSchedule() ? '' : ui.startTimeInput.value,
     frequency: ui.frequencySelect.value,
     dailyTimes: taskBuilderState.dailyTimes,
     weeklySlots: taskBuilderState.weeklySlots,
@@ -408,6 +408,15 @@ function navigateTaskWizard(direction = 'next') {
   setTaskTab(orderedTabs[nextIndex]);
 }
 
+function isImmediateSchedule() {
+  return ui.frequencySelect?.value === 'now';
+}
+
+function updateScheduleInputVisibility() {
+  const hideDateTime = isAutomatedMode() || isImmediateSchedule();
+  [ui.startDateInput, ui.startTimeInput].forEach((element) => element?.closest('label')?.classList.toggle('hidden', hideDateTime));
+}
+
 function updateTaskModeUI() {
   const isAutomated = isAutomatedMode();
   const isStatus = isStatusMode();
@@ -421,7 +430,8 @@ function updateTaskModeUI() {
   ui.audienceNextButton?.classList.toggle('hidden', hideAudienceStep);
   ui.scheduleBackButton?.classList.toggle('hidden', hideAudienceStep);
   if (ui.recipientSummaryInput) ui.recipientSummaryInput.closest('label')?.classList.toggle('hidden', isAutomated || isStatus);
-  [ui.startDateInput, ui.startTimeInput, ui.frequencySelect].forEach((element) => element?.closest('label')?.classList.toggle('hidden', isAutomated));
+  ui.frequencySelect?.closest('label')?.classList.toggle('hidden', isAutomated);
+  updateScheduleInputVisibility();
   ui.frequencyOptions?.classList.toggle('hidden', isAutomated);
   document.getElementById('messageEditor')?.closest('div')?.classList.toggle('hidden', hideComposer);
   ui.openAiTextTabButton?.classList.toggle('hidden', hideComposer);
@@ -1288,10 +1298,14 @@ function buildScheduleDescription() {
     const selected = taskBuilderState.automationAudience.map((value) => labels[value]).filter(Boolean);
     return selected.length ? `This auto reply will answer ${selected.join(' and ')}.` : 'Automated response will start as soon as it is saved.';
   }
-  if (isStatusMode()) return `Status post will follow the selected ${taskBuilderState.frequency || 'schedule'} workflow and publish to WhatsApp Status.`;
+  if (isStatusMode()) {
+    if (taskBuilderState.frequency === 'now') return 'Status post will be published to WhatsApp Status immediately after you save it.';
+    return `Status post will follow the selected ${taskBuilderState.frequency || 'schedule'} workflow and publish to WhatsApp Status.`;
+  }
   const startDate = ui.startDateInput.value || 'No date selected';
   const startTime = ui.startTimeInput.value || 'No time selected';
   if (!taskBuilderState.frequency) return 'Choose a frequency to see the exact rule summary.';
+  if (taskBuilderState.frequency === 'now') return 'Task will run immediately after you save it.';
   if (taskBuilderState.frequency === 'once') return `Task will run once on ${startDate} at ${startTime}.`;
   if (taskBuilderState.frequency === 'daily') return `Task will run daily starting ${startDate} at ${taskBuilderState.dailyTimes.join(', ')}.`;
   if (taskBuilderState.frequency === 'weekly') return `Task will run weekly on ${taskBuilderState.weeklySlots.map((slot) => `${slot.day} ${slot.time}`).join(', ')} starting ${startDate}.`;
@@ -1318,7 +1332,10 @@ function renderFrequencyOptions() {
     return;
   }
 
-  if (frequency === 'once') {
+  updateScheduleInputVisibility();
+  if (frequency === 'now') {
+    ui.frequencyOptions.innerHTML = '<div class="option-card">This task will run immediately after you save it. Start date and time are not required.</div>';
+  } else if (frequency === 'once') {
     ui.frequencyOptions.innerHTML = '<div class="option-card">This task will run one time using the selected start date and start time.</div>';
   } else if (frequency === 'daily') {
     ui.frequencyOptions.innerHTML = `
@@ -1503,8 +1520,8 @@ async function handleFileUpload(files) {
 
 function buildScheduleConfig() {
   return {
-    startDate: ui.startDateInput.value,
-    startTime: ui.startTimeInput.value,
+    startDate: isImmediateSchedule() ? '' : ui.startDateInput.value,
+    startTime: isImmediateSchedule() ? '' : ui.startTimeInput.value,
     frequency: ui.frequencySelect.value,
     dailyTimes: taskBuilderState.dailyTimes,
     weeklySlots: taskBuilderState.weeklySlots,
@@ -1544,7 +1561,11 @@ async function scheduleTask() {
     showToast(`These recipients are invalid: ${invalidManualRecipients.join(', ')}`);
     return;
   }
-  if (!isAutomated && (!ui.frequencySelect.value || !ui.startDateInput.value || !ui.startTimeInput.value)) {
+  if (!isAutomated && !ui.frequencySelect.value) {
+    showToast('Choose a schedule frequency first.');
+    return;
+  }
+  if (!isAutomated && !isImmediateSchedule() && (!ui.startDateInput.value || !ui.startTimeInput.value)) {
     showToast('Complete the scheduling inputs first.');
     return;
   }
@@ -1812,7 +1833,10 @@ ui.generateImageButton.addEventListener('click', handleImageGeneration);
 ui.regenerateImageButton.addEventListener('click', handleImageGeneration);
 ui.approveImageButton.addEventListener('click', approvePendingImage);
 ui.mediaFileInput.addEventListener('change', (event) => handleFileUpload(event.target.files));
-ui.frequencySelect.addEventListener('change', renderFrequencyOptions);
+ui.frequencySelect.addEventListener('change', () => {
+  renderFrequencyOptions();
+  updateScheduleInputVisibility();
+});
 ui.startDateInput.addEventListener('change', updateTaskPreview);
 ui.startTimeInput.addEventListener('change', updateTaskPreview);
 ui.scheduleTaskButton.addEventListener('click', scheduleTask);

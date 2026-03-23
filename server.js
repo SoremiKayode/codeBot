@@ -1288,6 +1288,7 @@ function buildRunKey(date, frequency, timeValue, timezone) {
 
 function computeNextRunAt(schedule = {}, timezone = DEFAULT_TIMEZONE, now = new Date()) {
   const frequency = String(schedule.frequency || '').trim().toLowerCase();
+  if (frequency === 'now') return now;
   const startDate = String(schedule.startDate || '').trim();
   const startTime = normalizeTimeValue(schedule.startTime);
   if (!frequency || !startDate || !startTime) return null;
@@ -1309,9 +1310,19 @@ function validateSchedule(schedule = {}, timezone = DEFAULT_TIMEZONE) {
     monthlyDays: Array.isArray(schedule.monthlyDays) ? schedule.monthlyDays.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value >= 1 && value <= 31) : [],
     timezone: validateTimezone(timezone),
   };
+  if (!['now', 'once', 'daily', 'weekly', 'monthly'].includes(normalized.frequency)) throw new Error('A valid schedule frequency is required.');
+  if (normalized.frequency === 'now') {
+    const parts = getDatePartsForTimezone(new Date(), normalized.timezone);
+    normalized.startDate = parts.today;
+    normalized.startTime = parts.currentTime;
+    normalized.dailyTimes = [];
+    normalized.weeklySlots = [];
+    normalized.monthlyWeeks = [];
+    normalized.monthlyDays = [];
+    return normalized;
+  }
   if (!normalized.startDate || !/^\d{4}-\d{2}-\d{2}$/.test(normalized.startDate)) throw new Error('A valid start date is required.');
   if (!normalized.startTime) throw new Error('A valid start time is required.');
-  if (!['once', 'daily', 'weekly', 'monthly'].includes(normalized.frequency)) throw new Error('A valid schedule frequency is required.');
   if (normalized.frequency === 'daily' && !normalized.dailyTimes.length) normalized.dailyTimes = [normalized.startTime];
   if (normalized.frequency === 'weekly' && !normalized.weeklySlots.length) throw new Error('Weekly tasks require at least one weekday/time slot.');
   if (normalized.frequency === 'monthly' && !normalized.monthlyWeeks.length && !normalized.monthlyDays.length) throw new Error('Monthly tasks require at least one week or day rule.');
@@ -1324,7 +1335,14 @@ function shouldRunTaskNow(task, now = new Date()) {
   const startDate = String(schedule.startDate || '').trim();
   const startTime = normalizeTimeValue(schedule.startTime);
   const frequency = String(schedule.frequency || '').trim().toLowerCase();
-  if (!startDate || !startTime || !frequency) return { due: false, reason: 'missing_schedule' };
+  if (!frequency) return { due: false, reason: 'missing_schedule' };
+  if (frequency === 'now') {
+    const { currentTime } = getDatePartsForTimezone(now, timezone);
+    const runKey = buildRunKey(now, frequency, currentTime, timezone);
+    if (task.lastRunKey === runKey) return { due: false, reason: 'already_ran', runKey };
+    return { due: true, runKey, frequency, currentTime, timezone };
+  }
+  if (!startDate || !startTime) return { due: false, reason: 'missing_schedule' };
   const { today, currentTime, dayName } = getDatePartsForTimezone(now, timezone);
   if (today < startDate) return { due: false, reason: 'before_start_date' };
   let due = false;
@@ -1365,6 +1383,11 @@ async function buildMessagePayload(task) {
   if (firstMedia.type === 'video') return { video: parsed.buffer, mimetype: parsed.mimeType, fileName, caption };
   if (firstMedia.type === 'audio') return { audio: parsed.buffer, mimetype: parsed.mimeType, fileName, ptt: false };
   return { document: parsed.buffer, mimetype: parsed.mimeType, fileName, caption };
+}
+
+async function getStatusAudienceJids(tenantId) {
+  const audience = await getAudienceState(tenantId);
+  return Array.from(new Set((audience.contacts || []).map((contact) => normalizePhoneJid(contact?.id || contact?.phone || '')).filter(Boolean)));
 }
 
 async function resolveTaskRecipients(task, sock) {
@@ -1444,6 +1467,74 @@ async function recordDispatch(tenantId, taskId, recipient, status, error = '', m
   });
 }
 
+async function dispatchTask(task, now = new Date()) {
+  const timing = shouldRunTaskNow(task, now);
+  if (!timing.due) {
+    task.claimToken = '';
+    task.claimExpiresAt = null;
+    await task.save();
+    return task;
+  }
+  const tenantId = String(task.tenantId || '');
+  const sock = socketStore.get(tenantId);
+  if (!sock) {
+    task.lastError = 'WhatsApp is not connected for this workspace.';
+    task.nextRunAt = computeNextRunAt(task.schedule, task.timezone, new Date(now.getTime() + 60000));
+    task.claimToken = '';
+    task.claimExpiresAt = null;
+    await task.save();
+    return task;
+  }
+  const messagePayload = await buildMessagePayload(task);
+  if (!messagePayload) {
+    task.lastError = 'No sendable message payload was available.';
+    task.claimToken = '';
+    task.claimExpiresAt = null;
+    await task.save();
+    return task;
+  }
+  const recipients = await resolveTaskRecipients(task, sock);
+  if (!recipients.length) {
+    task.lastError = 'No recipients were resolved.';
+    task.claimToken = '';
+    task.claimExpiresAt = null;
+    await task.save();
+    return task;
+  }
+  let deliveredCount = 0;
+  let failedCount = 0;
+  for (const recipient of recipients) {
+    try {
+      if (task.mode === 'schedule_status') {
+        const statusJidList = await getStatusAudienceJids(tenantId);
+        if (!statusJidList.length) throw new Error('No WhatsApp contacts are available yet for status delivery. Refresh your workspace audience and try again.');
+        await sock.sendMessage('status@broadcast', messagePayload, { broadcast: true, statusJidList });
+      } else {
+        await sock.sendMessage(recipient, messagePayload);
+      }
+      deliveredCount += 1;
+      await recordDispatch(tenantId, String(task._id), recipient, 'sent', '', messagePayload);
+    } catch (error) {
+      failedCount += 1;
+      await recordDispatch(tenantId, String(task._id), recipient, 'failed', error.message, messagePayload);
+      logger.error({ taskId: String(task._id), recipient, error: error.message }, 'Failed to send scheduled WhatsApp message');
+    }
+  }
+  task.lastRunAt = now;
+  task.lastRunKey = timing.runKey;
+  task.lastError = failedCount ? `Failed for ${failedCount} recipient(s).` : '';
+  task.deliveryStats = { attempted: recipients.length, delivered: deliveredCount, failed: failedCount };
+  task.nextRunAt = ['once', 'now'].includes(timing.frequency) ? null : computeNextRunAt(task.schedule, task.timezone, new Date(now.getTime() + 60000));
+  if (['once', 'now'].includes(timing.frequency)) {
+    task.status = 'completed';
+    task.completedAt = now;
+  }
+  task.claimToken = '';
+  task.claimExpiresAt = null;
+  await task.save();
+  return task;
+}
+
 async function processDueTasks() {
   const now = new Date();
   const claimToken = createToken();
@@ -1467,64 +1558,7 @@ async function processDueTasks() {
       ],
     }, { claimToken, claimExpiresAt }, { new: true });
     if (!task) continue;
-    const timing = shouldRunTaskNow(task, now);
-    if (!timing.due) {
-      task.claimToken = '';
-      task.claimExpiresAt = null;
-      await task.save();
-      continue;
-    }
-    const tenantId = String(task.tenantId || '');
-    const sock = socketStore.get(tenantId);
-    if (!sock) {
-      task.lastError = 'WhatsApp is not connected for this workspace.';
-      task.nextRunAt = computeNextRunAt(task.schedule, task.timezone, new Date(now.getTime() + 60000));
-      task.claimToken = '';
-      task.claimExpiresAt = null;
-      await task.save();
-      continue;
-    }
-    const messagePayload = await buildMessagePayload(task);
-    if (!messagePayload) {
-      task.lastError = 'No sendable message payload was available.';
-      task.claimToken = '';
-      task.claimExpiresAt = null;
-      await task.save();
-      continue;
-    }
-    const recipients = await resolveTaskRecipients(task, sock);
-    if (!recipients.length) {
-      task.lastError = 'No recipients were resolved.';
-      task.claimToken = '';
-      task.claimExpiresAt = null;
-      await task.save();
-      continue;
-    }
-    let deliveredCount = 0;
-    let failedCount = 0;
-    for (const recipient of recipients) {
-      try {
-        await sock.sendMessage(recipient, messagePayload);
-        deliveredCount += 1;
-        await recordDispatch(tenantId, String(task._id), recipient, 'sent', '', messagePayload);
-      } catch (error) {
-        failedCount += 1;
-        await recordDispatch(tenantId, String(task._id), recipient, 'failed', error.message, messagePayload);
-        logger.error({ taskId: String(task._id), recipient, error: error.message }, 'Failed to send scheduled WhatsApp message');
-      }
-    }
-    task.lastRunAt = now;
-    task.lastRunKey = timing.runKey;
-    task.lastError = failedCount ? `Failed for ${failedCount} recipient(s).` : '';
-    task.deliveryStats = { attempted: recipients.length, delivered: deliveredCount, failed: failedCount };
-    task.nextRunAt = timing.frequency === 'once' ? null : computeNextRunAt(task.schedule, task.timezone, new Date(now.getTime() + 60000));
-    if (timing.frequency === 'once') {
-      task.status = 'completed';
-      task.completedAt = now;
-    }
-    task.claimToken = '';
-    task.claimExpiresAt = null;
-    await task.save();
+    await dispatchTask(task, now);
   }
 }
 
@@ -2008,7 +2042,8 @@ app.post('/api/tasks', authenticateRequest, requireScopedPermission('tasks:write
     nextRunAt: mode === 'automated_response' ? null : computeNextRunAt(schedule, timezone),
   });
   await debitCredits({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.createTask, type: 'task_create', metadata: { taskId: String(task._id), scopeId: scope.scopeId } });
-  res.status(201).json({ task, user: sanitizeUser(req.user, req.membership, req.tenant) });
+  const finalTask = schedule.frequency === 'now' ? await dispatchTask(task, new Date()) : task;
+  res.status(201).json({ task: finalTask, user: sanitizeUser(req.user, req.membership, req.tenant) });
 });
 
 app.post('/api/ai/text', authenticateRequest, requireScopedPermission('tasks:write'), async (req, res) => {
