@@ -51,6 +51,7 @@ const ui = {
   qrWrapper: document.getElementById('qrWrapper'),
   qrCode: document.getElementById('qrCode'),
   qrHint: document.getElementById('qrHint'),
+  refreshQrButton: document.getElementById('refreshQrButton'),
   loginPasswordStrength: document.getElementById('loginPasswordStrength'),
   signupPasswordStrength: document.getElementById('signupPasswordStrength'),
   taskTitle: document.getElementById('taskTitle'),
@@ -415,8 +416,26 @@ function renderQrCode(qrValue) {
     return;
   }
   ui.qrWrapper.classList.remove('empty');
-  ui.qrHint.textContent = 'Scan this QR code with your WhatsApp mobile app.';
-  new window.QRCode(ui.qrCode, { text: qrValue, width: 220, height: 220 });
+  ui.qrHint.textContent = 'Scan this QR code with WhatsApp on your phone. A larger, high-contrast version is shown below.';
+  new window.QRCode(ui.qrCode, {
+    text: qrValue,
+    width: 320,
+    height: 320,
+    colorDark: '#000000',
+    colorLight: '#ffffff',
+    correctLevel: window.QRCode.CorrectLevel.H,
+  });
+}
+
+async function handleQrRefresh() {
+  ui.refreshQrButton.disabled = true;
+  ui.refreshQrButton.textContent = 'Refreshing…';
+  try {
+    await syncWhatsAppStatus();
+  } finally {
+    ui.refreshQrButton.disabled = false;
+    ui.refreshQrButton.textContent = 'Refresh status';
+  }
 }
 
 async function syncWhatsAppStatus() {
@@ -1343,6 +1362,7 @@ ui.workspaceMemberForm?.addEventListener('submit', async (event) => {
 });
 
 ui.goToTasksButton.addEventListener('click', () => navigate('tasks'));
+ui.refreshQrButton?.addEventListener('click', handleQrRefresh);
 ui.connectWhatsappButton.addEventListener('click', async () => {
   if (!appState.user?.activeTenant) {
     showToast('Create a workspace before connecting WhatsApp. Personal task scheduling works without one.');
