@@ -1844,6 +1844,7 @@ async function startWhatsAppSession(user, tenant) {
     if (connection === 'close') {
       const statusCode = lastDisconnect?.error?.output?.statusCode;
       const loggedOut = statusCode === DisconnectReason.loggedOut;
+      const restartRequired = statusCode === DisconnectReason.restartRequired;
       logger.error({ tenantId, statusCode, error: lastDisconnect?.error?.message, stack: lastDisconnect?.error?.stack }, 'WhatsApp connection closed');
       console.error('[whatsapp-connection-close]', { tenantId, statusCode, error: lastDisconnect?.error?.message });
       socketStore.delete(tenantId);
@@ -1853,8 +1854,21 @@ async function startWhatsAppSession(user, tenant) {
         await persistConnectionState(tenantId, { status: 'logged_out', qr: '', phoneNumber: '', message: 'WhatsApp session logged out. Start a new connection to generate another QR code.', userId: String(user._id) });
         return;
       }
-      await User.findByIdAndUpdate(user._id, { whatsappStatus: 'not_connected' });
-      await persistConnectionState(tenantId, { status: 'disconnected', qr: '', message: 'Connection dropped. Start the session again to reconnect.', userId: String(user._id) });
+      await User.findByIdAndUpdate(user._id, { whatsappStatus: 'connecting' });
+      await persistConnectionState(tenantId, {
+        status: 'connecting',
+        qr: '',
+        phoneNumber: user.whatsappPhone || '',
+        message: restartRequired
+          ? 'WhatsApp requested a socket restart. Reconnecting with the saved credentials.'
+          : 'Connection dropped. Attempting to reconnect automatically.',
+        userId: String(user._id),
+      });
+      setTimeout(() => {
+        startWhatsAppSession(user, tenant).catch((error) => {
+          logger.error({ tenantId, statusCode, error: error.message, stack: error.stack }, 'Unable to restart WhatsApp session');
+        });
+      }, restartRequired ? 0 : 1_000);
     }
   });
   return connectionStateStore.get(tenantId) || buildDefaultConnectionState(tenantId);
