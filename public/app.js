@@ -172,7 +172,7 @@ const companyProfileState = { activeTab: 'business', quill: null, profileId: nul
 const COMPANY_TABS = ['business', 'faqs', 'products', 'tone'];
 
 function escapeHtml(value = '') {
-  return value.replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
+  return String(value ?? '').replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
 }
 
 
@@ -864,7 +864,7 @@ function resolveTagValue(tag, baseDate = new Date()) {
 }
 
 function translateTags(text = '') {
-  return text.replace(/\{([^}]+)\}/g, (_, tag) => resolveTagValue(tag));
+  return String(text ?? '').replace(/\{([^}]+)\}/g, (_, tag) => resolveTagValue(tag));
 }
 
 function extractMessageHtml() {
