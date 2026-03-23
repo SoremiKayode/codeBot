@@ -39,6 +39,7 @@ export const api = {
   whatsappStatus: () => request('/api/whatsapp/status'),
   whatsappAudience: () => request('/api/whatsapp/audience'),
   requiredCredentials: () => request('/api/config/required-credentials'),
+  publicConfig: () => request('/api/config/public'),
   createTask: (payload) => request('/api/tasks', { method: 'POST', body: JSON.stringify(payload) }),
   listTasks: () => request('/api/tasks'),
   updateTaskStatus: (taskId, status) => request(`/api/tasks/${taskId}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
@@ -46,5 +47,7 @@ export const api = {
   bulkTaskAction: (action, taskIds) => request('/api/tasks/bulk-action', { method: 'POST', body: JSON.stringify({ action, taskIds }) }),
   generateText: (payload) => request('/api/ai/text', { method: 'POST', body: JSON.stringify(payload) }),
   generateImage: (payload) => request('/api/ai/image', { method: 'POST', body: JSON.stringify(payload) }),
+  initializePaystackPayment: (payload) => request('/api/payments/paystack/initialize', { method: 'POST', body: JSON.stringify(payload) }),
+  verifyPaystackPayment: (payload) => request('/api/payments/paystack/verify', { method: 'POST', body: JSON.stringify(payload) }),
   sendEnquiry: (payload) => request('/api/enquiries', { method: 'POST', body: JSON.stringify(payload) }),
 };

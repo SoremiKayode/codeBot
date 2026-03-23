@@ -42,6 +42,12 @@ const ui = {
   goToTasksButton: document.getElementById('goToTasksButton'),
   connectWhatsappButton: document.getElementById('connectWhatsappButton'),
   workspaceMembersHint: document.getElementById('workspaceMembersHint'),
+  paystackPaymentForm: document.getElementById('paystackPaymentForm'),
+  paymentAmount: document.getElementById('paymentAmount'),
+  paymentCreditsPreview: document.getElementById('paymentCreditsPreview'),
+  paymentHelpText: document.getElementById('paymentHelpText'),
+  paymentStatusText: document.getElementById('paymentStatusText'),
+  paystackPaymentButton: document.getElementById('paystackPaymentButton'),
   workspaceMemberForm: document.getElementById('workspaceMemberForm'),
   workspaceMemberEmail: document.getElementById('workspaceMemberEmail'),
   workspaceMemberRole: document.getElementById('workspaceMemberRole'),
@@ -145,6 +151,7 @@ const taskBuilderState = {
 
 const TASK_DRAFT_STORAGE_KEY = 'wa_task_builder_draft_v1';
 const workspaceState = { members: [] };
+const paymentState = { publicKey: '', currency: 'NGN', creditRate: 1 };
 
 function escapeHtml(value = '') {
   return value.replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
@@ -259,6 +266,34 @@ function showToast(message) {
   showToast.timer = setTimeout(() => ui.toast.classList.add('hidden'), 3200);
 }
 
+function formatCreditPreview(amount) {
+  const credits = Math.max(1, Math.round(Number(amount || 0) * Number(paymentState.creditRate || 1)));
+  return `${credits} credits`;
+}
+
+function updatePaymentUI() {
+  const hasWorkspace = Boolean(appState.user?.activeTenant);
+  if (ui.paymentCreditsPreview) ui.paymentCreditsPreview.value = formatCreditPreview(ui.paymentAmount?.value || 0);
+  if (ui.paymentHelpText) ui.paymentHelpText.textContent = hasWorkspace
+    ? `Top up the active workspace (${appState.user.activeTenant.name}) using Paystack popup checkout.`
+    : 'Top up your current account credits using Paystack popup checkout.';
+  if (ui.paymentStatusText) ui.paymentStatusText.textContent = hasWorkspace
+    ? 'Successful payments will be added to the shared workspace credit pool.'
+    : 'Successful payments will be added to your personal credit balance.';
+}
+
+async function loadPublicConfig() {
+  try {
+    const config = await api.publicConfig();
+    paymentState.publicKey = config.paystackPublicKey || '';
+    paymentState.currency = config.paystackCurrency || 'NGN';
+    paymentState.creditRate = Number(config.paystackCreditRate || 1) || 1;
+    updatePaymentUI();
+  } catch (error) {
+    console.warn('Unable to load public configuration.', error);
+  }
+}
+
 function closeMenu() {
   document.querySelector('.app-header')?.classList.remove('menu-open');
   ui.menuToggle?.setAttribute('aria-expanded', 'false');
@@ -360,6 +395,7 @@ function updateUserUI() {
   if (ui.dashboardWorkspaceRole) ui.dashboardWorkspaceRole.textContent = workspaceRole;
   if (ui.workspaceHeadline) ui.workspaceHeadline.textContent = hasWorkspace ? workspaceName : 'No workspace yet.';
   if (ui.workspaceDescription) ui.workspaceDescription.textContent = hasWorkspace ? `Role: ${workspaceRole}. You can now connect WhatsApp, build tasks, and add teammates to ${workspaceName}.` : 'Create a workspace when you want shared automation, WhatsApp setup, and team access.';
+  updatePaymentUI();
   if (ui.createWorkspaceButton) {
     ui.createWorkspaceButton.textContent = hasWorkspace ? 'Workspace ready' : 'Create workspace';
     ui.createWorkspaceButton.disabled = hasWorkspace;
@@ -797,10 +833,6 @@ function resolveAuthMode(trigger) {
 }
 
 async function handleSocialClick(provider, trigger) {
-  if (provider === 'microsoft') {
-    showToast('Microsoft login is still unavailable in this build.');
-    return;
-  }
   try {
     const data = await api.providerStatus(provider);
     if (!data.available) {
@@ -848,6 +880,8 @@ async function handleOAuthRedirectState() {
     showToast(message);
     return false;
   }
+
+  await loadPublicConfig();
 
   const existingToken = localStorage.getItem('wa_token');
   if (existingToken) setToken(existingToken);
@@ -1031,7 +1065,7 @@ async function handleTextGeneration() {
     updateTaskPreview();
     showToast('AI message inserted into the editor.');
   } catch (error) {
-    ui.aiTextStatus.textContent = /Not enough credits|account balance is insufficient/i.test(error.message) ? 'The AI provider rejected the request because its balance is insufficient. This is separate from your app credits.' : error.message;
+    ui.aiTextStatus.textContent = 'We are unable to generate text right now. Please try again shortly.';
     showToast(error.message);
   }
 }
@@ -1059,7 +1093,10 @@ async function handleImageGeneration() {
     ui.approveImageButton.classList.remove('hidden');
     showToast('AI image generated. Approve it to add to the queue.');
   } catch (error) {
-    ui.aiImageStatus.textContent = /Not enough credits|account balance is insufficient/i.test(error.message) ? 'The AI provider rejected the request because its balance is insufficient. This is separate from your app credits.' : error.message;
+    taskBuilderState.pendingImage = null;
+    ui.regenerateImageButton.classList.add('hidden');
+    ui.approveImageButton.classList.add('hidden');
+    ui.aiImageStatus.textContent = 'We are unable to generate an image right now. Please try again shortly.';
     showToast(error.message);
   }
 }
@@ -1296,13 +1333,59 @@ ui.signupForm.addEventListener('submit', async (event) => {
   }
 });
 
+async function handlePaystackPayment(event) {
+  event.preventDefault();
+  const amount = Number(ui.paymentAmount?.value || 0);
+  if (!amount || amount <= 0) {
+    showToast('Enter a valid payment amount.');
+    return;
+  }
+  if (!window.PaystackPop) {
+    showToast('Paystack popup is unavailable right now.');
+    return;
+  }
+  ui.paymentStatusText.textContent = 'Initializing payment...';
+  try {
+    if (!paymentState.publicKey) await loadPublicConfig();
+    const payload = await api.initializePaystackPayment({ amount });
+    syncUserFromPayload(payload);
+    paymentState.publicKey = payload.publicKey || paymentState.publicKey;
+    const handler = window.PaystackPop.setup({
+      key: paymentState.publicKey,
+      email: payload.email || appState.user?.email || '',
+      amount: Math.round(Number(payload.amount || amount) * 100),
+      currency: payload.currency || paymentState.currency || 'NGN',
+      ref: payload.reference,
+      callback: async ({ reference }) => {
+        ui.paymentStatusText.textContent = 'Verifying payment...';
+        try {
+          const verified = await api.verifyPaystackPayment({ reference });
+          syncUserFromPayload(verified);
+          updateUserUI();
+          ui.paymentStatusText.textContent = `Payment successful. ${verified.transaction?.credits || formatCreditPreview(amount)} added.`;
+          showToast('Credits added successfully.');
+        } catch (error) {
+          ui.paymentStatusText.textContent = error.message;
+          showToast(error.message);
+        }
+      },
+      onClose: () => {
+        ui.paymentStatusText.textContent = 'Payment popup closed before completion.';
+      },
+    });
+    handler.openIframe();
+  } catch (error) {
+    ui.paymentStatusText.textContent = error.message;
+    showToast(error.message);
+  }
+}
+
 ui.enquiryForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
     const payload = await api.sendEnquiry(Object.fromEntries(new FormData(event.currentTarget).entries()));
     event.currentTarget.reset();
-    showToast(payload.message || 'Enquiry saved successfully.');
-    window.open(payload.mailtoUrl, '_blank', 'noopener');
+    showToast(payload.message || 'Enquiry sent successfully.');
   } catch (error) {
     showToast(error.message);
   }
@@ -1351,6 +1434,9 @@ ui.createWorkspaceButton?.addEventListener('click', async () => {
     showToast(error.message);
   }
 });
+ui.paystackPaymentForm?.addEventListener('submit', handlePaystackPayment);
+ui.paymentAmount?.addEventListener('input', updatePaymentUI);
+
 ui.workspaceMemberForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (!appState.user?.activeTenant) {

@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="/styles.css" />
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.min.js"></script>
+  <script defer src="https://js.paystack.co/v1/inline.js"></script>
   <script type="module" defer src="/app.js"></script>
 </head>
 <body>
@@ -168,7 +169,6 @@
           <div class="social-buttons social-buttons--grid" data-auth-mode="login">
             <button class="social-button social-login" type="button" data-provider="google" data-auth-mode="login"><span>🔵</span><span>Continue with Google</span></button>
             <button class="social-button social-login" type="button" data-provider="github" data-auth-mode="login"><span>⚫</span><span>Continue with GitHub</span></button>
-            <button class="social-button social-login" type="button" data-provider="microsoft" data-auth-mode="login"><span>🟦</span><span>Continue with Microsoft</span></button>
           </div>
         </div>
       </section>
@@ -202,7 +202,6 @@
           <div class="social-buttons social-buttons--grid" data-auth-mode="signup">
             <button class="social-button social-login" type="button" data-provider="google" data-auth-mode="signup"><span>🔵</span><span>Sign up with Google</span></button>
             <button class="social-button social-login" type="button" data-provider="github" data-auth-mode="signup"><span>⚫</span><span>Sign up with GitHub</span></button>
-            <button class="social-button social-login" type="button" data-provider="microsoft" data-auth-mode="signup"><span>🟦</span><span>Sign up with Microsoft</span></button>
           </div>
         </div>
       </section>
@@ -284,6 +283,28 @@
                   <strong id="dashboardWorkspaceRole">Not assigned</strong>
                 </div>
               </div>
+              <div class="payment-card stack">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Wallet top-up</p>
+                    <h3>Buy more credits with Paystack</h3>
+                  </div>
+                </div>
+                <p id="paymentHelpText" class="muted">Top up your current account or active workspace credits using Paystack popup checkout.</p>
+                <form id="paystackPaymentForm" class="team-share-form">
+                  <label>
+                    <span>Amount (NGN)</span>
+                    <input id="paymentAmount" name="amount" type="number" min="100" step="100" value="1000" />
+                  </label>
+                  <label>
+                    <span>Credits you will receive</span>
+                    <input id="paymentCreditsPreview" type="text" value="1000 credits" readonly />
+                  </label>
+                  <button id="paystackPaymentButton" class="primary-button compact-button" type="submit">Pay with Paystack</button>
+                </form>
+                <p id="paymentStatusText" class="muted">Payments are applied to your personal credits unless you have an active workspace open.</p>
+              </div>
+
               <div class="team-share-card">
                 <div class="section-heading">
                   <div>
