@@ -21,6 +21,10 @@ const ui = {
   dashboardEmailSecondary: document.getElementById('dashboardEmailSecondary'),
   dashboardCreditsSecondary: document.getElementById('dashboardCreditsSecondary'),
   dashboardThemeSecondary: document.getElementById('dashboardThemeSecondary'),
+  dashboardWorkspaceName: document.getElementById('dashboardWorkspaceName'),
+  dashboardWorkspaceRole: document.getElementById('dashboardWorkspaceRole'),
+  workspaceHeadline: document.getElementById('workspaceHeadline'),
+  workspaceDescription: document.getElementById('workspaceDescription'),
   whatsappPhone: document.getElementById('whatsappPhone'),
   logoutButton: document.getElementById('logoutButton'),
   themeToggle: document.getElementById('themeToggle'),
@@ -33,6 +37,7 @@ const ui = {
   taskListTabSummary: document.getElementById('taskListTabSummary'),
   toast: document.getElementById('toast'),
   startButton: document.getElementById('startButton'),
+  createWorkspaceButton: document.getElementById('createWorkspaceButton'),
   goToTasksButton: document.getElementById('goToTasksButton'),
   connectWhatsappButton: document.getElementById('connectWhatsappButton'),
   whatsappStatusText: document.getElementById('whatsappStatusText'),
@@ -251,7 +256,9 @@ function closeMenu() {
 }
 
 function navigate(route) {
-  const targetRoute = ['dashboard', 'tasks', 'task-list'].includes(route) && !appState.user ? 'login' : route;
+  const requestedRoute = ['dashboard', 'tasks', 'task-list'].includes(route) && !appState.user ? 'login' : route;
+  const targetRoute = ['tasks', 'task-list'].includes(requestedRoute) && appState.user && !appState.user.activeTenant ? 'dashboard' : requestedRoute;
+  if (requestedRoute !== targetRoute && requestedRoute !== 'login') showToast('Create a workspace before opening tasks or WhatsApp tools.');
   setRoute(targetRoute);
   closeMenu();
   Object.entries(views).forEach(([key, view]) => view.classList.toggle('active', key === targetRoute));
@@ -268,6 +275,9 @@ function navigate(route) {
 
 function updateUserUI() {
   const user = appState.user;
+  const workspaceName = user?.activeTenant?.name || 'Not created';
+  const workspaceRole = user?.tenantRole ? user.tenantRole[0].toUpperCase() + user.tenantRole.slice(1) : 'Not assigned';
+  const hasWorkspace = Boolean(user?.activeTenant);
   ui.headerUsername.textContent = user?.username || 'Guest';
   ui.headerCredits.textContent = String(user?.credits || 0);
   ui.dashboardUsername.textContent = user?.username || '-';
@@ -279,6 +289,16 @@ function updateUserUI() {
   if (ui.dashboardEmailSecondary) ui.dashboardEmailSecondary.textContent = user?.email || '-';
   if (ui.dashboardCreditsSecondary) ui.dashboardCreditsSecondary.textContent = String(user?.credits || 0);
   if (ui.dashboardThemeSecondary) ui.dashboardThemeSecondary.textContent = themeLabel;
+  if (ui.dashboardWorkspaceName) ui.dashboardWorkspaceName.textContent = workspaceName;
+  if (ui.dashboardWorkspaceRole) ui.dashboardWorkspaceRole.textContent = workspaceRole;
+  if (ui.workspaceHeadline) ui.workspaceHeadline.textContent = hasWorkspace ? workspaceName : 'No workspace yet.';
+  if (ui.workspaceDescription) ui.workspaceDescription.textContent = hasWorkspace ? `Role: ${workspaceRole}. You can now connect WhatsApp, build tasks, and add teammates to ${workspaceName}.` : 'Create a workspace when you want shared automation, WhatsApp setup, and team access.';
+  if (ui.createWorkspaceButton) {
+    ui.createWorkspaceButton.textContent = hasWorkspace ? 'Workspace ready' : 'Create workspace';
+    ui.createWorkspaceButton.disabled = hasWorkspace;
+  }
+  if (ui.goToTasksButton) ui.goToTasksButton.disabled = !hasWorkspace;
+  if (ui.connectWhatsappButton) ui.connectWhatsappButton.disabled = !hasWorkspace;
   document.documentElement.dataset.theme = user?.theme || localStorage.getItem('wa_theme') || 'light';
 }
 
@@ -334,7 +354,7 @@ function renderQrCode(qrValue) {
 }
 
 async function syncWhatsAppStatus() {
-  if (!appState.user) return;
+  if (!appState.user?.activeTenant) return;
   try {
     const status = await api.whatsappStatus();
     ui.whatsappStatusText.textContent = status.message || 'Waiting for update.';
@@ -596,6 +616,12 @@ function renderTasks(tasks = []) {
 }
 
 async function loadTasks() {
+  if (!appState.user?.activeTenant) {
+    taskBuilderState.tasks = [];
+    renderTasks([]);
+    return;
+  }
+
   if (!appState.user) return;
   try {
     const data = await api.listTasks();
@@ -800,6 +826,14 @@ function renderAudienceTables() {
 }
 
 async function loadAudience(force = false) {
+  if (!appState.user?.activeTenant) {
+    audienceState.groups = [];
+    audienceState.contacts = [];
+    audienceState.hasLoaded = false;
+    renderAudienceTables();
+    return;
+  }
+
   if (!appState.user) return;
   if (audienceState.hasLoaded && !force) return;
   try {
@@ -1207,8 +1241,28 @@ ui.themeToggle.addEventListener('click', async () => {
 });
 
 ui.startButton.addEventListener('click', () => navigate(appState.user ? 'dashboard' : 'signup'));
+ui.createWorkspaceButton?.addEventListener('click', async () => {
+  if (appState.user?.activeTenant) {
+    showToast('You already have an active workspace.');
+    return;
+  }
+  const defaultName = appState.user?.username ? `${appState.user.username}'s Workspace` : 'My Workspace';
+  const workspaceName = window.prompt('Choose a workspace name.', defaultName);
+  if (workspaceName === null) return;
+  try {
+    const payload = await api.createWorkspace({ workspaceName });
+    syncUserFromPayload(payload);
+    showToast(payload.created ? 'Workspace created successfully.' : 'Workspace already available on your account.');
+  } catch (error) {
+    showToast(error.message);
+  }
+});
 ui.goToTasksButton.addEventListener('click', () => navigate('tasks'));
 ui.connectWhatsappButton.addEventListener('click', async () => {
+  if (!appState.user?.activeTenant) {
+    showToast('Create a workspace before connecting WhatsApp.');
+    return;
+  }
   try {
     const data = await api.connectWhatsApp();
     syncUserFromPayload(data);

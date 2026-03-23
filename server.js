@@ -451,7 +451,7 @@ const userSchema = new mongoose.Schema({
 const appSessionSchema = new mongoose.Schema({
   tokenHash: { type: String, required: true, unique: true },
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: true },
+  tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', default: null },
   provider: { type: String, default: 'password' },
   lastSeenAt: { type: Date, default: Date.now },
   createdAt: { type: Date, default: Date.now, expires: '14d' },
@@ -618,18 +618,41 @@ async function authenticateRequest(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Authentication required.' });
   const session = await AppSession.findOne({ tokenHash: sha256(token) });
   if (!session) return res.status(401).json({ error: 'Session expired. Please log in again.' });
-  const [user, tenant, membership] = await Promise.all([
-    User.findById(session.userId),
-    Tenant.findById(session.tenantId),
-    TenantMembership.findOne({ tenantId: session.tenantId, userId: session.userId, status: 'active' }),
-  ]);
-  if (!user || !tenant || !membership) return res.status(401).json({ error: 'Workspace membership is no longer active.' });
+  const user = await User.findById(session.userId);
+  if (!user) return res.status(401).json({ error: 'Account no longer exists.' });
+
+  let tenant = null;
+  let membership = null;
+  if (session.tenantId) {
+    [tenant, membership] = await Promise.all([
+      Tenant.findById(session.tenantId),
+      TenantMembership.findOne({ tenantId: session.tenantId, userId: session.userId, status: 'active' }),
+    ]);
+    if (!tenant || !membership) {
+      tenant = null;
+      membership = null;
+      session.tenantId = null;
+    }
+  }
+
+  if (!tenant || !membership) {
+    ({ tenant, membership } = await resolveActiveWorkspaceContext(user));
+    if (tenant && membership) session.tenantId = tenant._id;
+  }
+
   session.lastSeenAt = new Date();
   await session.save();
   req.user = user;
   req.tenant = tenant;
   req.membership = membership;
   req.sessionToken = token;
+  next();
+}
+
+function requireActiveWorkspace(req, res, next) {
+  if (!req.tenant || !req.membership) {
+    return res.status(403).json({ error: 'Create or join a workspace to use this feature.' });
+  }
   next();
 }
 
@@ -655,18 +678,22 @@ function validateSignupPayload(payload) {
   const username = String(payload.username || '').trim();
   const email = String(payload.email || '').trim().toLowerCase();
   const password = String(payload.password || '');
-  const workspaceName = String(payload.workspaceName || `${username}'s Workspace`).trim();
-  const timezone = validateTimezone(String(payload.timezone || DEFAULT_TIMEZONE).trim());
   if (!username || username.length < 2) throw new Error('Username must be at least 2 characters long.');
   if (!email.includes('@')) throw new Error('Enter a valid email address.');
   if (password.length < 8) throw new Error('Password must be at least 8 characters long.');
-  if (!workspaceName || workspaceName.length < 2) throw new Error('Workspace name must be at least 2 characters long.');
-  return { username, email, password, workspaceName, timezone };
+  return { username, email, password };
 }
 
-async function issueSession(user, tenant, membership, provider = 'password') {
+function validateWorkspacePayload(payload, fallbackName = 'New Workspace') {
+  const workspaceName = String(payload.workspaceName || fallbackName).trim();
+  const timezone = validateTimezone(String(payload.timezone || DEFAULT_TIMEZONE).trim());
+  if (!workspaceName || workspaceName.length < 2) throw new Error('Workspace name must be at least 2 characters long.');
+  return { workspaceName, timezone };
+}
+
+async function issueSession(user, tenant = null, membership = null, provider = 'password') {
   const token = createToken();
-  await AppSession.create({ tokenHash: sha256(token), userId: user._id, tenantId: tenant._id, provider });
+  await AppSession.create({ tokenHash: sha256(token), userId: user._id, tenantId: tenant?._id || null, provider });
   return { token, user: sanitizeUser(user, membership, tenant) };
 }
 
@@ -1162,24 +1189,30 @@ async function exchangeGitHubCodeForProfile(code, config) {
   };
 }
 
-async function resolveActiveWorkspaceMembership(user) {
-  let membership = await TenantMembership.findOne({ userId: user._id, status: 'active' }).sort({ createdAt: 1 });
-  if (membership) {
-    const tenant = await Tenant.findById(membership.tenantId);
-    if (tenant) return { membership, tenant };
+async function createWorkspaceForUser(user, payload = {}) {
+  const { workspaceName, timezone } = validateWorkspacePayload(payload, `${user.username}'s Workspace`);
+  const existingMembership = await TenantMembership.findOne({ userId: user._id, status: 'active' }).sort({ createdAt: 1 });
+  if (existingMembership) {
+    const existingTenant = await Tenant.findById(existingMembership.tenantId);
+    if (existingTenant) return { tenant: existingTenant, membership: existingMembership, created: false };
   }
 
-  const tenant = await Tenant.findOne({ billingEmail: user.email }).sort({ createdAt: 1 });
+  const slugBase = slugify(workspaceName);
+  let slug = slugBase;
+  let suffix = 1;
+  while (await Tenant.findOne({ slug })) slug = `${slugBase}-${suffix++}`;
+
+  const tenant = await Tenant.create({ name: workspaceName, slug, timezone, billingEmail: user.email, credits: CREDIT_SIGNUP_BONUS });
+  const membership = await TenantMembership.create({ tenantId: tenant._id, userId: user._id, role: 'owner', status: 'active' });
+  await CreditLedger.create({ tenantId: String(tenant._id), userId: String(user._id), type: 'workspace_created', delta: CREDIT_SIGNUP_BONUS, balanceAfter: tenant.credits, metadata: { source: 'workspace_creation' } });
+  return { tenant, membership, created: true };
+}
+
+async function resolveActiveWorkspaceContext(user) {
+  const membership = await TenantMembership.findOne({ userId: user._id, status: 'active' }).sort({ createdAt: 1 });
+  if (!membership) return { membership: null, tenant: null };
+  const tenant = await Tenant.findById(membership.tenantId);
   if (!tenant) return { membership: null, tenant: null };
-
-  membership = await TenantMembership.findOne({ tenantId: tenant._id, userId: user._id });
-  if (!membership) {
-    membership = await TenantMembership.create({ tenantId: tenant._id, userId: user._id, role: 'owner', status: 'active' });
-    logger.info({ userId: String(user._id), tenantId: String(tenant._id) }, 'Recovered missing workspace membership for existing account');
-  } else if (membership.status !== 'active') {
-    return { membership: null, tenant: null };
-  }
-
   return { membership, tenant };
 }
 
@@ -1192,20 +1225,12 @@ async function findOrCreateSocialUser(provider, profile, mode = 'login') {
 
   if (!user) {
     if (mode === 'login') throw new Error(`No account found for ${profile.email}. Use sign up with ${provider[0].toUpperCase()}${provider.slice(1)} first.`);
-    const workspaceName = `${profile.username}'s Workspace`;
-    const slugBase = slugify(workspaceName);
-    let slug = slugBase;
-    let suffix = 1;
-    while (await Tenant.findOne({ slug })) slug = `${slugBase}-${suffix++}`;
     user = await User.create({
       username: profile.username,
       email: profile.email,
       passwordHash: derivePasswordHash(createToken()),
       socialProviders: { [provider]: true },
     });
-    tenant = await Tenant.create({ name: workspaceName, slug, timezone: DEFAULT_TIMEZONE, billingEmail: profile.email, credits: CREDIT_SIGNUP_BONUS });
-    membership = await TenantMembership.create({ tenantId: tenant._id, userId: user._id, role: 'owner', status: 'active' });
-    await CreditLedger.create({ tenantId: String(tenant._id), userId: String(user._id), type: 'signup_bonus', delta: CREDIT_SIGNUP_BONUS, balanceAfter: tenant.credits, metadata: { source: `${provider}_oauth_signup`, providerUserId: profile.providerUserId } });
     created = true;
   } else {
     if (!user.socialProviders?.[provider]) {
@@ -1213,9 +1238,7 @@ async function findOrCreateSocialUser(provider, profile, mode = 'login') {
       if (!user.username || user.username === user.email) user.username = profile.username;
       await user.save();
     }
-    ({ membership, tenant } = await resolveActiveWorkspaceMembership(user));
-    if (!membership) throw new Error('No active workspace membership found for this account.');
-    if (!tenant) throw new Error('Workspace not found for this account.');
+    ({ membership, tenant } = await resolveActiveWorkspaceContext(user));
   }
 
   return { user, tenant, membership, created };
@@ -1268,18 +1291,11 @@ async function startWhatsAppSession(user, tenant) {
 
 app.post('/api/auth/signup', async (req, res) => {
   try {
-    const { username, email, password, workspaceName, timezone } = validateSignupPayload(req.body);
+    const { username, email, password } = validateSignupPayload(req.body);
     const existing = await User.findOne({ email });
     if (existing) return res.status(409).json({ error: 'An account with that email already exists.' });
-    const slugBase = slugify(workspaceName);
-    let slug = slugBase;
-    let suffix = 1;
-    while (await Tenant.findOne({ slug })) slug = `${slugBase}-${suffix++}`;
     const user = await User.create({ username, email, passwordHash: derivePasswordHash(password) });
-    const tenant = await Tenant.create({ name: workspaceName, slug, timezone, billingEmail: email, credits: CREDIT_SIGNUP_BONUS });
-    const membership = await TenantMembership.create({ tenantId: tenant._id, userId: user._id, role: 'owner', status: 'active' });
-    await CreditLedger.create({ tenantId: String(tenant._id), userId: String(user._id), type: 'signup_bonus', delta: CREDIT_SIGNUP_BONUS, balanceAfter: tenant.credits, metadata: { source: 'signup' } });
-    const session = await issueSession(user, tenant, membership, 'password');
+    const session = await issueSession(user, null, null, 'password');
     res.setHeader('Set-Cookie', buildSessionCookie(session.token));
     res.status(201).json(session);
   } catch (error) {
@@ -1292,9 +1308,7 @@ app.post('/api/auth/login', async (req, res) => {
   const password = String(req.body.password || '');
   const user = await User.findOne({ email });
   if (!user || !verifyPassword(password, user.passwordHash)) return res.status(401).json({ error: 'Invalid email or password.' });
-  const { membership, tenant } = await resolveActiveWorkspaceMembership(user);
-  if (!membership) return res.status(403).json({ error: 'No active workspace membership found.' });
-  if (!tenant) return res.status(403).json({ error: 'Workspace not found.' });
+  const { membership, tenant } = await resolveActiveWorkspaceContext(user);
   const session = await issueSession(user, tenant, membership, 'password');
   res.setHeader('Set-Cookie', buildSessionCookie(session.token));
   res.json(session);
@@ -1383,7 +1397,22 @@ app.get('/api/auth/oauth/callback', handleOAuthCallback);
 app.get('/api/auth/oauth/:provider/callback', handleOAuthCallback);
 app.get('/auth/:provider/callback', handleOAuthCallback);
 
-app.post('/api/whatsapp/connect', authenticateRequest, requirePermission('whatsapp:connect'), async (req, res) => {
+app.post('/api/workspaces', authenticateRequest, async (req, res) => {
+  try {
+    const { tenant, membership, created } = await createWorkspaceForUser(req.user, req.body || {});
+    await AppSession.updateOne({ tokenHash: sha256(req.sessionToken) }, { tenantId: tenant._id, lastSeenAt: new Date() });
+    res.status(created ? 201 : 200).json({
+      workspace: tenant,
+      membership,
+      user: sanitizeUser(req.user, membership, tenant),
+      created,
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message || 'Unable to create workspace.' });
+  }
+});
+
+app.post('/api/whatsapp/connect', authenticateRequest, requireActiveWorkspace, requirePermission('whatsapp:connect'), async (req, res) => {
   try {
     ensureCredits(req.tenant, CREDIT_COSTS.whatsappConnect, 'connect WhatsApp');
     const state = await startWhatsAppSession(req.user, req.tenant);
@@ -1395,13 +1424,13 @@ app.post('/api/whatsapp/connect', authenticateRequest, requirePermission('whatsa
   }
 });
 
-app.get('/api/whatsapp/status', authenticateRequest, async (req, res) => {
+app.get('/api/whatsapp/status', authenticateRequest, requireActiveWorkspace, async (req, res) => {
   const tenantId = String(req.tenant._id);
   const state = connectionStateStore.get(tenantId) || await WhatsAppConnection.findOne({ tenantId }).lean() || buildDefaultConnectionState(tenantId);
   res.json(state);
 });
 
-app.get('/api/whatsapp/audience', authenticateRequest, async (req, res) => {
+app.get('/api/whatsapp/audience', authenticateRequest, requireActiveWorkspace, async (req, res) => {
   const tenantId = String(req.tenant._id);
   const sock = socketStore.get(tenantId);
   const connectionState = connectionStateStore.get(tenantId) || await WhatsAppConnection.findOne({ tenantId }).lean() || buildDefaultConnectionState(tenantId);
@@ -1410,7 +1439,7 @@ app.get('/api/whatsapp/audience', authenticateRequest, async (req, res) => {
   res.json({ status: connectionState.status, groups: audience.groups, contacts: audience.contacts, lastSyncedAt: audience.lastSyncedAt });
 });
 
-app.post('/api/tasks', authenticateRequest, requirePermission('tasks:write'), async (req, res) => {
+app.post('/api/tasks', authenticateRequest, requireActiveWorkspace, requirePermission('tasks:write'), async (req, res) => {
   const title = String(req.body.title || '').trim();
   const type = String(req.body.type || '').trim();
   const description = String(req.body.description || '').trim();
@@ -1442,7 +1471,7 @@ app.post('/api/tasks', authenticateRequest, requirePermission('tasks:write'), as
   res.status(201).json({ task, user: sanitizeUser(req.user, req.membership, req.tenant) });
 });
 
-app.post('/api/ai/text', authenticateRequest, requirePermission('tasks:write'), async (req, res) => {
+app.post('/api/ai/text', authenticateRequest, requireActiveWorkspace, requirePermission('tasks:write'), async (req, res) => {
   try {
     const prompt = String(req.body.prompt || '').trim();
     if (!prompt) return res.status(400).json({ error: 'Prompt is required.' });
@@ -1455,7 +1484,7 @@ app.post('/api/ai/text', authenticateRequest, requirePermission('tasks:write'), 
   }
 });
 
-app.post('/api/ai/image', authenticateRequest, requirePermission('tasks:write'), async (req, res) => {
+app.post('/api/ai/image', authenticateRequest, requireActiveWorkspace, requirePermission('tasks:write'), async (req, res) => {
   try {
     const prompt = String(req.body.prompt || '').trim();
     if (!prompt) return res.status(400).json({ error: 'Prompt is required.' });
@@ -1475,12 +1504,12 @@ app.post('/api/ai/image', authenticateRequest, requirePermission('tasks:write'),
   }
 });
 
-app.get('/api/tasks', authenticateRequest, requirePermission('tasks:read'), async (req, res) => {
+app.get('/api/tasks', authenticateRequest, requireActiveWorkspace, requirePermission('tasks:read'), async (req, res) => {
   const tasks = await Task.find({ tenantId: String(req.tenant._id) }).sort({ createdAt: -1 }).lean();
   res.json({ tasks });
 });
 
-app.patch('/api/tasks/:taskId/status', authenticateRequest, requirePermission('tasks:write'), async (req, res) => {
+app.patch('/api/tasks/:taskId/status', authenticateRequest, requireActiveWorkspace, requirePermission('tasks:write'), async (req, res) => {
   const status = String(req.body.status || '').trim().toLowerCase();
   if (!['active', 'paused', 'completed'].includes(status)) return res.status(400).json({ error: 'Invalid task status.' });
   const task = await Task.findOneAndUpdate({ _id: req.params.taskId, tenantId: String(req.tenant._id) }, { status }, { new: true });
@@ -1488,13 +1517,13 @@ app.patch('/api/tasks/:taskId/status', authenticateRequest, requirePermission('t
   res.json({ task });
 });
 
-app.delete('/api/tasks/:taskId', authenticateRequest, requirePermission('tasks:write'), async (req, res) => {
+app.delete('/api/tasks/:taskId', authenticateRequest, requireActiveWorkspace, requirePermission('tasks:write'), async (req, res) => {
   const task = await Task.findOneAndDelete({ _id: req.params.taskId, tenantId: String(req.tenant._id) });
   if (!task) return res.status(404).json({ error: 'Task not found.' });
   res.json({ success: true });
 });
 
-app.post('/api/tasks/bulk-action', authenticateRequest, requirePermission('tasks:write'), async (req, res) => {
+app.post('/api/tasks/bulk-action', authenticateRequest, requireActiveWorkspace, requirePermission('tasks:write'), async (req, res) => {
   const action = String(req.body.action || '').trim().toLowerCase();
   const taskIds = Array.isArray(req.body.taskIds) ? req.body.taskIds.map((id) => String(id || '').trim()).filter(Boolean) : [];
   if (!taskIds.length) return res.status(400).json({ error: 'Select at least one task.' });
@@ -1509,7 +1538,7 @@ app.post('/api/tasks/bulk-action', authenticateRequest, requirePermission('tasks
   return res.status(400).json({ error: 'Unsupported bulk action.' });
 });
 
-app.get('/api/tenants/me', authenticateRequest, async (req, res) => {
+app.get('/api/tenants/me', authenticateRequest, requireActiveWorkspace, async (req, res) => {
   const ledger = await CreditLedger.find({ tenantId: String(req.tenant._id) }).sort({ createdAt: -1 }).limit(25).lean();
   res.json({ tenant: req.tenant, membership: req.membership, ledger });
 });

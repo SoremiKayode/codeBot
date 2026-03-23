@@ -147,8 +147,8 @@
         <div class="auth-card auth-card--wide">
           <div>
             <p class="eyebrow">Welcome back</p>
-            <h2>Login to your CodeBot workspace</h2>
-            <p class="muted">Stay signed in on this browser, connect WhatsApp faster, and continue your existing automation tasks.</p>
+            <h2>Login to your CodeBot account</h2>
+            <p class="muted">Stay signed in on this browser, manage your profile, and jump into a workspace whenever you are ready.</p>
           </div>
           <form id="loginForm" class="stack">
             <label>
@@ -178,7 +178,7 @@
           <div>
             <p class="eyebrow">Get started</p>
             <h2>Create your CodeBot account</h2>
-            <p class="muted">New accounts get 150 free credits and a clean path into your dashboard, task page, and persistent WhatsApp connection setup.</p>
+            <p class="muted">Create your account first, then decide later if you want to create a workspace for WhatsApp automation and team collaboration.</p>
           </div>
           <form id="signupForm" class="stack">
             <label>
@@ -216,9 +216,9 @@
                   <p class="eyebrow">Command center</p>
                   <h2>Run your WhatsApp workspace with confidence</h2>
                 </div>
-                <button id="goToTasksButton" class="primary-button compact-button" type="button">Go to task page</button>
+                <button id="createWorkspaceButton" class="primary-button compact-button" type="button">Create workspace</button>
               </div>
-              <p class="muted">See your live credit balance, workspace identity, theme preference, and connection readiness in one premium dashboard built for repeat daily use.</p>
+              <p class="muted">Manage your account first, then create a workspace only when you are ready to run WhatsApp automation and invite teammates.</p>
               <div class="dashboard-kpis">
                 <div class="kpi-card accent-kpi">
                   <span>Available credits</span>
@@ -226,7 +226,7 @@
                   <small>Updated as you create tasks and use AI tools.</small>
                 </div>
                 <div class="kpi-card">
-                  <span>Workspace owner</span>
+                  <span>Account owner</span>
                   <strong id="dashboardUsername">-</strong>
                   <small id="dashboardEmail">-</small>
                 </div>
@@ -240,8 +240,8 @@
             <div class="dashboard-hero__visual">
               <div class="insight-card">
                 <span class="eyebrow">Workspace signal</span>
-                <h3>Healthy operations start with visibility.</h3>
-                <p class="muted">Monitor authentication, account state, credits, and messaging readiness before launching the next campaign.</p>
+                <h3 id="workspaceHeadline">No workspace yet.</h3>
+                <p id="workspaceDescription" class="muted">Create a workspace when you want shared automation, WhatsApp setup, and team access.</p>
               </div>
             </div>
           </article>
@@ -251,7 +251,7 @@
               <div class="section-heading">
                 <div>
                   <p class="eyebrow">Account summary</p>
-                  <h2>Workspace overview</h2>
+                  <h2>Account overview</h2>
                 </div>
               </div>
               <div class="summary-grid">
@@ -264,12 +264,20 @@
                   <strong id="dashboardEmailSecondary">-</strong>
                 </div>
                 <div class="summary-item">
-                  <span>Credits</span>
+                  <span>Available credits</span>
                   <strong id="dashboardCreditsSecondary">0</strong>
                 </div>
                 <div class="summary-item">
                   <span>Theme</span>
                   <strong id="dashboardThemeSecondary">Light</strong>
+                </div>
+                <div class="summary-item">
+                  <span>Workspace</span>
+                  <strong id="dashboardWorkspaceName">Not created</strong>
+                </div>
+                <div class="summary-item">
+                  <span>Workspace role</span>
+                  <strong id="dashboardWorkspaceRole">Not assigned</strong>
                 </div>
               </div>
             </article>
@@ -281,6 +289,7 @@
                   <h2>Persistent session setup</h2>
                 </div>
                 <button id="connectWhatsappButton" class="primary-button compact-button" type="button">Connect WhatsApp</button>
+                <button id="goToTasksButton" class="secondary-button compact-button" type="button">Open tasks</button>
               </div>
               <div class="summary-grid summary-grid--status">
                 <div class="status-banner">
