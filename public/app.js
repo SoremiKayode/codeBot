@@ -7,7 +7,6 @@ const views = {
   signup: document.getElementById('signupView'),
   dashboard: document.getElementById('dashboardView'),
   tasks: document.getElementById('tasksView'),
-  'task-list': document.getElementById('taskListView'),
 };
 
 const ui = {
@@ -25,6 +24,8 @@ const ui = {
   dashboardWorkspaceRole: document.getElementById('dashboardWorkspaceRole'),
   workspaceHeadline: document.getElementById('workspaceHeadline'),
   workspaceDescription: document.getElementById('workspaceDescription'),
+  automationRulesCard: document.getElementById('automationRulesCard'),
+  automationScheduleNote: document.getElementById('automationScheduleNote'),
   whatsappPhone: document.getElementById('whatsappPhone'),
   logoutButton: document.getElementById('logoutButton'),
   themeToggle: document.getElementById('themeToggle'),
@@ -126,6 +127,8 @@ const ui = {
   nextRunBadge: document.getElementById('nextRunBadge'),
   scheduleTaskButton: document.getElementById('scheduleTaskButton'),
   groupDeliveryModeInputs: document.querySelectorAll('input[name="groupDeliveryMode"]'),
+  taskModeInputs: document.querySelectorAll('input[name="taskMode"]'),
+  automationAudienceInputs: document.querySelectorAll('input[name="automationAudience"]'),
 };
 
 const audienceState = {
@@ -157,6 +160,8 @@ const taskBuilderState = {
   taskSearch: '',
   taskSortDirection: 'desc',
   selectedTaskIds: new Set(),
+  taskMode: 'broadcast',
+  automationAudience: 'all_incoming',
 };
 
 const TASK_DRAFT_STORAGE_KEY = 'wa_task_builder_draft_v1';
@@ -167,6 +172,15 @@ const COMPANY_TABS = ['business', 'faqs', 'products', 'tone'];
 
 function escapeHtml(value = '') {
   return value.replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
+}
+
+
+function sanitizeFormValue(value = '') {
+  return String(value || '').replace(/[<>]/g, '').replace(/[\x00-\x1F\x7F]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function sanitizeTextAreaValue(value = '') {
+  return String(value || '').replace(/[<>]/g, '').replace(/\r/g, '').trim();
 }
 
 function normalizeWhitespace(value = '') {
@@ -228,6 +242,8 @@ function saveTaskDraft() {
   if (!taskBuilderState.quill) return;
   const draft = {
     title: ui.taskTitle.value,
+    taskMode: taskBuilderState.taskMode,
+    automationAudience: taskBuilderState.automationAudience,
     messageHtml: extractMessageHtml(),
     mediaQueue: taskBuilderState.mediaQueue,
     selectedGroups: Array.from(taskBuilderState.selectedGroups),
@@ -256,6 +272,10 @@ function restoreTaskDraft() {
     taskBuilderState.selectedGroups = new Set(Array.isArray(draft.selectedGroups) ? draft.selectedGroups : []);
     taskBuilderState.selectedContacts = new Set(Array.isArray(draft.selectedContacts) ? draft.selectedContacts : []);
     taskBuilderState.manualRecipients = dedupeRecipients(Array.isArray(draft.manualRecipients) ? draft.manualRecipients : []);
+    taskBuilderState.taskMode = draft.taskMode === 'automated_response' ? 'automated_response' : 'broadcast';
+    taskBuilderState.automationAudience = draft.automationAudience || 'all_incoming';
+    ui.taskModeInputs.forEach((input) => { input.checked = input.value === taskBuilderState.taskMode; });
+    ui.automationAudienceInputs.forEach((input) => { input.checked = input.value === taskBuilderState.automationAudience; });
     taskBuilderState.dailyTimes = Array.isArray(draft.dailyTimes) && draft.dailyTimes.length ? draft.dailyTimes : ['09:00'];
     taskBuilderState.weeklySlots = Array.isArray(draft.weeklySlots) && draft.weeklySlots.length ? draft.weeklySlots : [{ day: 'Monday', time: '09:00' }];
     taskBuilderState.monthlyWeeks = Array.isArray(draft.monthlyWeeks) ? draft.monthlyWeeks : [];
@@ -312,13 +332,15 @@ function closeMenu() {
 }
 
 function navigate(route) {
-  const requestedRoute = ['dashboard', 'tasks', 'task-list'].includes(route) && !appState.user ? 'login' : route;
+  const normalizedRoute = route === 'task-list' ? 'tasks' : route;
+  const requestedRoute = ['dashboard', 'tasks', 'task-list'].includes(route) && !appState.user ? 'login' : normalizedRoute;
   const targetRoute = requestedRoute;
   setRoute(targetRoute);
   closeMenu();
-  Object.entries(views).forEach(([key, view]) => view.classList.toggle('active', key === targetRoute));
+  Object.entries(views).forEach(([key, view]) => view?.classList.toggle('active', key === targetRoute));
   if (['tasks', 'task-list'].includes(targetRoute) && appState.user) {
     if (targetRoute === 'tasks') {
+      setWorkspaceTab(route === 'task-list' ? 'monitor' : 'scheduler');
       loadAudience();
       renderAudienceTables();
       renderFrequencyOptions();
@@ -328,6 +350,32 @@ function navigate(route) {
   }
 }
 
+
+function setWorkspaceTab(tabName = 'scheduler') {
+  const normalized = ['scheduler', 'members', 'portfolio', 'payments', 'monitor'].includes(tabName) ? tabName : 'scheduler';
+  document.querySelectorAll('[data-workspace-tab]').forEach((button) => button.classList.toggle('active', button.dataset.workspaceTab === normalized));
+  document.querySelectorAll('[data-workspace-panel]').forEach((panel) => panel.classList.toggle('active', panel.dataset.workspacePanel === normalized));
+}
+
+function updateTaskModeUI() {
+  const isAutomated = taskBuilderState.taskMode === 'automated_response';
+  ui.automationRulesCard?.classList.toggle('hidden', !isAutomated);
+  ui.automationScheduleNote?.classList.toggle('hidden', !isAutomated);
+  if (ui.recipientSummaryInput) ui.recipientSummaryInput.closest('label')?.classList.toggle('hidden', isAutomated);
+  [ui.startDateInput, ui.startTimeInput, ui.frequencySelect].forEach((element) => element?.closest('label')?.classList.toggle('hidden', isAutomated));
+  ui.frequencyOptions?.classList.toggle('hidden', isAutomated);
+  if (ui.scheduleTaskButton) ui.scheduleTaskButton.textContent = isAutomated ? 'Save automated response' : 'Schedule task';
+  if (ui.previewFrequencyPill) ui.previewFrequencyPill.textContent = isAutomated ? 'Automated response' : (taskBuilderState.frequency || 'Not scheduled');
+  if (ui.scheduleSummary && isAutomated) {
+    const labels = {
+      all_incoming: 'Replies to all incoming messages.',
+      unknown_numbers: 'Replies to unsaved numbers only.',
+      all_groups: 'Replies to every group message.',
+      managed_groups: 'Replies only inside the groups you selected in the audience tab.',
+    };
+    ui.scheduleSummary.textContent = labels[taskBuilderState.automationAudience] || 'Automated response is ready.';
+  }
+}
 
 function renderWorkspaceMembers() {
   const hasWorkspace = Boolean(appState.user?.activeTenant);
@@ -464,20 +512,20 @@ function collectCompanyProfilePayload() {
   const businessName = companyProfileState.quill?.root?.innerHTML || '';
   const businessText = companyProfileState.quill?.getText()?.trim() || '';
   const faqs = Array.from(ui.faqList.querySelectorAll('[data-entry-type="faq"]')).map((card) => ({
-    question: card.querySelector('[data-faq-question]')?.value?.trim() || '',
-    answer: card.querySelector('[data-faq-answer]')?.value?.trim() || '',
+    question: sanitizeFormValue(card.querySelector('[data-faq-question]')?.value || ''),
+    answer: sanitizeTextAreaValue(card.querySelector('[data-faq-answer]')?.value || ''),
   })).filter((item) => item.question || item.answer);
   const products = Array.from(ui.productList.querySelectorAll('[data-entry-type="product"]')).map((card) => ({
-    name: card.querySelector('[data-product-name]')?.value?.trim() || '',
-    description: card.querySelector('[data-product-description]')?.value?.trim() || '',
-    price: card.querySelector('[data-product-price]')?.value?.trim() || '',
+    name: sanitizeFormValue(card.querySelector('[data-product-name]')?.value || ''),
+    description: sanitizeTextAreaValue(card.querySelector('[data-product-description]')?.value || ''),
+    price: sanitizeFormValue(card.querySelector('[data-product-price]')?.value || ''),
   })).filter((item) => item.name || item.description || item.price);
   return {
     businessName,
     businessNameText: businessText,
     faqs,
     products,
-    toneStyle: ui.toneStyleInput.value.trim(),
+    toneStyle: sanitizeTextAreaValue(ui.toneStyleInput.value),
   };
 }
 
@@ -656,6 +704,7 @@ async function syncWhatsAppStatus() {
       stopPoller();
       await refreshUser();
       await loadAudience(true);
+      navigate('tasks');
     } else {
       ui.qrWrapper.classList.remove('connected');
       ui.qrWrapper.classList.add('empty');
@@ -687,6 +736,7 @@ async function handleAuthSuccess(payload, successMessage) {
   navigate('dashboard');
   await syncWhatsAppStatus();
   await loadCompanyProfile();
+  await loadWorkspaceMembers();
   showToast(successMessage);
 }
 
@@ -748,8 +798,8 @@ function updateTaskPreview() {
   const translated = translateTags(extractMessageText()) || 'Your message preview appears here.';
   ui.messagePreview.textContent = translated;
   ui.finalPreview.textContent = translated;
-  ui.previewFrequencyPill.textContent = taskBuilderState.frequency || 'Not scheduled';
-  ui.nextRunBadge.textContent = buildScheduleLabel();
+  ui.previewFrequencyPill.textContent = taskBuilderState.taskMode === 'automated_response' ? 'Automated response' : (taskBuilderState.frequency || 'Not scheduled');
+  ui.nextRunBadge.textContent = taskBuilderState.taskMode === 'automated_response' ? 'Live after save' : buildScheduleLabel();
 
   const selectedGroups = getSelectedItems(audienceState.groups, taskBuilderState.selectedGroups);
   const selectedContacts = getSelectedItems(audienceState.contacts, taskBuilderState.selectedContacts);
@@ -1150,6 +1200,15 @@ function addTimeField(value = '09:00') {
 }
 
 function buildScheduleDescription() {
+  if (taskBuilderState.taskMode === 'automated_response') {
+    const labels = {
+      all_incoming: 'This auto reply will answer all incoming WhatsApp messages.',
+      unknown_numbers: 'This auto reply will answer messages from unsaved numbers only.',
+      all_groups: 'This auto reply will answer messages from all groups.',
+      managed_groups: 'This auto reply will answer messages from groups you manage.',
+    };
+    return labels[taskBuilderState.automationAudience] || 'Automated response will start as soon as it is saved.';
+  }
   const startDate = ui.startDateInput.value || 'No date selected';
   const startTime = ui.startTimeInput.value || 'No time selected';
   if (!taskBuilderState.frequency) return 'Choose a frequency to see the exact rule summary.';
@@ -1160,12 +1219,18 @@ function buildScheduleDescription() {
 }
 
 function buildScheduleLabel() {
+  if (taskBuilderState.taskMode === 'automated_response') return 'Live after save';
   return taskBuilderState.frequency ? `Next rule: ${taskBuilderState.frequency}` : 'Pending setup';
 }
 
 function renderFrequencyOptions() {
   const frequency = ui.frequencySelect.value;
   taskBuilderState.frequency = frequency;
+  if (taskBuilderState.taskMode === 'automated_response') {
+    ui.frequencyOptions.innerHTML = '';
+    updateTaskPreview();
+    return;
+  }
   if (!frequency) {
     ui.frequencyOptions.innerHTML = '';
     updateTaskPreview();
@@ -1369,8 +1434,9 @@ function buildScheduleConfig() {
 
 async function scheduleTask() {
   syncManualRecipientsFromInput();
-  const title = ui.taskTitle.value.trim() || 'Untitled WhatsApp task';
-  const messageText = extractMessageText();
+  const isAutomated = taskBuilderState.taskMode === 'automated_response';
+  const title = sanitizeFormValue(ui.taskTitle.value) || (isAutomated ? 'Automated WhatsApp response' : 'Untitled WhatsApp task');
+  const messageText = sanitizeTextAreaValue(extractMessageText());
   const selectedContacts = getSelectedItems(audienceState.contacts, taskBuilderState.selectedContacts);
   const selectedGroups = getSelectedItems(audienceState.groups, taskBuilderState.selectedGroups);
   const manualRecipientValues = taskBuilderState.manualRecipients.map((value) => normalizePhoneRecipient(value));
@@ -1387,7 +1453,7 @@ async function scheduleTask() {
     setTaskTab('message');
     return;
   }
-  if (!selectedGroups.length && !selectedContacts.length && !manualContacts.length) {
+  if (!isAutomated && !selectedGroups.length && !selectedContacts.length && !manualContacts.length) {
     showToast('Select at least one group or contact, or paste a phone number.');
     setTaskTab('audience');
     return;
@@ -1396,7 +1462,7 @@ async function scheduleTask() {
     showToast(`These recipients are invalid: ${invalidManualRecipients.join(', ')}`);
     return;
   }
-  if (!ui.frequencySelect.value || !ui.startDateInput.value || !ui.startTimeInput.value) {
+  if (!isAutomated && (!ui.frequencySelect.value || !ui.startDateInput.value || !ui.startTimeInput.value)) {
     showToast('Complete the scheduling inputs first.');
     return;
   }
@@ -1410,7 +1476,9 @@ async function scheduleTask() {
   try {
     const payload = await api.createTask({
       title,
-      type: 'WhatsApp automation',
+      type: isAutomated ? 'Automated response' : 'Broadcast message',
+      mode: taskBuilderState.taskMode,
+      automation: isAutomated ? { audience: taskBuilderState.automationAudience } : {},
       description: translateTags(messageText).slice(0, 240),
       messageHtml: extractMessageHtml(),
       messageText,
@@ -1421,13 +1489,13 @@ async function scheduleTask() {
         contacts: normalizedRecipients.contacts,
         groupDeliveryMode: taskBuilderState.groupDeliveryMode,
       },
-      schedule: buildScheduleConfig(),
+      schedule: isAutomated ? {} : buildScheduleConfig(),
     });
     syncUserFromPayload(payload);
     resetTaskBuilder();
     localStorage.removeItem(TASK_DRAFT_STORAGE_KEY);
     await loadTasks();
-    showToast('Task scheduled successfully.');
+    showToast(isAutomated ? 'Automated response saved successfully.' : 'Task scheduled successfully.');
   } catch (error) {
     showToast(error.message);
   }
@@ -1449,7 +1517,11 @@ function resetTaskBuilder() {
   taskBuilderState.monthlyDays = [];
   taskBuilderState.groupDeliveryMode = 'group';
   taskBuilderState.manualRecipients = [];
+  taskBuilderState.taskMode = 'broadcast';
+  taskBuilderState.automationAudience = 'all_incoming';
   ui.groupDeliveryModeInputs.forEach((input) => { input.checked = input.value === 'group'; });
+  ui.taskModeInputs.forEach((input) => { input.checked = input.value === 'broadcast'; });
+  ui.automationAudienceInputs.forEach((input) => { input.checked = input.value === 'all_incoming'; });
   ui.aiTextPrompt.value = '';
   ui.aiImagePrompt.value = '';
   ui.aiTextStatus.textContent = 'AI generated text will appear here before it is inserted into the editor.';
@@ -1464,6 +1536,7 @@ function resetTaskBuilder() {
   ui.frequencyOptions.innerHTML = '';
   renderAudienceTables();
   setTaskTab('message');
+  updateTaskModeUI();
   updateTaskPreview();
 }
 
@@ -1479,7 +1552,8 @@ function initQuill() {
 ui.loginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
-    const payload = await api.login(Object.fromEntries(new FormData(event.currentTarget).entries()));
+    const formData = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const payload = await api.login({ email: sanitizeFormValue(formData.email).toLowerCase(), password: String(formData.password || '') });
     await handleAuthSuccess(payload, 'Logged in successfully. Your browser session has been saved.');
   } catch (error) {
     showToast(error.message);
@@ -1489,7 +1563,8 @@ ui.loginForm.addEventListener('submit', async (event) => {
 ui.signupForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
-    const payload = await api.signup(Object.fromEntries(new FormData(event.currentTarget).entries()));
+    const formData = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const payload = await api.signup({ username: sanitizeFormValue(formData.username), email: sanitizeFormValue(formData.email).toLowerCase(), password: String(formData.password || '') });
     await handleAuthSuccess(payload, 'Account created successfully. Your 150 credits are ready.');
   } catch (error) {
     showToast(error.message);
@@ -1498,7 +1573,7 @@ ui.signupForm.addEventListener('submit', async (event) => {
 
 async function handlePaystackPayment(event) {
   event.preventDefault();
-  const amount = Number(ui.paymentAmount?.value || 0);
+  const amount = Number(sanitizeFormValue(ui.paymentAmount?.value || 0));
   if (!amount || amount <= 0) {
     showToast('Enter a valid payment amount.');
     return;
@@ -1546,7 +1621,8 @@ async function handlePaystackPayment(event) {
 ui.enquiryForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
-    const payload = await api.sendEnquiry(Object.fromEntries(new FormData(event.currentTarget).entries()));
+    const formData = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const payload = await api.sendEnquiry({ name: sanitizeFormValue(formData.name), email: sanitizeFormValue(formData.email).toLowerCase(), message: sanitizeTextAreaValue(formData.message) });
     event.currentTarget.reset();
     showToast(payload.message || 'Enquiry sent successfully.');
   } catch (error) {
@@ -1586,8 +1662,8 @@ ui.createWorkspaceButton?.addEventListener('click', async () => {
     return;
   }
   const defaultName = appState.user?.username ? `${appState.user.username}'s Workspace` : 'My Workspace';
-  const workspaceName = window.prompt('Choose a workspace name.', defaultName);
-  if (workspaceName === null) return;
+  const workspaceName = sanitizeFormValue(window.prompt('Choose a workspace name.', defaultName) || '');
+  if (!workspaceName) return;
   try {
     const payload = await api.createWorkspace({ workspaceName });
     syncUserFromPayload(payload);
@@ -1607,7 +1683,7 @@ ui.workspaceMemberForm?.addEventListener('submit', async (event) => {
     return;
   }
   try {
-    const payload = await api.addWorkspaceMember({ email: ui.workspaceMemberEmail.value.trim(), role: ui.workspaceMemberRole.value });
+    const payload = await api.addWorkspaceMember({ email: sanitizeFormValue(ui.workspaceMemberEmail.value).toLowerCase(), role: sanitizeFormValue(ui.workspaceMemberRole.value).toLowerCase() });
     workspaceState.members = Array.isArray(payload.members) ? payload.members : [];
     ui.workspaceMemberForm.reset();
     ui.workspaceMemberRole.value = 'viewer';
@@ -1701,10 +1777,22 @@ ui.groupDeliveryModeInputs.forEach((input) => input.addEventListener('change', (
   taskBuilderState.groupDeliveryMode = event.target.value === 'members' ? 'members' : 'group';
   updateTaskPreview();
 }));
+ui.taskModeInputs.forEach((input) => input.addEventListener('change', (event) => {
+  taskBuilderState.taskMode = event.target.value === 'automated_response' ? 'automated_response' : 'broadcast';
+  updateTaskModeUI();
+  updateTaskPreview();
+}));
+ui.automationAudienceInputs.forEach((input) => input.addEventListener('change', (event) => {
+  taskBuilderState.automationAudience = event.target.value || 'all_incoming';
+  updateTaskPreview();
+}));
 
 document.addEventListener('click', (event) => {
+  const workspaceTab = event.target.closest('[data-workspace-tab]');
+  if (workspaceTab) setWorkspaceTab(workspaceTab.dataset.workspaceTab);
+
   const tabButton = event.target.closest('[data-task-tab]');
-  if (tabButton) setTaskTab(tabButton.dataset.taskTab);
+  if (tabButton && tabButton.dataset.taskTab) setTaskTab(tabButton.dataset.taskTab);
 
   const backButton = event.target.closest('[data-task-back]');
   if (backButton) setTaskTab(backButton.dataset.taskBack);
@@ -1851,6 +1939,7 @@ ensureDynamicEmptyState(ui.productList, 'product');
 restoreTaskDraft();
 renderAudienceTables();
 renderFrequencyOptions();
+updateTaskModeUI();
 updateTaskPreview();
 
 (async () => {

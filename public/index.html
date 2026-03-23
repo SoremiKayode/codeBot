@@ -30,9 +30,8 @@
       <div id="headerNavPanel" class="header-panel">
         <nav class="header-nav">
           <button class="nav-link" data-route="home">Home</button>
-          <button class="nav-link" data-route="dashboard">Dashboard</button>
-          <button class="nav-link auth-only" data-route="tasks">Task builder</button>
-          <button class="nav-link auth-only" data-route="task-list">Task list</button>
+          <button class="nav-link auth-only" data-route="dashboard">Connect WhatsApp</button>
+          <button class="nav-link auth-only" data-route="tasks">Workspace</button>
           <button class="nav-link guest-only" data-route="login">Login</button>
           <button class="nav-link guest-only" data-route="signup">Sign up</button>
         </nav>
@@ -68,9 +67,9 @@
                 <div class="banner-highlight"><strong>QR onboarding</strong><span>Connect WhatsApp and keep the state saved for the next visit.</span></div>
                 <div class="banner-highlight"><strong>Live workspace insight</strong><span>Track credits, connection health, theme, and task activity.</span></div>
               </div>
-              <div class="hero-actions">
-                <button id="startButton" class="primary-button" type="button">Go to dashboard</button>
-                <button id="claimCreditsButton" class="secondary-button guest-only" type="button" data-route="signup">Claim 150 credits</button>
+              <div class="hero-actions hero-actions--portable">
+                <button id="startButton" class="primary-button primary-button--cta" type="button">Sign up</button>
+                <button id="claimCreditsButton" class="secondary-button secondary-button--cta guest-only" type="button" data-route="login">Login</button>
               </div>
               <div class="hero-metrics">
                 <div class="metric-card"><strong>150</strong><span>credits awarded</span></div>
@@ -92,8 +91,8 @@
             <div class="stack-sm sidecard-cta-panel guest-only">
               <p class="eyebrow">Get started</p>
               <div class="cta-button-grid cta-button-grid--guest">
-                <button class="primary-button compact-button" type="button" data-route="login">Sign In</button>
-                <button class="secondary-button compact-button" type="button" data-route="signup">SignUp</button>
+                <button class="primary-button compact-button primary-button--cta" type="button" data-route="signup">Sign up</button>
+                <button class="secondary-button compact-button secondary-button--cta" type="button" data-route="login">Login</button>
               </div>
             </div>
             <h3>Why teams choose CodeBot</h3>
@@ -264,97 +263,16 @@
             </div>
           </article>
 
-          <div class="dashboard-grid dashboard-grid--full">
-            <article class="info-card stack gradient-card">
-              <div class="section-heading">
-                <div>
-                  <p class="eyebrow">Account summary</p>
-                  <h2>Account overview</h2>
-                </div>
-              </div>
-              <div class="summary-grid">
-                <div class="summary-item">
-                  <span>Username</span>
-                  <strong id="dashboardUsernameSecondary">-</strong>
-                </div>
-                <div class="summary-item">
-                  <span>Email</span>
-                  <strong id="dashboardEmailSecondary">-</strong>
-                </div>
-                <div class="summary-item">
-                  <span>Available credits</span>
-                  <strong id="dashboardCreditsSecondary">0</strong>
-                </div>
-                <div class="summary-item">
-                  <span>Theme</span>
-                  <strong id="dashboardThemeSecondary">Light</strong>
-                </div>
-                <div class="summary-item">
-                  <span>Workspace</span>
-                  <strong id="dashboardWorkspaceName">Not created</strong>
-                </div>
-                <div class="summary-item">
-                  <span>Workspace role</span>
-                  <strong id="dashboardWorkspaceRole">Not assigned</strong>
-                </div>
-              </div>
-              <div class="payment-card stack">
-                <div class="section-heading">
-                  <div>
-                    <p class="eyebrow">Wallet top-up</p>
-                    <h3>Buy more credits with Paystack</h3>
-                  </div>
-                </div>
-                <p id="paymentHelpText" class="muted">Top up your current account or active workspace credits using Paystack popup checkout.</p>
-                <form id="paystackPaymentForm" class="team-share-form">
-                  <label>
-                    <span>Amount (NGN)</span>
-                    <input id="paymentAmount" name="amount" type="number" min="100" step="100" value="1000" />
-                  </label>
-                  <label>
-                    <span>Credits you will receive</span>
-                    <input id="paymentCreditsPreview" type="text" value="1000 credits" readonly />
-                  </label>
-                  <button id="paystackPaymentButton" class="primary-button compact-button" type="submit">Pay with Paystack</button>
-                </form>
-                <p id="paymentStatusText" class="muted">Payments are applied to your personal credits unless you have an active workspace open.</p>
-              </div>
-
-              <div class="team-share-card">
-                <div class="section-heading">
-                  <div>
-                    <p class="eyebrow">Team credits</p>
-                    <h3>Share credits with your team</h3>
-                  </div>
-                </div>
-                <p id="workspaceMembersHint" class="muted">Create a workspace to invite teammates and assign them a role.</p>
-                <form id="workspaceMemberForm" class="team-share-form">
-                  <label>
-                    <span>Teammate email</span>
-                    <input id="workspaceMemberEmail" name="email" type="email" placeholder="teammate@company.com" />
-                  </label>
-                  <label>
-                    <span>Role</span>
-                    <select id="workspaceMemberRole" name="role">
-                      <option value="viewer">Viewer</option>
-                      <option value="operator">Operator</option>
-                      <option value="admin">Admin</option>
-                    </select>
-                  </label>
-                  <button id="workspaceMemberSubmit" class="secondary-button compact-button" type="submit">Add teammate</button>
-                </form>
-                <div id="workspaceMembersList" class="stack-sm muted">No workspace members yet.</div>
-              </div>
-            </article>
-
+          <div class="dashboard-grid dashboard-grid--full dashboard-grid--single">
             <article class="info-card stack connection-card">
               <div class="section-heading">
                 <div>
-                  <p class="eyebrow">WhatsApp connection</p>
-                  <h2>Persistent session setup</h2>
+                  <p class="eyebrow">Step 2</p>
+                  <h2>Connect WhatsApp and continue to your workspace</h2>
                 </div>
-                <button id="connectWhatsappButton" class="primary-button compact-button" type="button">Connect WhatsApp</button>
+                <button id="connectWhatsappButton" class="primary-button compact-button primary-button--cta" type="button">Connect WhatsApp</button>
               </div>
+              <p class="muted">After login, this is your only stop. Scan the QR code, connect your WhatsApp account, and you will be taken straight to the workspace where you can manage company portfolio, audience, scheduling, payments, teammates, and task monitoring.</p>
               <div class="summary-grid summary-grid--status">
                 <div class="status-banner">
                   <span>Status</span>
@@ -387,87 +305,10 @@
                   <div class="qr-connected-state">
                     <div class="qr-connected-state__badge">WhatsApp connected</div>
                     <h3>Your device is linked and ready.</h3>
-                    <p class="muted">Use the task builder to schedule broadcasts, reminders, and team workflows without showing the QR background again.</p>
+                    <p class="muted">You will be redirected to the workspace automatically as soon as the connection is confirmed.</p>
                   </div>
                 </div>
               </div>
-            </article>
-
-            <article class="info-card stack portfolio-card">
-              <div class="section-heading">
-                <div>
-                  <p class="eyebrow">Automated responses</p>
-                  <h2>Create your company portfolio</h2>
-                </div>
-                <span id="companyProfileStatus" class="pill status-pill">Not saved yet</span>
-              </div>
-              <p class="muted">Build the information your auto responder should use when customers ask about your business. Save business details, FAQs, products, and your preferred communication style to MongoDB.</p>
-              <div class="portfolio-tabs" role="tablist" aria-label="Company portfolio steps">
-                <button id="companyTabBusiness" class="task-tab active" type="button" data-company-tab="business">Business name</button>
-                <button id="companyTabFaqs" class="task-tab" type="button" data-company-tab="faqs">FAQs</button>
-                <button id="companyTabProducts" class="task-tab" type="button" data-company-tab="products">Product list</button>
-                <button id="companyTabTone" class="task-tab" type="button" data-company-tab="tone">Tone / Style</button>
-              </div>
-              <form id="companyProfileForm" class="stack">
-                <section class="company-panel active" data-company-panel="business">
-                  <div class="stack-sm">
-                    <label>
-                      <span>Business name and overview</span>
-                      <small class="muted">Use the editor to write the business name, short intro, service area, and anything the responder should know first.</small>
-                    </label>
-                    <div id="businessNameEditor" class="quill-host quill-host--compact"></div>
-                  </div>
-                </section>
-
-                <section class="company-panel" data-company-panel="faqs">
-                  <div class="section-heading">
-                    <div>
-                      <h3>Frequently asked questions</h3>
-                      <p class="muted">Add common customer questions and the answers you want the bot to reuse.</p>
-                    </div>
-                    <button id="addFaqButton" class="secondary-button compact-button" type="button">Add FAQ</button>
-                  </div>
-                  <div id="faqList" class="dynamic-card-list"></div>
-                </section>
-
-                <section class="company-panel" data-company-panel="products">
-                  <div class="section-heading">
-                    <div>
-                      <h3>Product list</h3>
-                      <p class="muted">Add products in a quiz/form style: product name, description, and price.</p>
-                    </div>
-                    <button id="addProductButton" class="secondary-button compact-button" type="button">Add product</button>
-                  </div>
-                  <div id="productList" class="dynamic-card-list"></div>
-                </section>
-
-                <section class="company-panel" data-company-panel="tone">
-                  <div class="stack-sm">
-                    <label>
-                      <span>Tone / style of communication</span>
-                      <textarea id="toneStyleInput" name="toneStyle" rows="6" placeholder="Example: Friendly, concise, professional, and never too pushy. Use short WhatsApp-friendly replies and mention delivery timelines only when relevant."></textarea>
-                    </label>
-                    <div class="safety-card">
-                      <h3>Safety controls for WhatsApp auto replies</h3>
-                      <ul class="feature-list">
-                        <li>Delay replies by 2–10 seconds to avoid looking too robotic.</li>
-                        <li>Limit replies per minute so the system does not over-send.</li>
-                        <li>Avoid replying to every message and ignore obvious spam.</li>
-                        <li>Honor STOP / unsubscribe requests immediately.</li>
-                        <li>Fallback to rule-based replies when AI does not return a response.</li>
-                      </ul>
-                    </div>
-                  </div>
-                </section>
-
-                <div class="wizard-actions company-wizard-actions">
-                  <button id="companyBackButton" class="ghost-button compact-button" type="button">Backward</button>
-                  <div class="hero-actions">
-                    <button id="companyNextButton" class="secondary-button compact-button" type="button">Next</button>
-                    <button id="companySubmitButton" class="primary-button compact-button" type="submit">Submit portfolio</button>
-                  </div>
-                </div>
-              </form>
             </article>
           </div>
         </div>
@@ -478,16 +319,25 @@
           <article class="info-card stack task-hero-card">
             <div class="section-heading">
               <div>
-                <p class="eyebrow">Task builder</p>
-                <h2>Create a WhatsApp task with AI-assisted content</h2>
-                <p class="muted">Design the message, choose the audience, and lock the schedule from a more polished campaign builder.</p>
+                <p class="eyebrow">Workspace</p>
+                <h2>Run everything from one simple workspace</h2>
+                <p class="muted">Use these tabs to manage teammates, your company portfolio, audience, broadcast scheduling, automated responses, payments, and live task operations in one place.</p>
               </div>
               <div class="pill-row">
-                <span class="pill">Responsive</span>
-                <span class="pill">AI-assisted</span>
-                <span class="pill">Schedule-aware</span>
+                <span class="pill">Simple navigation</span>
+                <span class="pill">Workspace-first</span>
+                <span class="pill">Professional automation</span>
               </div>
             </div>
+            <div class="workspace-tab-bar" id="workspaceTabBar">
+              <button class="task-tab active" type="button" data-workspace-tab="scheduler">Scheduler</button>
+              <button class="task-tab" type="button" data-workspace-tab="members">Team</button>
+              <button class="task-tab" type="button" data-workspace-tab="portfolio">Company portfolio</button>
+              <button class="task-tab" type="button" data-workspace-tab="payments">Payments</button>
+              <button class="task-tab" type="button" data-workspace-tab="monitor">Task monitoring</button>
+            </div>
+
+            <section class="workspace-panel active" data-workspace-panel="scheduler">
             <div class="task-tab-bar" id="taskTabBar">
               <button class="task-tab active" type="button" data-task-tab="message">1. Message</button>
               <button class="task-tab" type="button" data-task-tab="audience">2. Audience</button>
@@ -504,10 +354,33 @@
                     <strong>Supported tags</strong>
                     <p class="muted">Insert tags like <code>{current_date}</code>, <code>{current_time}</code>, <code>{first_monday}</code>, <code>{last_friday}</code> inside the message. They are translated into exact dates before preview and when the task runs.</p>
                   </div>
+                  <div class="task-type-switch stack-sm">
+                    <span class="input-label">What do you want to create?</span>
+                    <div class="task-type-options">
+                      <label class="radio-option radio-option--feature">
+                        <input type="radio" name="taskMode" value="broadcast" checked />
+                        <span><strong>Broadcast message</strong><small>Send a scheduled message to selected contacts or groups.</small></span>
+                      </label>
+                      <label class="radio-option radio-option--feature">
+                        <input type="radio" name="taskMode" value="automated_response" />
+                        <span><strong>Automated response</strong><small>Automatically reply when incoming WhatsApp messages match your chosen audience.</small></span>
+                      </label>
+                    </div>
+                  </div>
                   <label>
                     <span>Task title</span>
                     <input id="taskTitle" type="text" placeholder="Friday customer update" />
                   </label>
+                  <section id="automationRulesCard" class="tip-card stack-sm hidden">
+                    <strong>Choose when the automated response should trigger</strong>
+                    <div class="automation-scope-grid">
+                      <label class="radio-option"><input type="radio" name="automationAudience" value="all_incoming" checked /><span>All incoming messages</span></label>
+                      <label class="radio-option"><input type="radio" name="automationAudience" value="unknown_numbers" /><span>Messages from numbers not saved on your WhatsApp</span></label>
+                      <label class="radio-option"><input type="radio" name="automationAudience" value="all_groups" /><span>Messages from all groups</span></label>
+                      <label class="radio-option"><input type="radio" name="automationAudience" value="managed_groups" /><span>Messages from groups you manage</span></label>
+                    </div>
+                    <p class="muted">Use “groups you manage” together with the group picker below if you only want auto replies in selected groups.</p>
+                  </section>
                   <div>
                     <div class="section-heading">
                       <div>
@@ -567,10 +440,10 @@
                   <div>
                     <p class="eyebrow">Saved tasks</p>
                     <h3>Review your scheduled task list without leaving the builder</h3>
-                    <p class="muted">Check recent tasks, pause or delete them, or open the dedicated task list page for full management controls.</p>
+                    <p class="muted">Check recent tasks, pause or delete them, or jump to the monitoring tab for full management controls.</p>
                   </div>
                   <div class="hero-actions">
-                    <button class="secondary-button" type="button" data-route="task-list">Open full task list page</button>
+                    <button class="secondary-button" type="button" data-workspace-tab="monitor">Open monitoring tab</button>
                     <button class="secondary-button" type="button" data-task-back="schedule">Back to schedule</button>
                   </div>
                 </div>
@@ -625,7 +498,7 @@
                 <div class="section-heading">
                   <div>
                     <p class="eyebrow">Audience selection</p>
-                    <h3>Select WhatsApp groups and contacts</h3>
+                    <h3>Select broadcast recipients or managed groups</h3>
                   </div>
                   <div class="hero-actions">
                     <button id="audienceBackButton" class="secondary-button" type="button">Back</button>
@@ -689,12 +562,13 @@
                 <div class="section-heading">
                   <div>
                     <p class="eyebrow">Schedule task</p>
-                    <h3>Configure timing and final WhatsApp output</h3>
+                    <h3>Configure broadcast timing or activate automated responses</h3>
                   </div>
                   <button id="scheduleBackButton" class="secondary-button" type="button">Back</button>
                 </div>
                 <div class="schedule-grid">
                   <section class="stack">
+                    <div id="automationScheduleNote" class="tip-card premium-tip hidden">Automated responses start immediately after you click <strong>Schedule task</strong>. Broadcast messages continue to use the date, time, and frequency options below.</div>
                     <label>
                       <span>Selected recipients</span>
                       <textarea id="recipientSummaryInput" rows="4" placeholder="Selected recipients stay here. Add phone numbers separated by commas, e.g. 2348123456789, 2348012345678@s.whatsapp.net"></textarea>
@@ -738,43 +612,172 @@
                 </div>
               </div>
             </div>
+            </section>
+
+            <section class="workspace-panel" data-workspace-panel="members">
+              <article class="info-card stack">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Workspace access</p>
+                    <h3>Assign users to this workspace</h3>
+                  </div>
+                </div>
+                <p id="workspaceMembersHint" class="muted">Create a workspace to invite teammates and assign them a role.</p>
+                <form id="workspaceMemberForm" class="team-share-form">
+                  <label>
+                    <span>Teammate email</span>
+                    <input id="workspaceMemberEmail" name="email" type="email" placeholder="teammate@company.com" />
+                  </label>
+                  <label>
+                    <span>Role</span>
+                    <select id="workspaceMemberRole" name="role">
+                      <option value="viewer">Viewer</option>
+                      <option value="operator">Operator</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  </label>
+                  <button id="workspaceMemberSubmit" class="secondary-button compact-button" type="submit">Add teammate</button>
+                </form>
+                <div id="workspaceMembersList" class="stack-sm muted">No workspace members yet.</div>
+              </article>
+            </section>
+
+            <section class="workspace-panel" data-workspace-panel="portfolio">
+              <article class="info-card stack portfolio-card">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Automated responses</p>
+                    <h2>Create your company portfolio</h2>
+                  </div>
+                  <span id="companyProfileStatus" class="pill status-pill">Not saved yet</span>
+                </div>
+                <p class="muted">Build the information your auto responder should use when customers ask about your business. Save business details, FAQs, products, and your preferred communication style here inside the workspace.</p>
+                <div class="portfolio-tabs" role="tablist" aria-label="Company portfolio steps">
+                  <button id="companyTabBusiness" class="task-tab active" type="button" data-company-tab="business">Business</button>
+                  <button id="companyTabFaqs" class="task-tab" type="button" data-company-tab="faqs">FAQs</button>
+                  <button id="companyTabProducts" class="task-tab" type="button" data-company-tab="products">Product list</button>
+                  <button id="companyTabTone" class="task-tab" type="button" data-company-tab="tone">Tone / Style</button>
+                </div>
+                <form id="companyProfileForm" class="stack">
+                  <section class="company-panel active" data-company-panel="business">
+                    <div class="stack-sm">
+                      <label>
+                        <span>Business name and overview</span>
+                        <small class="muted">Use the editor to write the business name, short intro, service area, and anything the responder should know first.</small>
+                      </label>
+                      <div id="businessNameEditor" class="quill-host quill-host--compact"></div>
+                    </div>
+                  </section>
+
+                  <section class="company-panel" data-company-panel="faqs">
+                    <div class="section-heading">
+                      <div>
+                        <h3>Frequently asked questions</h3>
+                        <p class="muted">Add common customer questions and the answers you want the bot to reuse.</p>
+                      </div>
+                      <button id="addFaqButton" class="secondary-button compact-button" type="button">Add FAQ</button>
+                    </div>
+                    <div id="faqList" class="dynamic-card-list"></div>
+                  </section>
+
+                  <section class="company-panel" data-company-panel="products">
+                    <div class="section-heading">
+                      <div>
+                        <h3>Product list</h3>
+                        <p class="muted">Add products in a clear form style: product name, description, and price.</p>
+                      </div>
+                      <button id="addProductButton" class="secondary-button compact-button" type="button">Add product</button>
+                    </div>
+                    <div id="productList" class="dynamic-card-list"></div>
+                  </section>
+
+                  <section class="company-panel" data-company-panel="tone">
+                    <div class="stack-sm">
+                      <label>
+                        <span>Tone / style of communication</span>
+                        <textarea id="toneStyleInput" name="toneStyle" rows="6" placeholder="Example: Friendly, concise, professional, and never too pushy. Use short WhatsApp-friendly replies and mention delivery timelines only when relevant."></textarea>
+                      </label>
+                      <div class="safety-card">
+                        <h3>Safety controls for WhatsApp auto replies</h3>
+                        <ul class="feature-list">
+                          <li>Delay replies by 2–10 seconds to avoid looking too robotic.</li>
+                          <li>Limit replies per minute so the system does not over-send.</li>
+                          <li>Honor STOP / unsubscribe requests immediately.</li>
+                          <li>Fallback to rule-based replies when AI does not return a response.</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </section>
+
+                  <div class="wizard-actions company-wizard-actions">
+                    <button id="companyBackButton" class="ghost-button compact-button" type="button">Backward</button>
+                    <div class="hero-actions">
+                      <button id="companyNextButton" class="secondary-button compact-button" type="button">Next</button>
+                      <button id="companySubmitButton" class="primary-button compact-button" type="submit">Submit portfolio</button>
+                    </div>
+                  </div>
+                </form>
+              </article>
+            </section>
+
+            <section class="workspace-panel" data-workspace-panel="payments">
+              <article class="info-card stack gradient-card">
+                <div class="payment-card stack">
+                  <div class="section-heading">
+                    <div>
+                      <p class="eyebrow">Wallet top-up</p>
+                      <h3>Buy more credits with Paystack</h3>
+                    </div>
+                  </div>
+                  <p id="paymentHelpText" class="muted">Top up your current account or active workspace credits using Paystack popup checkout.</p>
+                  <form id="paystackPaymentForm" class="team-share-form">
+                    <label>
+                      <span>Amount (NGN)</span>
+                      <input id="paymentAmount" name="amount" type="number" min="100" step="100" value="1000" />
+                    </label>
+                    <label>
+                      <span>Credits you will receive</span>
+                      <input id="paymentCreditsPreview" type="text" value="1000 credits" readonly />
+                    </label>
+                    <button id="paystackPaymentButton" class="primary-button compact-button" type="submit">Pay with Paystack</button>
+                  </form>
+                  <p id="paymentStatusText" class="muted">Payments are applied to your personal credits unless you have an active workspace open.</p>
+                </div>
+              </article>
+            </section>
+
+            <section class="workspace-panel" data-workspace-panel="monitor">
+              <article class="info-card stack saved-task-card task-list-page-card">
+                <div class="section-heading">
+                  <div>
+                    <p class="eyebrow">Task operations</p>
+                    <h2>Monitor, pause, and delete tasks</h2>
+                    <p class="muted">Search, sort by date, select multiple tasks, and pause or delete them from one responsive table.</p>
+                  </div>
+                </div>
+                <div class="task-table-toolbar">
+                  <label class="search-field task-search-field">
+                    <span>Search tasks</span>
+                    <input id="taskSearchInput" type="search" placeholder="Search title, message, status, or recipients" />
+                  </label>
+                  <div class="table-actions task-table-actions">
+                    <button id="taskSortButton" class="secondary-button" type="button">Sort: Newest first</button>
+                    <label class="checkbox-inline"><input id="selectAllTasks" type="checkbox" /> Select all visible</label>
+                    <button id="pauseSelectedTasksButton" class="secondary-button" type="button">Pause selected</button>
+                    <button id="deleteSelectedTasksButton" class="secondary-button danger-button" type="button">Delete selected</button>
+                  </div>
+                </div>
+                <p id="taskSelectionSummary" class="muted">0 tasks selected.</p>
+                <div class="task-table-shell">
+                  <div id="taskList" class="task-table"></div>
+                </div>
+              </article>
+            </section>
           </article>
 
         </div>
       </section>
 
-      <section id="taskListView" class="view">
-        <div class="task-workspace stack">
-          <article class="info-card stack saved-task-card task-list-page-card">
-            <div class="section-heading">
-              <div>
-                <p class="eyebrow">Task operations</p>
-                <h2>Your task list</h2>
-                <p class="muted">Search, sort by date, select multiple tasks, and pause or delete them from one responsive table.</p>
-              </div>
-              <div class="hero-actions">
-                <button class="secondary-button" type="button" data-route="tasks">Back to task builder</button>
-              </div>
-            </div>
-            <div class="task-table-toolbar">
-              <label class="search-field task-search-field">
-                <span>Search tasks</span>
-                <input id="taskSearchInput" type="search" placeholder="Search title, message, status, or recipients" />
-              </label>
-              <div class="table-actions task-table-actions">
-                <button id="taskSortButton" class="secondary-button" type="button">Sort: Newest first</button>
-                <label class="checkbox-inline"><input id="selectAllTasks" type="checkbox" /> Select all visible</label>
-                <button id="pauseSelectedTasksButton" class="secondary-button" type="button">Pause selected</button>
-                <button id="deleteSelectedTasksButton" class="secondary-button danger-button" type="button">Delete selected</button>
-              </div>
-            </div>
-            <p id="taskSelectionSummary" class="muted">0 tasks selected.</p>
-            <div class="task-table-shell">
-              <div id="taskList" class="task-table"></div>
-            </div>
-          </article>
-        </div>
-      </section>
     </main>
 
     <footer class="app-footer footer-grid">
