@@ -85,6 +85,9 @@ const HUGGINGFACE_TEXT_MAX_TOKENS = Number(process.env.HUGGINGFACE_TEXT_MAX_TOKE
 const HUGGINGFACE_TEXT_TEMPERATURE = Number(process.env.HUGGINGFACE_TEXT_TEMPERATURE || 0.7);
 const HUGGINGFACE_TEXT_TOP_P = Number(process.env.HUGGINGFACE_TEXT_TOP_P || 0.95);
 const HUGGINGFACE_IMAGE_NEGATIVE_PROMPT = process.env.HUGGINGFACE_IMAGE_NEGATIVE_PROMPT || '';
+const AUTO_REPLY_MIN_DELAY_MS = Number(process.env.AUTO_REPLY_MIN_DELAY_MS || 2000);
+const AUTO_REPLY_MAX_DELAY_MS = Number(process.env.AUTO_REPLY_MAX_DELAY_MS || 10000);
+const AUTO_REPLY_LIMIT_PER_MINUTE = Number(process.env.AUTO_REPLY_LIMIT_PER_MINUTE || 8);
 const HUGGINGFACE_IMAGE_SEED = Number(process.env.HUGGINGFACE_IMAGE_SEED || 0);
 const HUGGINGFACE_IMAGE_RANDOMIZE_SEED = process.env.HUGGINGFACE_IMAGE_RANDOMIZE_SEED !== 'false';
 const HUGGINGFACE_IMAGE_WIDTH = Number(process.env.HUGGINGFACE_IMAGE_WIDTH || 384);
@@ -108,6 +111,9 @@ const connectionStateStore = new Map();
 const socketStore = new Map();
 const audienceStore = new Map();
 const huggingFaceClientStore = new Map();
+const autoReplyRateStore = new Map();
+const conversationStore = new Map();
+const unsubscribeStore = new Set();
 const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000;
 const TASK_CLAIM_WINDOW_MS = 2 * 60 * 1000;
 const OAUTH_STATE_SECRET = process.env.OAUTH_STATE_SECRET || process.env.APP_SECRET || process.env.SESSION_SECRET || 'dev-oauth-state-secret';
@@ -695,6 +701,37 @@ const tenantAudienceContactSchema = new mongoose.Schema({
 }, { timestamps: true });
 tenantAudienceContactSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 
+const companyProfileSchema = new mongoose.Schema({
+  scopeId: { type: String, required: true, unique: true, index: true },
+  ownerType: { type: String, enum: ['workspace', 'user'], default: 'user' },
+  tenantId: { type: String, default: '' },
+  userId: { type: String, required: true, index: true },
+  businessName: { type: String, default: '' },
+  businessNameText: { type: String, default: '' },
+  faqs: { type: [{ question: String, answer: String }], default: [] },
+  products: { type: [{ name: String, description: String, price: String }], default: [] },
+  toneStyle: { type: String, default: '' },
+  safetyControls: {
+    replyDelayRangeMs: { type: [Number], default: [AUTO_REPLY_MIN_DELAY_MS, AUTO_REPLY_MAX_DELAY_MS] },
+    repliesPerMinute: { type: Number, default: AUTO_REPLY_LIMIT_PER_MINUTE },
+    allowStop: { type: Boolean, default: true },
+    ignoreSpam: { type: Boolean, default: true },
+    avoidReplyingToEveryMessage: { type: Boolean, default: true },
+  },
+}, { timestamps: true });
+
+const conversationHistorySchema = new mongoose.Schema({
+  scopeId: { type: String, required: true, index: true },
+  tenantId: { type: String, default: '' },
+  userId: { type: String, required: true, index: true },
+  remoteJid: { type: String, required: true, index: true },
+  messages: { type: [{ role: String, text: String, createdAt: { type: Date, default: Date.now } }], default: [] },
+  unsubscribed: { type: Boolean, default: false },
+  lastIncomingAt: { type: Date, default: null },
+  lastReplyAt: { type: Date, default: null },
+}, { timestamps: true });
+conversationHistorySchema.index({ scopeId: 1, remoteJid: 1 }, { unique: true });
+
 const enquirySchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true },
   email: { type: String, required: true, trim: true, lowercase: true },
@@ -729,6 +766,8 @@ const TenantAudienceGroup = mongoose.model('TenantAudienceGroup', tenantAudience
 const TenantAudienceContact = mongoose.model('TenantAudienceContact', tenantAudienceContactSchema);
 const Enquiry = mongoose.model('Enquiry', enquirySchema);
 const PaymentTransaction = mongoose.model('PaymentTransaction', paymentTransactionSchema);
+const CompanyProfile = mongoose.model('CompanyProfile', companyProfileSchema);
+const ConversationHistory = mongoose.model('ConversationHistory', conversationHistorySchema);
 
 async function connectDatabase() {
   if (!MONGO_URI) throw new Error('Missing MongoDB connection string. Set CLOUD_MONGO_URI or USE_LOCAL=true.');
@@ -846,6 +885,109 @@ function getScopeContext(req) {
   };
 }
 
+function getAutoReplyScope(tenantId, userId) {
+  return tenantId ? { scopeId: tenantId, ownerType: 'workspace', tenantId, userId } : { scopeId: `user:${userId}`, ownerType: 'user', tenantId: '', userId };
+}
+
+function getUserFromSession(remoteJid = '') {
+  const jid = String(remoteJid || '');
+  const [tenantId] = jid.split(':');
+  return tenantId || '';
+}
+
+function getMessageText(msg = {}) {
+  return String(msg?.message?.conversation || msg?.message?.extendedTextMessage?.text || msg?.message?.imageMessage?.caption || msg?.message?.videoMessage?.caption || '').trim();
+}
+
+function rememberConversation(remoteJid, role, text) {
+  if (!text) return [];
+  const current = conversationStore.get(remoteJid) || [];
+  const next = [...current, { role, text, createdAt: new Date().toISOString() }].slice(-8);
+  conversationStore.set(remoteJid, next);
+  return next;
+}
+
+function ruleBasedReply(userData, message) {
+  const msg = String(message || '').toLowerCase();
+  if (msg.includes('price')) {
+    return (userData.products || []).map((p) => `${p.name}: ${p.price}`).join('\n');
+  }
+  if (msg.includes('hello') || msg.includes('hi')) {
+    return `Hello 👋 welcome to ${userData.businessNameText || userData.businessName || 'our business'}`;
+  }
+  const faq = (userData.faqs || []).find((item) => msg.includes(String(item.question || '').toLowerCase()));
+  if (faq?.answer) return faq.answer;
+  return null;
+}
+
+function isSpamMessage(text = '') {
+  const normalized = String(text || '').trim();
+  if (!normalized) return true;
+  if (normalized.length > 1000) return true;
+  if (/https?:\/\//i.test(normalized) && normalized.split(/https?:\/\//i).length > 3) return true;
+  if (/([a-zA-Z0-9])\1{7,}/.test(normalized)) return true;
+  return false;
+}
+
+function pickReplyDelay() {
+  const min = Math.max(0, AUTO_REPLY_MIN_DELAY_MS);
+  const max = Math.max(min, AUTO_REPLY_MAX_DELAY_MS);
+  return Math.floor(min + Math.random() * (max - min + 1));
+}
+
+function canSendAutoReply(scopeId) {
+  const bucket = autoReplyRateStore.get(scopeId) || { minute: 0, count: 0 };
+  const minute = Math.floor(Date.now() / 60000);
+  if (bucket.minute !== minute) {
+    autoReplyRateStore.set(scopeId, { minute, count: 1 });
+    return true;
+  }
+  if (bucket.count >= AUTO_REPLY_LIMIT_PER_MINUTE) return false;
+  bucket.count += 1;
+  autoReplyRateStore.set(scopeId, bucket);
+  return true;
+}
+
+async function getCompanyProfileForScope(scopeId) {
+  const profile = await CompanyProfile.findOne({ scopeId }).lean();
+  return profile || null;
+}
+
+async function upsertConversationHistory(scope, remoteJid, incomingText, replyText = '') {
+  const existing = await ConversationHistory.findOne({ scopeId: scope.scopeId, remoteJid });
+  const messages = [...(existing?.messages || []), ...(incomingText ? [{ role: 'user', text: incomingText, createdAt: new Date() }] : []), ...(replyText ? [{ role: 'assistant', text: replyText, createdAt: new Date() }] : [])].slice(-12);
+  return ConversationHistory.findOneAndUpdate(
+    { scopeId: scope.scopeId, remoteJid },
+    {
+      scopeId: scope.scopeId, tenantId: scope.tenantId || '', userId: scope.userId, remoteJid, messages,
+      lastIncomingAt: incomingText ? new Date() : existing?.lastIncomingAt || null,
+      lastReplyAt: replyText ? new Date() : existing?.lastReplyAt || null,
+      unsubscribed: existing?.unsubscribed || false,
+    },
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
+  );
+}
+
+async function craftAutoReply(profile, message, history = []) {
+  const fallback = ruleBasedReply(profile || {}, message);
+  const prompt = [
+    'You are generating a concise WhatsApp auto-reply for a business.',
+    `Business info: ${profile?.businessNameText || profile?.businessName || 'Unknown business'}`,
+    `Tone/style: ${profile?.toneStyle || 'Friendly and professional'}`,
+    `FAQs: ${JSON.stringify(profile?.faqs || [])}`,
+    `Products: ${JSON.stringify(profile?.products || [])}`,
+    `Last conversation: ${JSON.stringify(history.slice(-6))}`,
+    `User message: ${message}`,
+    'Respond in a safe, concise, helpful WhatsApp style. If you are unsure, say so briefly.',
+  ].join('\n');
+  try {
+    const aiReply = await callHuggingFaceText(prompt);
+    return aiReply || fallback || 'Thanks for your message. We will get back to you shortly.';
+  } catch {
+    return fallback || 'Thanks for your message. We will get back to you shortly.';
+  }
+}
+
 function hasScopedPermission(req, permission) {
   if (req.membership) return hasPermission(req.membership.role, permission);
   return ['tasks:write', 'tasks:read'].includes(permission);
@@ -927,6 +1069,16 @@ function validateSignupPayload(payload) {
   if (!email.includes('@')) throw new Error('Enter a valid email address.');
   if (password.length < 8) throw new Error('Password must be at least 8 characters long.');
   return { username, email, password };
+}
+
+function validateCompanyProfilePayload(payload = {}) {
+  const businessName = String(payload.businessName || '').trim();
+  const businessNameText = String(payload.businessNameText || '').trim();
+  const faqs = Array.isArray(payload.faqs) ? payload.faqs.map((item) => ({ question: String(item?.question || '').trim(), answer: String(item?.answer || '').trim() })).filter((item) => item.question && item.answer) : [];
+  const products = Array.isArray(payload.products) ? payload.products.map((item) => ({ name: String(item?.name || '').trim(), description: String(item?.description || '').trim(), price: String(item?.price || '').trim() })).filter((item) => item.name) : [];
+  const toneStyle = String(payload.toneStyle || '').trim();
+  if (!businessName && !businessNameText) throw new Error('Business name and overview are required.');
+  return { businessName, businessNameText, faqs, products, toneStyle };
 }
 
 function validateWorkspacePayload(payload, fallbackName = 'New Workspace') {
@@ -1501,6 +1653,39 @@ async function startWhatsAppSession(user, tenant) {
   sock.ev.on('chats.update', (chats) => { upsertAudienceContacts(tenantId, [], chats); });
   sock.ev.on('groups.upsert', (groups) => { upsertAudienceGroups(tenantId, groups); });
   sock.ev.on('groups.update', (groups) => { upsertAudienceGroups(tenantId, groups); });
+  sock.ev.on('messages.upsert', async ({ messages }) => {
+    const msg = messages[0];
+    if (!msg?.message || msg.key?.fromMe) return;
+    const text = getMessageText(msg);
+    if (!text || isSpamMessage(text)) return;
+    const stopRequested = /^(stop|unsubscribe|cancel)$/i.test(text.trim());
+    const remoteJid = String(msg.key?.remoteJid || '');
+    const derivedUserId = getUserFromSession(`${tenantId}:${remoteJid}`) || String(user._id);
+    const scope = getAutoReplyScope(tenantId, derivedUserId);
+    const existingConversation = await ConversationHistory.findOne({ scopeId: scope.scopeId, remoteJid });
+    if (stopRequested) {
+      unsubscribeStore.add(`${scope.scopeId}:${remoteJid}`);
+      await ConversationHistory.findOneAndUpdate({ scopeId: scope.scopeId, remoteJid }, { unsubscribed: true }, { upsert: true, setDefaultsOnInsert: true });
+      await sock.sendMessage(remoteJid, { text: 'You have been unsubscribed. Reply START anytime to resume updates.' });
+      return;
+    }
+    if (/^start$/i.test(text.trim())) {
+      unsubscribeStore.delete(`${scope.scopeId}:${remoteJid}`);
+      await ConversationHistory.findOneAndUpdate({ scopeId: scope.scopeId, remoteJid }, { unsubscribed: false }, { upsert: true, setDefaultsOnInsert: true });
+    }
+    if (unsubscribeStore.has(`${scope.scopeId}:${remoteJid}`) || existingConversation?.unsubscribed) return;
+    if (!canSendAutoReply(scope.scopeId)) return;
+    if (existingConversation?.lastIncomingAt && Date.now() - new Date(existingConversation.lastIncomingAt).getTime() < 15000) return;
+    const profile = await getCompanyProfileForScope(scope.scopeId);
+    if (!profile) return;
+    const inMemoryHistory = rememberConversation(remoteJid, 'user', text);
+    const dbHistory = existingConversation?.messages || [];
+    const reply = await craftAutoReply(profile, text, [...dbHistory, ...inMemoryHistory]);
+    await new Promise((resolve) => setTimeout(resolve, pickReplyDelay()));
+    await sock.sendMessage(remoteJid, { text: reply });
+    rememberConversation(remoteJid, 'assistant', reply);
+    await upsertConversationHistory(scope, remoteJid, text, reply);
+  });
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
     if (qr) {
@@ -1677,6 +1862,44 @@ app.get('/api/whatsapp/audience', authenticateRequest, requireActiveWorkspace, a
   if (sock && connectionState.status === 'connected') await syncAudienceFromSocket(tenantId, sock).catch(() => null);
   const audience = await getAudienceState(tenantId);
   res.json({ status: connectionState.status, groups: audience.groups, contacts: audience.contacts, lastSyncedAt: audience.lastSyncedAt });
+});
+
+app.get('/api/company-profile', authenticateRequest, async (req, res) => {
+  const scope = getScopeContext(req);
+  const profile = await CompanyProfile.findOne({ scopeId: scope.scopeId }).lean();
+  res.json({ profile: profile ? { ...profile, id: String(profile._id) } : null, user: sanitizeUser(req.user, req.membership, req.tenant) });
+});
+
+app.post('/api/company-profile', authenticateRequest, async (req, res) => {
+  try {
+    const scope = getScopeContext(req);
+    const payload = validateCompanyProfilePayload(req.body || {});
+    const profile = await CompanyProfile.findOneAndUpdate(
+      { scopeId: scope.scopeId },
+      {
+        scopeId: scope.scopeId,
+        ownerType: scope.hasWorkspace ? 'workspace' : 'user',
+        tenantId: scope.tenant ? String(scope.tenant._id) : '',
+        userId: String(req.user._id),
+        businessName: payload.businessName,
+        businessNameText: payload.businessNameText,
+        faqs: payload.faqs,
+        products: payload.products,
+        toneStyle: payload.toneStyle,
+        safetyControls: {
+          replyDelayRangeMs: [AUTO_REPLY_MIN_DELAY_MS, AUTO_REPLY_MAX_DELAY_MS],
+          repliesPerMinute: AUTO_REPLY_LIMIT_PER_MINUTE,
+          allowStop: true,
+          ignoreSpam: true,
+          avoidReplyingToEveryMessage: true,
+        },
+      },
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
+    );
+    res.status(201).json({ profile: { ...profile.toObject(), id: String(profile._id) }, user: sanitizeUser(req.user, req.membership, req.tenant) });
+  } catch (error) {
+    res.status(400).json({ error: error.message || 'Unable to save company profile.' });
+  }
 });
 
 app.post('/api/tasks', authenticateRequest, requireScopedPermission('tasks:write'), async (req, res) => {

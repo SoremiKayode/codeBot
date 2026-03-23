@@ -41,6 +41,16 @@ const ui = {
   dashboardScheduleTaskButton: document.getElementById('dashboardScheduleTaskButton'),
   goToTasksButton: document.getElementById('goToTasksButton'),
   connectWhatsappButton: document.getElementById('connectWhatsappButton'),
+  companyProfileForm: document.getElementById('companyProfileForm'),
+  companyProfileStatus: document.getElementById('companyProfileStatus'),
+  companyBackButton: document.getElementById('companyBackButton'),
+  companyNextButton: document.getElementById('companyNextButton'),
+  companySubmitButton: document.getElementById('companySubmitButton'),
+  addFaqButton: document.getElementById('addFaqButton'),
+  addProductButton: document.getElementById('addProductButton'),
+  faqList: document.getElementById('faqList'),
+  productList: document.getElementById('productList'),
+  toneStyleInput: document.getElementById('toneStyleInput'),
   workspaceMembersHint: document.getElementById('workspaceMembersHint'),
   paystackPaymentForm: document.getElementById('paystackPaymentForm'),
   paymentAmount: document.getElementById('paymentAmount'),
@@ -152,6 +162,8 @@ const taskBuilderState = {
 const TASK_DRAFT_STORAGE_KEY = 'wa_task_builder_draft_v1';
 const workspaceState = { members: [] };
 const paymentState = { publicKey: '', currency: 'NGN', creditRate: 1 };
+const companyProfileState = { activeTab: 'business', quill: null, profileId: null, faqCount: 0, productCount: 0 };
+const COMPANY_TABS = ['business', 'faqs', 'products', 'tone'];
 
 function escapeHtml(value = '') {
   return value.replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
@@ -359,6 +371,155 @@ function renderWorkspaceMembers() {
   }).join('');
 }
 
+function createDynamicCard(type, values = {}) {
+  const index = type === 'faq' ? ++companyProfileState.faqCount : ++companyProfileState.productCount;
+  const wrapper = document.createElement('article');
+  wrapper.className = 'dynamic-entry-card';
+  wrapper.dataset.entryType = type;
+  wrapper.dataset.entryId = `${type}-${index}`;
+  if (type === 'faq') {
+    wrapper.innerHTML = `
+      <div class="dynamic-entry-card__header">
+        <strong>FAQ ${index}</strong>
+        <button class="ghost-button compact-button" type="button" data-remove-entry="${type}-${index}">Remove</button>
+      </div>
+      <div class="dynamic-entry-grid">
+        <label class="full-span">
+          <span>Question</span>
+          <input type="text" data-faq-question placeholder="Enter customer question" value="${escapeHtml(values.question || '')}" />
+        </label>
+        <label class="full-span">
+          <span>Answer</span>
+          <textarea rows="4" data-faq-answer placeholder="Enter the answer to send back">${escapeHtml(values.answer || '')}</textarea>
+        </label>
+      </div>`;
+  } else {
+    wrapper.innerHTML = `
+      <div class="dynamic-entry-card__header">
+        <strong>Product ${index}</strong>
+        <button class="ghost-button compact-button" type="button" data-remove-entry="${type}-${index}">Remove</button>
+      </div>
+      <div class="dynamic-entry-grid">
+        <label>
+          <span>Product name</span>
+          <input type="text" data-product-name placeholder="Product name" value="${escapeHtml(values.name || '')}" />
+        </label>
+        <label>
+          <span>Price</span>
+          <input type="text" data-product-price placeholder="e.g. ₦25,000" value="${escapeHtml(values.price || '')}" />
+        </label>
+        <label class="full-span">
+          <span>Description</span>
+          <textarea rows="4" data-product-description placeholder="Short product description">${escapeHtml(values.description || '')}</textarea>
+        </label>
+      </div>`;
+  }
+  return wrapper;
+}
+
+function ensureDynamicEmptyState(container, type) {
+  if (!container.children.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.dataset.emptyState = type;
+    empty.textContent = type === 'faq' ? 'No FAQs added yet. Click “Add FAQ” to create one.' : 'No products added yet. Click “Add product” to create one.';
+    container.appendChild(empty);
+  }
+}
+
+function clearDynamicEmptyState(container) {
+  container.querySelector('[data-empty-state]')?.remove();
+}
+
+function addFaqCard(values = {}) {
+  clearDynamicEmptyState(ui.faqList);
+  ui.faqList.appendChild(createDynamicCard('faq', values));
+}
+
+function addProductCard(values = {}) {
+  clearDynamicEmptyState(ui.productList);
+  ui.productList.appendChild(createDynamicCard('product', values));
+}
+
+function initCompanyProfileEditor() {
+  companyProfileState.quill = new window.Quill('#businessNameEditor', {
+    theme: 'snow',
+    placeholder: 'Write your business name, what you sell, where you operate, and the short company introduction the responder should know.',
+    modules: { toolbar: [['bold', 'italic'], [{ list: 'bullet' }], ['clean']] },
+  });
+}
+
+function setCompanyTab(tabName) {
+  const normalized = COMPANY_TABS.includes(tabName) ? tabName : 'business';
+  companyProfileState.activeTab = normalized;
+  document.querySelectorAll('[data-company-tab]').forEach((button) => button.classList.toggle('active', button.dataset.companyTab === normalized));
+  document.querySelectorAll('[data-company-panel]').forEach((panel) => panel.classList.toggle('active', panel.dataset.companyPanel === normalized));
+  const index = COMPANY_TABS.indexOf(normalized);
+  ui.companyBackButton.disabled = index === 0;
+  ui.companyNextButton.disabled = index === COMPANY_TABS.length - 1;
+  ui.companySubmitButton.hidden = index !== COMPANY_TABS.length - 1;
+}
+
+function collectCompanyProfilePayload() {
+  const businessName = companyProfileState.quill?.root?.innerHTML || '';
+  const businessText = companyProfileState.quill?.getText()?.trim() || '';
+  const faqs = Array.from(ui.faqList.querySelectorAll('[data-entry-type="faq"]')).map((card) => ({
+    question: card.querySelector('[data-faq-question]')?.value?.trim() || '',
+    answer: card.querySelector('[data-faq-answer]')?.value?.trim() || '',
+  })).filter((item) => item.question || item.answer);
+  const products = Array.from(ui.productList.querySelectorAll('[data-entry-type="product"]')).map((card) => ({
+    name: card.querySelector('[data-product-name]')?.value?.trim() || '',
+    description: card.querySelector('[data-product-description]')?.value?.trim() || '',
+    price: card.querySelector('[data-product-price]')?.value?.trim() || '',
+  })).filter((item) => item.name || item.description || item.price);
+  return {
+    businessName,
+    businessNameText: businessText,
+    faqs,
+    products,
+    toneStyle: ui.toneStyleInput.value.trim(),
+  };
+}
+
+function hydrateCompanyProfileForm(profile = {}) {
+  companyProfileState.profileId = profile.id || null;
+  if (companyProfileState.quill) companyProfileState.quill.root.innerHTML = profile.businessName || '';
+  ui.toneStyleInput.value = profile.toneStyle || '';
+  ui.faqList.innerHTML = '';
+  ui.productList.innerHTML = '';
+  companyProfileState.faqCount = 0;
+  companyProfileState.productCount = 0;
+  (Array.isArray(profile.faqs) && profile.faqs.length ? profile.faqs : []).forEach(addFaqCard);
+  (Array.isArray(profile.products) && profile.products.length ? profile.products : []).forEach(addProductCard);
+  ensureDynamicEmptyState(ui.faqList, 'faq');
+  ensureDynamicEmptyState(ui.productList, 'product');
+  ui.companyProfileStatus.textContent = profile.updatedAt ? `Saved ${new Date(profile.updatedAt).toLocaleString()}` : 'Not saved yet';
+}
+
+async function loadCompanyProfile() {
+  if (!appState.user) return;
+  try {
+    const payload = await api.getCompanyProfile();
+    hydrateCompanyProfileForm(payload.profile || {});
+  } catch (error) {
+    ui.companyProfileStatus.textContent = 'Profile unavailable';
+    showToast(error.message);
+  }
+}
+
+async function submitCompanyProfile(event) {
+  event.preventDefault();
+  try {
+    const payload = await api.saveCompanyProfile(collectCompanyProfilePayload());
+    hydrateCompanyProfileForm(payload.profile || {});
+    syncUserFromPayload(payload);
+    setCompanyTab('tone');
+    showToast('Company portfolio saved successfully.');
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 async function loadWorkspaceMembers() {
   if (!appState.user?.activeTenant || !appState.user?.permissions?.includes('members:manage')) {
     workspaceState.members = [];
@@ -402,6 +563,7 @@ function updateUserUI() {
   }
   if (ui.goToTasksButton) ui.goToTasksButton.disabled = false;
   if (ui.connectWhatsappButton) ui.connectWhatsappButton.disabled = !hasWorkspace;
+  if (ui.companyProfileForm) Array.from(ui.companyProfileForm.elements || []).forEach((element) => { if (element.id !== 'companyBackButton' && element.id !== 'companyNextButton') element.disabled = !user; });
   document.documentElement.dataset.theme = user?.theme || localStorage.getItem('wa_theme') || 'light';
   renderWorkspaceMembers();
 }
@@ -524,6 +686,7 @@ async function handleAuthSuccess(payload, successMessage) {
   updateUserUI();
   navigate('dashboard');
   await syncWhatsAppStatus();
+  await loadCompanyProfile();
   showToast(successMessage);
 }
 
@@ -1653,6 +1816,23 @@ document.querySelectorAll('[data-share]').forEach((link) => link.addEventListene
   window.open(targets[provider], '_blank', 'noopener');
 }));
 
+ui.companyBackButton?.addEventListener('click', () => setCompanyTab(COMPANY_TABS[Math.max(0, COMPANY_TABS.indexOf(companyProfileState.activeTab) - 1)]));
+ui.companyNextButton?.addEventListener('click', () => setCompanyTab(COMPANY_TABS[Math.min(COMPANY_TABS.length - 1, COMPANY_TABS.indexOf(companyProfileState.activeTab) + 1)]));
+ui.addFaqButton?.addEventListener('click', () => addFaqCard());
+ui.addProductButton?.addEventListener('click', () => addProductCard());
+ui.companyProfileForm?.addEventListener('submit', submitCompanyProfile);
+
+document.addEventListener('click', (event) => {
+  const companyTab = event.target.closest('[data-company-tab]');
+  if (companyTab) setCompanyTab(companyTab.dataset.companyTab);
+  const removeEntry = event.target.closest('[data-remove-entry]');
+  if (removeEntry) {
+    removeEntry.closest('.dynamic-entry-card')?.remove();
+    ensureDynamicEmptyState(ui.faqList, 'faq');
+    ensureDynamicEmptyState(ui.productList, 'product');
+  }
+}, { capture: false });
+
 attachRouteButtons();
 ui.menuToggle?.addEventListener('click', () => {
   const header = document.querySelector('.app-header');
@@ -1664,6 +1844,10 @@ applyTheme(localStorage.getItem('wa_theme') || 'light');
 updateUserUI();
 renderWorkspaceMembers();
 initQuill();
+initCompanyProfileEditor();
+setCompanyTab('business');
+ensureDynamicEmptyState(ui.faqList, 'faq');
+ensureDynamicEmptyState(ui.productList, 'product');
 restoreTaskDraft();
 renderAudienceTables();
 renderFrequencyOptions();
@@ -1684,5 +1868,6 @@ updateTaskPreview();
     await syncWhatsAppStatus();
     await loadTasks();
     await loadWorkspaceMembers();
+    await loadCompanyProfile();
   }
 })();

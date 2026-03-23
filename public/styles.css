@@ -235,6 +235,24 @@ html[data-theme='dark'] .theme-icon--moon { opacity: 1; transform: translateY(0)
 .elevated-sidecard h3,
 .elevated-sidecard li { color: #f8fbff; }
 .elevated-sidecard .muted { color: rgba(236, 253, 245, 0.82); }
+.sidecard-cta-panel { padding: 1rem; border-radius: 1rem; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12); }
+.cta-button-grid { display: grid; gap: .75rem; }
+.cta-button-grid button { width: 100%; justify-content: center; }
+.status-pill { font-weight: 700; }
+.portfolio-card { background: linear-gradient(180deg, color-mix(in srgb, var(--surface-solid) 94%, transparent), color-mix(in srgb, var(--surface-alt) 90%, transparent)); }
+.portfolio-tabs { display: flex; flex-wrap: wrap; gap: .75rem; padding: .5rem; background: var(--surface-alt); border-radius: 1rem; }
+.company-panel { display: none; }
+.company-panel.active { display: grid; gap: 1rem; }
+.dynamic-card-list { display: grid; gap: 1rem; }
+.dynamic-entry-card { display: grid; gap: .85rem; padding: 1rem; border-radius: 1rem; border: 1px solid var(--border); background: linear-gradient(180deg, var(--surface-alt), var(--surface-soft)); box-shadow: var(--shadow-soft); }
+.dynamic-entry-card__header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.dynamic-entry-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .85rem; }
+.dynamic-entry-grid .full-span { grid-column: 1 / -1; }
+.quill-host--compact { min-height: 14rem; }
+.quill-host--compact .ql-container { min-height: 10rem; }
+.safety-card { padding: 1rem; border-radius: 1rem; border: 1px solid color-mix(in srgb, var(--danger) 20%, var(--border)); background: linear-gradient(180deg, rgba(248,113,113,.08), rgba(248,250,252,.02)); }
+.company-wizard-actions { margin-top: .5rem; }
+@media (max-width: 768px) { .dynamic-entry-grid, .team-share-form { grid-template-columns: 1fr; } }
 .feature-list, .summary-grid, .number-list { margin: 0; padding-left: 1.1rem; }
 .feature-list { display: grid; gap: .8rem; }
 .hero-actions, .social-buttons, .section-heading, .task-card__row, .social-icon-row, .table-toolbar, .table-actions, .wizard-actions, .task-tab-bar, .pill-row, .whatsapp-preview__header, .pagination-row {
