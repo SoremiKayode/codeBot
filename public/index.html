@@ -367,7 +367,7 @@
                       </label>
                       <label class="radio-option radio-option--feature">
                         <input type="radio" name="taskMode" value="automated_response" />
-                        <span><strong>Automated response</strong><small>Automatically reply when incoming WhatsApp messages match your chosen audience.</small></span>
+                        <span><strong>Automated response</strong><small>Skip message and audience setup, then go straight to scheduling the automated response.</small></span>
                       </label>
                       <label class="radio-option radio-option--feature">
                         <input type="radio" name="taskMode" value="schedule_status" />
@@ -570,13 +570,13 @@
                 <div class="section-heading">
                   <div>
                     <p class="eyebrow">Schedule task</p>
-                    <h3>Configure broadcast timing or activate automated responses</h3>
+                    <h3>Configure broadcast timing or immediately save automated responses</h3>
                   </div>
                   <button id="scheduleBackButton" class="secondary-button" type="button">Back</button>
                 </div>
                 <div class="schedule-grid">
                   <section class="stack">
-                    <div id="automationScheduleNote" class="tip-card premium-tip hidden">Automated responses start immediately after you click <strong>Schedule task</strong>. Broadcast messages continue to use the date, time, and frequency options below.</div>
+                    <div id="automationScheduleNote" class="tip-card premium-tip hidden">Automated responses can be saved immediately from this section. Broadcast messages continue to use the date, time, and frequency options below.</div>
                     <label>
                       <span>Selected recipients</span>
                       <textarea id="recipientSummaryInput" rows="4" placeholder="Selected recipients stay here. Add phone numbers separated by commas, e.g. 2348123456789, 2348012345678@s.whatsapp.net"></textarea>
