@@ -81,12 +81,27 @@
           </article>
 
           <aside class="info-card stack elevated-sidecard">
+            <div class="stack-sm sidecard-cta-panel auth-only">
+              <p class="eyebrow">Quick actions</p>
+              <div class="cta-button-grid">
+                <button class="primary-button compact-button" type="button" data-route="tasks">Schedule Task</button>
+                <button class="secondary-button compact-button" type="button" data-route="dashboard">Connect WhatsApp</button>
+                <button class="secondary-button compact-button" type="button" data-route="dashboard">Create Company Portfolio</button>
+              </div>
+            </div>
+            <div class="stack-sm sidecard-cta-panel guest-only">
+              <p class="eyebrow">Get started</p>
+              <div class="cta-button-grid cta-button-grid--guest">
+                <button class="primary-button compact-button" type="button" data-route="login">Sign In</button>
+                <button class="secondary-button compact-button" type="button" data-route="signup">SignUp</button>
+              </div>
+            </div>
             <h3>Why teams choose CodeBot</h3>
             <ul class="feature-list">
-              <li>Create task plans for campaigns, reminders, and customer follow-ups.</li>
-              <li>Connect WhatsApp with QR onboarding and persistent saved connection state.</li>
-              <li>Keep users signed in with secure browser session storage so they do not log in every visit.</li>
-              <li>Use a clean dashboard to monitor credits, theme, connection health, and tasks.</li>
+              <li>Create task plans for campaigns, reminders, customer follow-ups, and structured auto-response flows.</li>
+              <li>Connect WhatsApp with QR onboarding, persistent saved connection state, and safer reply guardrails.</li>
+              <li>Build a reusable company portfolio with FAQs, products, and communication tone for smarter AI replies.</li>
+              <li>Use a clean dashboard to monitor credits, theme, connection health, tasks, and your company profile.</li>
             </ul>
           </aside>
         </div>
@@ -376,6 +391,83 @@
                   </div>
                 </div>
               </div>
+            </article>
+
+            <article class="info-card stack portfolio-card">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Automated responses</p>
+                  <h2>Create your company portfolio</h2>
+                </div>
+                <span id="companyProfileStatus" class="pill status-pill">Not saved yet</span>
+              </div>
+              <p class="muted">Build the information your auto responder should use when customers ask about your business. Save business details, FAQs, products, and your preferred communication style to MongoDB.</p>
+              <div class="portfolio-tabs" role="tablist" aria-label="Company portfolio steps">
+                <button id="companyTabBusiness" class="task-tab active" type="button" data-company-tab="business">Business name</button>
+                <button id="companyTabFaqs" class="task-tab" type="button" data-company-tab="faqs">FAQs</button>
+                <button id="companyTabProducts" class="task-tab" type="button" data-company-tab="products">Product list</button>
+                <button id="companyTabTone" class="task-tab" type="button" data-company-tab="tone">Tone / Style</button>
+              </div>
+              <form id="companyProfileForm" class="stack">
+                <section class="company-panel active" data-company-panel="business">
+                  <div class="stack-sm">
+                    <label>
+                      <span>Business name and overview</span>
+                      <small class="muted">Use the editor to write the business name, short intro, service area, and anything the responder should know first.</small>
+                    </label>
+                    <div id="businessNameEditor" class="quill-host quill-host--compact"></div>
+                  </div>
+                </section>
+
+                <section class="company-panel" data-company-panel="faqs">
+                  <div class="section-heading">
+                    <div>
+                      <h3>Frequently asked questions</h3>
+                      <p class="muted">Add common customer questions and the answers you want the bot to reuse.</p>
+                    </div>
+                    <button id="addFaqButton" class="secondary-button compact-button" type="button">Add FAQ</button>
+                  </div>
+                  <div id="faqList" class="dynamic-card-list"></div>
+                </section>
+
+                <section class="company-panel" data-company-panel="products">
+                  <div class="section-heading">
+                    <div>
+                      <h3>Product list</h3>
+                      <p class="muted">Add products in a quiz/form style: product name, description, and price.</p>
+                    </div>
+                    <button id="addProductButton" class="secondary-button compact-button" type="button">Add product</button>
+                  </div>
+                  <div id="productList" class="dynamic-card-list"></div>
+                </section>
+
+                <section class="company-panel" data-company-panel="tone">
+                  <div class="stack-sm">
+                    <label>
+                      <span>Tone / style of communication</span>
+                      <textarea id="toneStyleInput" name="toneStyle" rows="6" placeholder="Example: Friendly, concise, professional, and never too pushy. Use short WhatsApp-friendly replies and mention delivery timelines only when relevant."></textarea>
+                    </label>
+                    <div class="safety-card">
+                      <h3>Safety controls for WhatsApp auto replies</h3>
+                      <ul class="feature-list">
+                        <li>Delay replies by 2–10 seconds to avoid looking too robotic.</li>
+                        <li>Limit replies per minute so the system does not over-send.</li>
+                        <li>Avoid replying to every message and ignore obvious spam.</li>
+                        <li>Honor STOP / unsubscribe requests immediately.</li>
+                        <li>Fallback to rule-based replies when AI does not return a response.</li>
+                      </ul>
+                    </div>
+                  </div>
+                </section>
+
+                <div class="wizard-actions company-wizard-actions">
+                  <button id="companyBackButton" class="ghost-button compact-button" type="button">Backward</button>
+                  <div class="hero-actions">
+                    <button id="companyNextButton" class="secondary-button compact-button" type="button">Next</button>
+                    <button id="companySubmitButton" class="primary-button compact-button" type="submit">Submit portfolio</button>
+                  </div>
+                </div>
+              </form>
             </article>
           </div>
         </div>
