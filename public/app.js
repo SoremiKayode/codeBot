@@ -40,6 +40,12 @@ const ui = {
   createWorkspaceButton: document.getElementById('createWorkspaceButton'),
   goToTasksButton: document.getElementById('goToTasksButton'),
   connectWhatsappButton: document.getElementById('connectWhatsappButton'),
+  workspaceMembersHint: document.getElementById('workspaceMembersHint'),
+  workspaceMemberForm: document.getElementById('workspaceMemberForm'),
+  workspaceMemberEmail: document.getElementById('workspaceMemberEmail'),
+  workspaceMemberRole: document.getElementById('workspaceMemberRole'),
+  workspaceMemberSubmit: document.getElementById('workspaceMemberSubmit'),
+  workspaceMembersList: document.getElementById('workspaceMembersList'),
   whatsappStatusText: document.getElementById('whatsappStatusText'),
   whatsappStatusBadge: document.getElementById('whatsappStatusBadge'),
   qrWrapper: document.getElementById('qrWrapper'),
@@ -136,6 +142,7 @@ const taskBuilderState = {
 };
 
 const TASK_DRAFT_STORAGE_KEY = 'wa_task_builder_draft_v1';
+const workspaceState = { members: [] };
 
 function escapeHtml(value = '') {
   return value.replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
@@ -257,8 +264,7 @@ function closeMenu() {
 
 function navigate(route) {
   const requestedRoute = ['dashboard', 'tasks', 'task-list'].includes(route) && !appState.user ? 'login' : route;
-  const targetRoute = ['tasks', 'task-list'].includes(requestedRoute) && appState.user && !appState.user.activeTenant ? 'dashboard' : requestedRoute;
-  if (requestedRoute !== targetRoute && requestedRoute !== 'login') showToast('Create a workspace before opening tasks or WhatsApp tools.');
+  const targetRoute = requestedRoute;
   setRoute(targetRoute);
   closeMenu();
   Object.entries(views).forEach(([key, view]) => view.classList.toggle('active', key === targetRoute));
@@ -271,6 +277,65 @@ function navigate(route) {
     }
     loadTasks();
   }
+}
+
+
+function renderWorkspaceMembers() {
+  const hasWorkspace = Boolean(appState.user?.activeTenant);
+  const canManageMembers = appState.user?.permissions?.includes('members:manage');
+  if (ui.workspaceMembersHint) {
+    ui.workspaceMembersHint.textContent = !hasWorkspace
+      ? 'Create a workspace to invite teammates and assign them a role.'
+      : canManageMembers
+        ? 'Everyone in this workspace uses the same shared credit balance.'
+        : 'Only workspace owners and admins can add teammates or change roles.';
+  }
+  if (ui.workspaceMemberEmail) ui.workspaceMemberEmail.disabled = !hasWorkspace || !canManageMembers;
+  if (ui.workspaceMemberRole) ui.workspaceMemberRole.disabled = !hasWorkspace || !canManageMembers;
+  if (ui.workspaceMemberSubmit) ui.workspaceMemberSubmit.disabled = !hasWorkspace || !canManageMembers;
+
+  if (!hasWorkspace) {
+    ui.workspaceMembersList.innerHTML = '<div class="empty-state">No workspace yet. You can still schedule personal tasks using your own credits.</div>';
+    return;
+  }
+
+  if (!workspaceState.members.length) {
+    ui.workspaceMembersList.innerHTML = '<div class="empty-state">No teammates added yet.</div>';
+    return;
+  }
+
+  ui.workspaceMembersList.innerHTML = workspaceState.members.map((member) => {
+    const roleOptions = ['owner', 'admin', 'operator', 'viewer'].map((role) => `<option value="${role}" ${member.role === role ? 'selected' : ''}>${role[0].toUpperCase()}${role.slice(1)}</option>`).join('');
+    const roleControl = canManageMembers
+      ? `<select data-member-role="${member.id}">${roleOptions}</select>`
+      : `<span class="pill">${escapeHtml(member.role)}</span>`;
+    return `
+      <article class="info-card">
+        <div class="section-heading">
+          <div>
+            <strong>${escapeHtml(member.user.username)}</strong>
+            <p class="muted">${escapeHtml(member.user.email)}</p>
+          </div>
+          ${roleControl}
+        </div>
+      </article>`;
+  }).join('');
+}
+
+async function loadWorkspaceMembers() {
+  if (!appState.user?.activeTenant || !appState.user?.permissions?.includes('members:manage')) {
+    workspaceState.members = [];
+    renderWorkspaceMembers();
+    return;
+  }
+  try {
+    const data = await api.listWorkspaceMembers();
+    workspaceState.members = Array.isArray(data.members) ? data.members : [];
+  } catch (error) {
+    workspaceState.members = [];
+    showToast(error.message);
+  }
+  renderWorkspaceMembers();
 }
 
 function updateUserUI() {
@@ -297,9 +362,10 @@ function updateUserUI() {
     ui.createWorkspaceButton.textContent = hasWorkspace ? 'Workspace ready' : 'Create workspace';
     ui.createWorkspaceButton.disabled = hasWorkspace;
   }
-  if (ui.goToTasksButton) ui.goToTasksButton.disabled = !hasWorkspace;
+  if (ui.goToTasksButton) ui.goToTasksButton.disabled = false;
   if (ui.connectWhatsappButton) ui.connectWhatsappButton.disabled = !hasWorkspace;
   document.documentElement.dataset.theme = user?.theme || localStorage.getItem('wa_theme') || 'light';
+  renderWorkspaceMembers();
 }
 
 function applyTheme(theme) {
@@ -1252,15 +1318,34 @@ ui.createWorkspaceButton?.addEventListener('click', async () => {
   try {
     const payload = await api.createWorkspace({ workspaceName });
     syncUserFromPayload(payload);
+    await loadWorkspaceMembers();
     showToast(payload.created ? 'Workspace created successfully.' : 'Workspace already available on your account.');
   } catch (error) {
     showToast(error.message);
   }
 });
+ui.workspaceMemberForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!appState.user?.activeTenant) {
+    showToast('Create a workspace first if you want to share credits with teammates.');
+    return;
+  }
+  try {
+    const payload = await api.addWorkspaceMember({ email: ui.workspaceMemberEmail.value.trim(), role: ui.workspaceMemberRole.value });
+    workspaceState.members = Array.isArray(payload.members) ? payload.members : [];
+    ui.workspaceMemberForm.reset();
+    ui.workspaceMemberRole.value = 'viewer';
+    renderWorkspaceMembers();
+    showToast('Teammate added to the workspace.');
+  } catch (error) {
+    showToast(error.message);
+  }
+});
+
 ui.goToTasksButton.addEventListener('click', () => navigate('tasks'));
 ui.connectWhatsappButton.addEventListener('click', async () => {
   if (!appState.user?.activeTenant) {
-    showToast('Create a workspace before connecting WhatsApp.');
+    showToast('Create a workspace before connecting WhatsApp. Personal task scheduling works without one.');
     return;
   }
   try {
@@ -1380,6 +1465,7 @@ document.addEventListener('click', (event) => {
     updateTaskPreview();
   }
 
+
   const weekChip = event.target.closest('[data-month-week]');
   if (weekChip) {
     const week = weekChip.dataset.monthWeek;
@@ -1392,6 +1478,14 @@ document.addEventListener('click', (event) => {
   if (event.target.id === 'addWeeklySlotButton') {
     taskBuilderState.weeklySlots.push({ day: 'Monday', time: '09:00' });
     renderFrequencyOptions();
+  }
+});
+
+document.addEventListener('change', (event) => {
+  if (event.target.matches('[data-member-role]')) {
+    api.updateWorkspaceMemberRole(event.target.dataset.memberRole, event.target.value)
+      .then((payload) => { workspaceState.members = Array.isArray(payload.members) ? payload.members : []; renderWorkspaceMembers(); showToast('Workspace role updated.'); })
+      .catch((error) => { showToast(error.message); loadWorkspaceMembers(); });
   }
 });
 
@@ -1453,6 +1547,7 @@ ui.menuToggle?.addEventListener('click', () => {
 });
 applyTheme(localStorage.getItem('wa_theme') || 'light');
 updateUserUI();
+renderWorkspaceMembers();
 initQuill();
 restoreTaskDraft();
 renderAudienceTables();
@@ -1473,5 +1568,6 @@ updateTaskPreview();
   if (user) {
     await syncWhatsAppStatus();
     await loadTasks();
+    await loadWorkspaceMembers();
   }
 })();

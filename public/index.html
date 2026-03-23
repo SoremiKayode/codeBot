@@ -307,6 +307,32 @@
                 <p id="qrHint" class="muted">QR code will appear here after you start the connection.</p>
               </div>
             </article>
+
+            <article class="info-card stack">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Workspace members</p>
+                  <h2>Share credits with your team</h2>
+                </div>
+              </div>
+              <p id="workspaceMembersHint" class="muted">Create a workspace to invite teammates and assign them a role.</p>
+              <form id="workspaceMemberForm" class="stack">
+                <label>
+                  <span>Teammate email</span>
+                  <input id="workspaceMemberEmail" name="email" type="email" placeholder="teammate@company.com" />
+                </label>
+                <label>
+                  <span>Role</span>
+                  <select id="workspaceMemberRole" name="role">
+                    <option value="viewer">Viewer</option>
+                    <option value="operator">Operator</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </label>
+                <button id="workspaceMemberSubmit" class="secondary-button compact-button" type="submit">Add teammate</button>
+              </form>
+              <div id="workspaceMembersList" class="stack-sm muted">No workspace members yet.</div>
+            </article>
           </div>
         </div>
       </section>

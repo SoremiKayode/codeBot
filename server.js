@@ -238,6 +238,7 @@ function hasPermission(role, permission) {
 }
 
 function sanitizeUser(user, membership = null, tenant = null) {
+  const personalPermissions = ['tasks:write', 'tasks:read'];
   return {
     id: String(user._id),
     username: user.username,
@@ -254,7 +255,7 @@ function sanitizeUser(user, membership = null, tenant = null) {
       credits: tenant.credits,
     } : null,
     tenantRole: membership?.role || null,
-    permissions: membership ? getPermissionsForRole(membership.role) : [],
+    permissions: membership ? getPermissionsForRole(membership.role) : personalPermissions,
     credits: tenant?.credits ?? user.credits,
   };
 }
@@ -562,19 +563,25 @@ const Enquiry = mongoose.model('Enquiry', enquirySchema);
 async function connectDatabase() {
   if (!MONGO_URI) throw new Error('Missing MongoDB connection string. Set CLOUD_MONGO_URI or USE_LOCAL=true.');
   await mongoose.connect(MONGO_URI);
+  try {
+    const indexes = await WhatsAppConnection.collection.indexes();
+    if (indexes.some((index) => index.name === 'userId_1' && index.unique)) await WhatsAppConnection.collection.dropIndex('userId_1');
+  } catch (error) {
+    logger.warn({ error: error.message }, 'Unable to reconcile WhatsApp connection indexes');
+  }
   logger.info({ mode: IS_LOCAL ? 'local' : 'cloud' }, 'MongoDB connected');
 }
 
 async function persistConnectionState(tenantId, updates) {
   const next = setConnectionState(tenantId, updates);
-  await WhatsAppConnection.findOneAndUpdate({ tenantId }, { tenantId, ...next }, { upsert: true, new: true, setDefaultsOnInsert: true });
+  await WhatsAppConnection.findOneAndUpdate({ tenantId }, { tenantId, ...next }, { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true });
   return next;
 }
 
 async function useMongooseAuthState(tenantId) {
   const writeData = async (data, key) => {
     const json = JSON.stringify(data, BufferJSON.replacer);
-    await AuthState.findOneAndUpdate({ tenantId, key }, { tenantId, key, data: json }, { upsert: true, new: true, setDefaultsOnInsert: true });
+    await AuthState.findOneAndUpdate({ tenantId, key }, { tenantId, key, data: json }, { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true });
   };
   const readData = async (key) => {
     const record = await AuthState.findOne({ tenantId, key });
@@ -647,6 +654,74 @@ async function authenticateRequest(req, res, next) {
   req.membership = membership;
   req.sessionToken = token;
   next();
+}
+
+
+function getScopeContext(req) {
+  if (req.tenant && req.membership) {
+    return {
+      scopeId: String(req.tenant._id),
+      tenant: req.tenant,
+      membership: req.membership,
+      timezone: validateTimezone(String(req.tenant.timezone || DEFAULT_TIMEZONE)),
+      hasWorkspace: true,
+    };
+  }
+  return {
+    scopeId: `user:${String(req.user._id)}`,
+    tenant: null,
+    membership: null,
+    timezone: DEFAULT_TIMEZONE,
+    hasWorkspace: false,
+  };
+}
+
+function hasScopedPermission(req, permission) {
+  if (req.membership) return hasPermission(req.membership.role, permission);
+  return ['tasks:write', 'tasks:read'].includes(permission);
+}
+
+function requireScopedPermission(permission) {
+  return (req, res, next) => {
+    if (!req.user) return res.status(401).json({ error: 'Authentication required.' });
+    if (!hasScopedPermission(req, permission)) return res.status(403).json({ error: `You do not have permission to ${permission}.` });
+    next();
+  };
+}
+
+async function ensureCreditsAvailable({ tenant = null, user = null, amount = 0, label = 'complete this action' }) {
+  const normalizedAmount = Number(amount || 0);
+  const balance = tenant ? Number(tenant.credits || 0) : Number(user?.credits || 0);
+  if (balance < normalizedAmount) {
+    const owner = tenant ? 'workspace' : 'account';
+    throw new Error(`Insufficient credits to ${label}. Your ${owner} has ${balance} credits remaining.`);
+  }
+}
+
+async function debitCredits({ tenant = null, user = null, amount = 0, type, metadata = {} }) {
+  const normalizedAmount = Number(amount || 0);
+  if (!normalizedAmount) return tenant || user;
+  if (tenant) return appendCreditLedger({ tenant, user, amount: normalizedAmount, type, metadata });
+  if (!user) return null;
+  user.credits = Math.max(0, Number(user.credits || 0) - normalizedAmount);
+  await user.save();
+  return user;
+}
+
+async function listWorkspaceMembers(tenantId) {
+  const memberships = await TenantMembership.find({ tenantId, status: 'active' }).sort({ createdAt: 1 }).lean();
+  const users = await User.find({ _id: { $in: memberships.map((item) => item.userId) } }).lean();
+  const userMap = new Map(users.map((user) => [String(user._id), user]));
+  return memberships.map((membership) => ({
+    id: String(membership._id),
+    role: membership.role,
+    status: membership.status,
+    createdAt: membership.createdAt,
+    user: (() => {
+      const user = userMap.get(String(membership.userId));
+      return user ? { id: String(user._id), username: user.username, email: user.email } : null;
+    })(),
+  })).filter((item) => item.user);
 }
 
 function requireActiveWorkspace(req, res, next) {
@@ -1439,20 +1514,21 @@ app.get('/api/whatsapp/audience', authenticateRequest, requireActiveWorkspace, a
   res.json({ status: connectionState.status, groups: audience.groups, contacts: audience.contacts, lastSyncedAt: audience.lastSyncedAt });
 });
 
-app.post('/api/tasks', authenticateRequest, requireActiveWorkspace, requirePermission('tasks:write'), async (req, res) => {
+app.post('/api/tasks', authenticateRequest, requireScopedPermission('tasks:write'), async (req, res) => {
   const title = String(req.body.title || '').trim();
   const type = String(req.body.type || '').trim();
   const description = String(req.body.description || '').trim();
   if (!title || !type || !description) return res.status(400).json({ error: 'Title, type, and description are required.' });
-  ensureCredits(req.tenant, CREDIT_COSTS.createTask, 'create a task');
+  const scope = getScopeContext(req);
+  await ensureCreditsAvailable({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.createTask, label: 'create a task' });
   const recipients = req.body.recipients || {};
   const groupDeliveryMode = recipients.groupDeliveryMode === 'members' ? 'members' : 'group';
   const normalizedRecipients = sanitizeTaskRecipients(recipients);
   if (!normalizedRecipients.groups.length && !normalizedRecipients.contacts.length) return res.status(400).json({ error: 'At least one valid contact or group recipient is required.' });
-  const timezone = validateTimezone(String(req.body.timezone || req.tenant.timezone || DEFAULT_TIMEZONE));
+  const timezone = validateTimezone(String(req.body.timezone || scope.timezone || DEFAULT_TIMEZONE));
   const schedule = validateSchedule(req.body.schedule || {}, timezone);
   const task = await Task.create({
-    tenantId: String(req.tenant._id),
+    tenantId: scope.scopeId,
     createdByUserId: String(req.user._id),
     title,
     type,
@@ -1467,75 +1543,127 @@ app.post('/api/tasks', authenticateRequest, requireActiveWorkspace, requirePermi
     status: 'active',
     nextRunAt: computeNextRunAt(schedule, timezone),
   });
-  await appendCreditLedger({ tenant: req.tenant, user: req.user, amount: CREDIT_COSTS.createTask, type: 'task_create', metadata: { taskId: String(task._id) } });
+  await debitCredits({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.createTask, type: 'task_create', metadata: { taskId: String(task._id), scopeId: scope.scopeId } });
   res.status(201).json({ task, user: sanitizeUser(req.user, req.membership, req.tenant) });
 });
 
-app.post('/api/ai/text', authenticateRequest, requireActiveWorkspace, requirePermission('tasks:write'), async (req, res) => {
+app.post('/api/ai/text', authenticateRequest, requireScopedPermission('tasks:write'), async (req, res) => {
   try {
     const prompt = String(req.body.prompt || '').trim();
     if (!prompt) return res.status(400).json({ error: 'Prompt is required.' });
-    ensureCredits(req.tenant, CREDIT_COSTS.generateText, 'generate AI text');
+    const scope = getScopeContext(req);
+    await ensureCreditsAvailable({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.generateText, label: 'generate AI text' });
     const text = await callHuggingFaceText(prompt);
-    await appendCreditLedger({ tenant: req.tenant, user: req.user, amount: CREDIT_COSTS.generateText, type: 'ai_text', metadata: { promptLength: prompt.length } });
+    await debitCredits({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.generateText, type: 'ai_text', metadata: { promptLength: prompt.length, scopeId: scope.scopeId } });
     res.json({ text, model: 'hugging-face-space', user: sanitizeUser(req.user, req.membership, req.tenant) });
   } catch (error) {
     res.status(500).json({ error: error.message || 'Unable to generate AI text.' });
   }
 });
 
-app.post('/api/ai/image', authenticateRequest, requireActiveWorkspace, requirePermission('tasks:write'), async (req, res) => {
+app.post('/api/ai/image', authenticateRequest, requireScopedPermission('tasks:write'), async (req, res) => {
   try {
     const prompt = String(req.body.prompt || '').trim();
     if (!prompt) return res.status(400).json({ error: 'Prompt is required.' });
-    ensureCredits(req.tenant, CREDIT_COSTS.generateImage, 'generate AI image');
+    const scope = getScopeContext(req);
+    await ensureCreditsAvailable({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.generateImage, label: 'generate AI image' });
     let imageUrl;
     try {
       imageUrl = await callHuggingFaceImage(prompt);
     } catch (providerError) {
       logger.warn({ error: providerError.message }, 'Hugging Face image generation failed, returning fallback image');
-      await appendCreditLedger({ tenant: req.tenant, user: req.user, amount: CREDIT_COSTS.generateImage, type: 'ai_image_fallback', metadata: { promptLength: prompt.length } });
+      await debitCredits({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.generateImage, type: 'ai_image_fallback', metadata: { promptLength: prompt.length, scopeId: scope.scopeId } });
       return res.json({ imageUrl: fallbackImage(prompt), model: 'fallback-placeholder', user: sanitizeUser(req.user, req.membership, req.tenant) });
     }
-    await appendCreditLedger({ tenant: req.tenant, user: req.user, amount: CREDIT_COSTS.generateImage, type: 'ai_image', metadata: { promptLength: prompt.length } });
+    await debitCredits({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.generateImage, type: 'ai_image', metadata: { promptLength: prompt.length, scopeId: scope.scopeId } });
     res.json({ imageUrl, user: sanitizeUser(req.user, req.membership, req.tenant) });
   } catch (error) {
     res.status(500).json({ error: error.message || 'Unable to generate AI image.' });
   }
 });
 
-app.get('/api/tasks', authenticateRequest, requireActiveWorkspace, requirePermission('tasks:read'), async (req, res) => {
-  const tasks = await Task.find({ tenantId: String(req.tenant._id) }).sort({ createdAt: -1 }).lean();
+app.get('/api/tasks', authenticateRequest, requireScopedPermission('tasks:read'), async (req, res) => {
+  const scope = getScopeContext(req);
+  const tasks = await Task.find({ tenantId: scope.scopeId }).sort({ createdAt: -1 }).lean();
   res.json({ tasks });
 });
 
-app.patch('/api/tasks/:taskId/status', authenticateRequest, requireActiveWorkspace, requirePermission('tasks:write'), async (req, res) => {
+app.patch('/api/tasks/:taskId/status', authenticateRequest, requireScopedPermission('tasks:write'), async (req, res) => {
   const status = String(req.body.status || '').trim().toLowerCase();
   if (!['active', 'paused', 'completed'].includes(status)) return res.status(400).json({ error: 'Invalid task status.' });
-  const task = await Task.findOneAndUpdate({ _id: req.params.taskId, tenantId: String(req.tenant._id) }, { status }, { new: true });
+  const scope = getScopeContext(req);
+  const task = await Task.findOneAndUpdate({ _id: req.params.taskId, tenantId: scope.scopeId }, { status }, { returnDocument: 'after' });
   if (!task) return res.status(404).json({ error: 'Task not found.' });
   res.json({ task });
 });
 
-app.delete('/api/tasks/:taskId', authenticateRequest, requireActiveWorkspace, requirePermission('tasks:write'), async (req, res) => {
-  const task = await Task.findOneAndDelete({ _id: req.params.taskId, tenantId: String(req.tenant._id) });
+app.delete('/api/tasks/:taskId', authenticateRequest, requireScopedPermission('tasks:write'), async (req, res) => {
+  const scope = getScopeContext(req);
+  const task = await Task.findOneAndDelete({ _id: req.params.taskId, tenantId: scope.scopeId });
   if (!task) return res.status(404).json({ error: 'Task not found.' });
   res.json({ success: true });
 });
 
-app.post('/api/tasks/bulk-action', authenticateRequest, requireActiveWorkspace, requirePermission('tasks:write'), async (req, res) => {
+app.post('/api/tasks/bulk-action', authenticateRequest, requireScopedPermission('tasks:write'), async (req, res) => {
   const action = String(req.body.action || '').trim().toLowerCase();
   const taskIds = Array.isArray(req.body.taskIds) ? req.body.taskIds.map((id) => String(id || '').trim()).filter(Boolean) : [];
   if (!taskIds.length) return res.status(400).json({ error: 'Select at least one task.' });
   if (action === 'pause') {
-    await Task.updateMany({ _id: { $in: taskIds }, tenantId: String(req.tenant._id) }, { status: 'paused' });
+    const scope = getScopeContext(req);
+    await Task.updateMany({ _id: { $in: taskIds }, tenantId: scope.scopeId }, { status: 'paused' });
     return res.json({ success: true, action });
   }
   if (action === 'delete') {
-    await Task.deleteMany({ _id: { $in: taskIds }, tenantId: String(req.tenant._id) });
+    const scope = getScopeContext(req);
+    await Task.deleteMany({ _id: { $in: taskIds }, tenantId: scope.scopeId });
     return res.json({ success: true, action });
   }
   return res.status(400).json({ error: 'Unsupported bulk action.' });
+});
+
+
+app.get('/api/workspaces/members', authenticateRequest, requireActiveWorkspace, requirePermission('members:manage'), async (req, res) => {
+  const members = await listWorkspaceMembers(req.tenant._id);
+  res.json({ members, workspace: req.tenant });
+});
+
+app.post('/api/workspaces/members', authenticateRequest, requireActiveWorkspace, requirePermission('members:manage'), async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const role = ['admin', 'operator', 'viewer'].includes(String(req.body.role || '').trim().toLowerCase())
+      ? String(req.body.role || '').trim().toLowerCase()
+      : 'viewer';
+    if (!email.includes('@')) return res.status(400).json({ error: 'Enter a valid teammate email address.' });
+    const user = await User.findOne({ email });
+    if (!user) return res.status(404).json({ error: 'No account exists for that email yet.' });
+    let membership = await TenantMembership.findOne({ tenantId: req.tenant._id, userId: user._id });
+    if (membership) {
+      membership.role = role;
+      membership.status = 'active';
+      await membership.save();
+    } else {
+      membership = await TenantMembership.create({ tenantId: req.tenant._id, userId: user._id, role, status: 'active' });
+    }
+    await AppSession.updateMany({ userId: user._id }, { tenantId: req.tenant._id, lastSeenAt: new Date() });
+    const members = await listWorkspaceMembers(req.tenant._id);
+    res.status(201).json({ membership, members, workspace: req.tenant });
+  } catch (error) {
+    res.status(400).json({ error: error.message || 'Unable to add teammate to the workspace.' });
+  }
+});
+
+app.patch('/api/workspaces/members/:membershipId', authenticateRequest, requireActiveWorkspace, requirePermission('members:manage'), async (req, res) => {
+  const role = String(req.body.role || '').trim().toLowerCase();
+  if (!['admin', 'operator', 'viewer', 'owner'].includes(role)) return res.status(400).json({ error: 'Choose a valid role.' });
+  const membership = await TenantMembership.findOne({ _id: req.params.membershipId, tenantId: req.tenant._id });
+  if (!membership) return res.status(404).json({ error: 'Workspace member not found.' });
+  if (String(membership.userId) === String(req.user._id) && membership.role === 'owner' && role !== 'owner') {
+    return res.status(400).json({ error: 'The workspace owner cannot remove their own owner role.' });
+  }
+  membership.role = role;
+  await membership.save();
+  const members = await listWorkspaceMembers(req.tenant._id);
+  res.json({ membership, members, workspace: req.tenant });
 });
 
 app.get('/api/tenants/me', authenticateRequest, requireActiveWorkspace, async (req, res) => {
