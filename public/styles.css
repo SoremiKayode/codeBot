@@ -127,10 +127,23 @@ code { background: var(--surface-alt); padding: .15rem .35rem; border-radius: .4
   background: linear-gradient(135deg, var(--primary), #69e9a1);
   color: #06361f;
   border: none;
-  border-radius: 1rem;
-  padding: .95rem 1.2rem;
+  border-radius: .95rem;
+  padding: .78rem 1.05rem;
   font-weight: 800;
   box-shadow: 0 16px 32px rgba(37, 211, 102, 0.2);
+}
+.primary-button--cta, .secondary-button--cta {
+  padding: .82rem 1.15rem;
+  min-width: 9.5rem;
+  justify-content: center;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.16);
+}
+.primary-button--cta {
+  background: linear-gradient(135deg, #25d366 0%, #86efac 100%);
+}
+.secondary-button--cta {
+  background: linear-gradient(135deg, rgba(15, 23, 42, .08), rgba(59,130,246,.14));
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
 }
 .compact-button { width: auto; }
 .icon-button {
@@ -235,7 +248,8 @@ html[data-theme='dark'] .theme-icon--moon { opacity: 1; transform: translateY(0)
 .elevated-sidecard h3,
 .elevated-sidecard li { color: #f8fbff; }
 .elevated-sidecard .muted { color: rgba(236, 253, 245, 0.82); }
-.sidecard-cta-panel { padding: 1rem; border-radius: 1rem; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12); }
+.elevated-sidecard { gap: .75rem; }
+.sidecard-cta-panel { padding: 1rem; border-radius: 1rem; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.12); margin-bottom: .1rem; }
 .cta-button-grid { display: grid; gap: .75rem; }
 .cta-button-grid button { width: 100%; justify-content: center; }
 .status-pill { font-weight: 700; }
@@ -741,3 +755,16 @@ body:not(.is-authenticated) .auth-only { display: none !important; }
   .task-tab-bar { gap: .5rem; }
   .task-table { min-width: 720px; }
 }
+
+.hero-actions--portable { gap: .75rem; }
+.workspace-tab-bar { display:flex; flex-wrap:wrap; gap:.75rem; margin-bottom:1rem; }
+.workspace-panel { display:none; }
+.workspace-panel.active { display:grid; gap:1rem; }
+.dashboard-grid--single { grid-template-columns: 1fr; }
+.task-type-options, .automation-scope-grid { display:grid; gap:.85rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.radio-option--feature { padding: 1rem; border-radius: 1rem; border: 1px solid var(--border); background: linear-gradient(180deg, var(--surface-alt), var(--surface-soft)); align-items: flex-start; }
+.radio-option--feature span { display:grid; gap:.2rem; }
+.radio-option--feature small { color: var(--muted); }
+.input-label { font-weight: 700; }
+.hidden-label-group { display:none; }
+@media (max-width: 768px) { .hero-actions--portable .primary-button--cta, .hero-actions--portable .secondary-button--cta { width:100%; } }

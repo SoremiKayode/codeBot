@@ -641,12 +641,14 @@ const taskSchema = new mongoose.Schema({
   createdByUserId: { type: String, required: true },
   title: { type: String, required: true, trim: true },
   type: { type: String, required: true, trim: true },
+  mode: { type: String, enum: ['broadcast', 'automated_response'], default: 'broadcast' },
   description: { type: String, required: true, trim: true },
   messageHtml: { type: String, default: '' },
   messageText: { type: String, default: '' },
   translatedPreview: { type: String, default: '' },
   mediaQueue: { type: Array, default: [] },
   recipients: { type: Object, default: { groups: [], contacts: [] } },
+  automation: { type: Object, default: { audience: 'all_incoming' } },
   schedule: { type: Object, default: {} },
   timezone: { type: String, default: DEFAULT_TIMEZONE },
   status: { type: String, enum: ['draft', 'active', 'paused', 'completed'], default: 'active' },
@@ -1061,9 +1063,21 @@ function validateTimezone(timezone = DEFAULT_TIMEZONE) {
   }
 }
 
+function sanitizeTextInput(value = '') {
+  return String(value || '').replace(/[<>]/g, '').replace(/[\x00-\x1F\x7F]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function sanitizeLongText(value = '') {
+  return String(value || '').replace(/[<>]/g, '').replace(/\r/g, '').trim();
+}
+
+function sanitizeRichText(value = '') {
+  return String(value || '').replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '').replace(/on\w+=/gi, '').trim();
+}
+
 function validateSignupPayload(payload) {
-  const username = String(payload.username || '').trim();
-  const email = String(payload.email || '').trim().toLowerCase();
+  const username = sanitizeTextInput(payload.username);
+  const email = sanitizeTextInput(payload.email).toLowerCase();
   const password = String(payload.password || '');
   if (!username || username.length < 2) throw new Error('Username must be at least 2 characters long.');
   if (!email.includes('@')) throw new Error('Enter a valid email address.');
@@ -1072,17 +1086,17 @@ function validateSignupPayload(payload) {
 }
 
 function validateCompanyProfilePayload(payload = {}) {
-  const businessName = String(payload.businessName || '').trim();
-  const businessNameText = String(payload.businessNameText || '').trim();
-  const faqs = Array.isArray(payload.faqs) ? payload.faqs.map((item) => ({ question: String(item?.question || '').trim(), answer: String(item?.answer || '').trim() })).filter((item) => item.question && item.answer) : [];
-  const products = Array.isArray(payload.products) ? payload.products.map((item) => ({ name: String(item?.name || '').trim(), description: String(item?.description || '').trim(), price: String(item?.price || '').trim() })).filter((item) => item.name) : [];
-  const toneStyle = String(payload.toneStyle || '').trim();
+  const businessName = sanitizeRichText(payload.businessName);
+  const businessNameText = sanitizeLongText(payload.businessNameText);
+  const faqs = Array.isArray(payload.faqs) ? payload.faqs.map((item) => ({ question: sanitizeTextInput(item?.question), answer: sanitizeLongText(item?.answer) })).filter((item) => item.question && item.answer) : [];
+  const products = Array.isArray(payload.products) ? payload.products.map((item) => ({ name: sanitizeTextInput(item?.name), description: sanitizeLongText(item?.description), price: sanitizeTextInput(item?.price) })).filter((item) => item.name) : [];
+  const toneStyle = sanitizeLongText(payload.toneStyle);
   if (!businessName && !businessNameText) throw new Error('Business name and overview are required.');
   return { businessName, businessNameText, faqs, products, toneStyle };
 }
 
 function validateWorkspacePayload(payload, fallbackName = 'New Workspace') {
-  const workspaceName = String(payload.workspaceName || fallbackName).trim();
+  const workspaceName = sanitizeTextInput(payload.workspaceName || fallbackName);
   const timezone = validateTimezone(String(payload.timezone || DEFAULT_TIMEZONE).trim());
   if (!workspaceName || workspaceName.length < 2) throw new Error('Workspace name must be at least 2 characters long.');
   return { workspaceName, timezone };
@@ -1386,6 +1400,35 @@ async function resolveTaskRecipients(task, sock) {
   return Array.from(recipientIds);
 }
 
+function isGroupJid(jid = '') {
+  return String(jid || '').endsWith('@g.us');
+}
+
+async function isKnownContactForTenant(tenantId, remoteJid) {
+  const jid = normalizePhoneJid(remoteJid);
+  if (!jid) return false;
+  const record = await TenantAudienceContact.findOne({ tenantId, id: jid }).lean();
+  return Boolean(record);
+}
+
+async function findMatchingAutomatedResponseTask(tenantId, remoteJid) {
+  const tasks = await Task.find({ tenantId, mode: 'automated_response', status: 'active' }).sort({ createdAt: -1 }).lean();
+  if (!tasks.length) return null;
+  const groupMessage = isGroupJid(remoteJid);
+  const knownContact = groupMessage ? false : await isKnownContactForTenant(tenantId, remoteJid);
+  return tasks.find((task) => {
+    const audience = String(task.automation?.audience || 'all_incoming');
+    if (audience === 'all_incoming') return true;
+    if (audience === 'unknown_numbers') return !groupMessage && !knownContact;
+    if (audience === 'all_groups') return groupMessage;
+    if (audience === 'managed_groups') {
+      const allowedGroups = Array.isArray(task.recipients?.groups) ? task.recipients.groups.map((group) => normalizeGroupJid(group?.id || '')) : [];
+      return groupMessage && allowedGroups.includes(normalizeGroupJid(remoteJid));
+    }
+    return false;
+  }) || null;
+}
+
 async function recordDispatch(tenantId, taskId, recipient, status, error = '', messagePayload = {}) {
   await MessageDispatch.create({
     tenantId,
@@ -1676,15 +1719,26 @@ async function startWhatsAppSession(user, tenant) {
     if (unsubscribeStore.has(`${scope.scopeId}:${remoteJid}`) || existingConversation?.unsubscribed) return;
     if (!canSendAutoReply(scope.scopeId)) return;
     if (existingConversation?.lastIncomingAt && Date.now() - new Date(existingConversation.lastIncomingAt).getTime() < 15000) return;
-    const profile = await getCompanyProfileForScope(scope.scopeId);
-    if (!profile) return;
+    const matchingAutomatedTask = await findMatchingAutomatedResponseTask(tenantId, remoteJid);
     const inMemoryHistory = rememberConversation(remoteJid, 'user', text);
     const dbHistory = existingConversation?.messages || [];
-    const reply = await craftAutoReply(profile, text, [...dbHistory, ...inMemoryHistory]);
+    let replyPayload = null;
+    let replyText = '';
+    if (matchingAutomatedTask) {
+      replyPayload = await buildMessagePayload(matchingAutomatedTask);
+      replyText = String(matchingAutomatedTask.messageText || matchingAutomatedTask.translatedPreview || matchingAutomatedTask.description || '').trim();
+    } else {
+      const profile = await getCompanyProfileForScope(scope.scopeId);
+      if (!profile) return;
+      const reply = await craftAutoReply(profile, text, [...dbHistory, ...inMemoryHistory]);
+      replyPayload = { text: reply };
+      replyText = reply;
+    }
+    if (!replyPayload) return;
     await new Promise((resolve) => setTimeout(resolve, pickReplyDelay()));
-    await sock.sendMessage(remoteJid, { text: reply });
-    rememberConversation(remoteJid, 'assistant', reply);
-    await upsertConversationHistory(scope, remoteJid, text, reply);
+    await sock.sendMessage(remoteJid, replyPayload);
+    rememberConversation(remoteJid, 'assistant', replyText);
+    await upsertConversationHistory(scope, remoteJid, text, replyText);
   });
   sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
@@ -1729,7 +1783,7 @@ app.post('/api/auth/signup', async (req, res) => {
 });
 
 app.post('/api/auth/login', async (req, res) => {
-  const email = String(req.body.email || '').trim().toLowerCase();
+  const email = sanitizeTextInput(req.body.email).toLowerCase();
   const password = String(req.body.password || '');
   const user = await User.findOne({ email });
   if (!user || !verifyPassword(password, user.passwordHash)) return res.status(401).json({ error: 'Invalid email or password.' });
@@ -1903,33 +1957,48 @@ app.post('/api/company-profile', authenticateRequest, async (req, res) => {
 });
 
 app.post('/api/tasks', authenticateRequest, requireScopedPermission('tasks:write'), async (req, res) => {
-  const title = String(req.body.title || '').trim();
-  const type = String(req.body.type || '').trim();
-  const description = String(req.body.description || '').trim();
+  const title = sanitizeTextInput(req.body.title);
+  const type = sanitizeTextInput(req.body.type);
+  const mode = req.body.mode === 'automated_response' ? 'automated_response' : 'broadcast';
+  const description = sanitizeLongText(req.body.description);
   if (!title || !type || !description) return res.status(400).json({ error: 'Title, type, and description are required.' });
   const scope = getScopeContext(req);
   await ensureCreditsAvailable({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.createTask, label: 'create a task' });
   const recipients = req.body.recipients || {};
   const groupDeliveryMode = recipients.groupDeliveryMode === 'members' ? 'members' : 'group';
   const normalizedRecipients = sanitizeTaskRecipients(recipients);
-  if (!normalizedRecipients.groups.length && !normalizedRecipients.contacts.length) return res.status(400).json({ error: 'At least one valid contact or group recipient is required.' });
+  if (mode !== 'automated_response' && !normalizedRecipients.groups.length && !normalizedRecipients.contacts.length) return res.status(400).json({ error: 'At least one valid contact or group recipient is required.' });
   const timezone = validateTimezone(String(req.body.timezone || scope.timezone || DEFAULT_TIMEZONE));
-  const schedule = validateSchedule(req.body.schedule || {}, timezone);
+  const automationAudience = ['all_incoming', 'unknown_numbers', 'all_groups', 'managed_groups'].includes(String(req.body.automation?.audience || '')) ? String(req.body.automation.audience) : 'all_incoming';
+  if (mode === 'automated_response' && automationAudience === 'managed_groups' && !normalizedRecipients.groups.length) return res.status(400).json({ error: 'Select at least one group when using the managed groups automated response option.' });
+  const schedule = mode === 'automated_response' ? {} : validateSchedule(req.body.schedule || {}, timezone);
+  const sanitizedMediaQueue = Array.isArray(req.body.mediaQueue) ? req.body.mediaQueue.slice(0, 10).map((item) => ({
+    name: sanitizeTextInput(item?.name || 'attachment'),
+    type: sanitizeTextInput(item?.type || 'document'),
+    dataUrl: String(item?.dataUrl || ''),
+    mimeType: sanitizeTextInput(item?.mimeType || 'application/octet-stream'),
+    size: Number(item?.size || 0),
+    sizeLabel: sanitizeTextInput(item?.sizeLabel || ''),
+    previewText: sanitizeLongText(item?.previewText || ''),
+    source: sanitizeTextInput(item?.source || ''),
+  })).filter((item) => item.dataUrl.startsWith('data:')) : [];
   const task = await Task.create({
     tenantId: scope.scopeId,
     createdByUserId: String(req.user._id),
     title,
     type,
+    mode,
     description,
-    messageHtml: String(req.body.messageHtml || ''),
-    messageText: String(req.body.messageText || ''),
-    translatedPreview: String(req.body.translatedPreview || ''),
-    mediaQueue: Array.isArray(req.body.mediaQueue) ? req.body.mediaQueue.slice(0, 10) : [],
+    messageHtml: sanitizeRichText(req.body.messageHtml || ''),
+    messageText: sanitizeLongText(req.body.messageText || ''),
+    translatedPreview: sanitizeLongText(req.body.translatedPreview || ''),
+    mediaQueue: sanitizedMediaQueue,
     recipients: { groups: normalizedRecipients.groups, contacts: normalizedRecipients.contacts, groupDeliveryMode },
+    automation: { audience: automationAudience },
     schedule,
     timezone,
     status: 'active',
-    nextRunAt: computeNextRunAt(schedule, timezone),
+    nextRunAt: mode === 'automated_response' ? null : computeNextRunAt(schedule, timezone),
   });
   await debitCredits({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.createTask, type: 'task_create', metadata: { taskId: String(task._id), scopeId: scope.scopeId } });
   res.status(201).json({ task, user: sanitizeUser(req.user, req.membership, req.tenant) });
@@ -2012,7 +2081,7 @@ app.get('/api/workspaces/members', authenticateRequest, requireActiveWorkspace, 
 
 app.post('/api/workspaces/members', authenticateRequest, requireActiveWorkspace, requirePermission('members:manage'), async (req, res) => {
   try {
-    const email = String(req.body.email || '').trim().toLowerCase();
+    const email = sanitizeTextInput(req.body.email).toLowerCase();
     const role = ['admin', 'operator', 'viewer'].includes(String(req.body.role || '').trim().toLowerCase())
       ? String(req.body.role || '').trim().toLowerCase()
       : 'viewer';
@@ -2147,7 +2216,7 @@ app.post('/api/payments/paystack/verify', authenticateRequest, async (req, res) 
 app.post('/api/enquiries', async (req, res) => {
   try {
     const name = String(req.body.name || '').trim();
-    const email = String(req.body.email || '').trim().toLowerCase();
+    const email = sanitizeTextInput(req.body.email).toLowerCase();
     const message = String(req.body.message || '').trim();
     if (!name || !email || !message) return res.status(400).json({ error: 'Name, email, and message are required.' });
     await Enquiry.create({ name, email, message, recipient: SMTP_USER });
