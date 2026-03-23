@@ -126,6 +126,7 @@ const ui = {
   scheduleSummary: document.getElementById('scheduleSummary'),
   nextRunBadge: document.getElementById('nextRunBadge'),
   scheduleTaskButton: document.getElementById('scheduleTaskButton'),
+  taskNavButtons: document.querySelectorAll('[data-task-nav]'),
   groupDeliveryModeInputs: document.querySelectorAll('input[name="groupDeliveryMode"]'),
   taskModeInputs: document.querySelectorAll('input[name="taskMode"]'),
   automationAudienceInputs: document.querySelectorAll('input[name="automationAudience"]'),
@@ -161,7 +162,7 @@ const taskBuilderState = {
   taskSortDirection: 'desc',
   selectedTaskIds: new Set(),
   taskMode: 'broadcast',
-  automationAudience: 'all_incoming',
+  automationAudience: ['all_incoming'],
 };
 
 const TASK_DRAFT_STORAGE_KEY = 'wa_task_builder_draft_v1';
@@ -272,10 +273,10 @@ function restoreTaskDraft() {
     taskBuilderState.selectedGroups = new Set(Array.isArray(draft.selectedGroups) ? draft.selectedGroups : []);
     taskBuilderState.selectedContacts = new Set(Array.isArray(draft.selectedContacts) ? draft.selectedContacts : []);
     taskBuilderState.manualRecipients = dedupeRecipients(Array.isArray(draft.manualRecipients) ? draft.manualRecipients : []);
-    taskBuilderState.taskMode = draft.taskMode === 'automated_response' ? 'automated_response' : 'broadcast';
-    taskBuilderState.automationAudience = draft.automationAudience || 'all_incoming';
+    taskBuilderState.taskMode = ['automated_response', 'schedule_status'].includes(draft.taskMode) ? draft.taskMode : 'broadcast';
+    taskBuilderState.automationAudience = Array.isArray(draft.automationAudience) && draft.automationAudience.length ? draft.automationAudience : ['all_incoming'];
     ui.taskModeInputs.forEach((input) => { input.checked = input.value === taskBuilderState.taskMode; });
-    ui.automationAudienceInputs.forEach((input) => { input.checked = input.value === taskBuilderState.automationAudience; });
+    syncAutomationAudienceInputs();
     taskBuilderState.dailyTimes = Array.isArray(draft.dailyTimes) && draft.dailyTimes.length ? draft.dailyTimes : ['09:00'];
     taskBuilderState.weeklySlots = Array.isArray(draft.weeklySlots) && draft.weeklySlots.length ? draft.weeklySlots : [{ day: 'Monday', time: '09:00' }];
     taskBuilderState.monthlyWeeks = Array.isArray(draft.monthlyWeeks) ? draft.monthlyWeeks : [];
@@ -334,7 +335,8 @@ function closeMenu() {
 function navigate(route) {
   const normalizedRoute = route === 'task-list' ? 'tasks' : route;
   const requestedRoute = ['dashboard', 'tasks', 'task-list'].includes(route) && !appState.user ? 'login' : normalizedRoute;
-  const targetRoute = requestedRoute;
+  const redirectedRoute = appState.user && ['login', 'signup'].includes(requestedRoute) ? 'dashboard' : requestedRoute;
+  const targetRoute = redirectedRoute;
   setRoute(targetRoute);
   closeMenu();
   Object.entries(views).forEach(([key, view]) => view?.classList.toggle('active', key === targetRoute));
@@ -357,23 +359,77 @@ function setWorkspaceTab(tabName = 'scheduler') {
   document.querySelectorAll('[data-workspace-panel]').forEach((panel) => panel.classList.toggle('active', panel.dataset.workspacePanel === normalized));
 }
 
+function isAutomatedMode() {
+  return taskBuilderState.taskMode === 'automated_response';
+}
+
+function isStatusMode() {
+  return taskBuilderState.taskMode === 'schedule_status';
+}
+
+function getAutomationAudienceLabels() {
+  return {
+    all_incoming: 'all incoming messages',
+    unknown_numbers: 'messages from unsaved numbers',
+    all_groups: 'messages from all groups',
+    managed_groups: 'messages from groups you manage',
+  };
+}
+
+function syncAutomationAudienceInputs() {
+  const selected = new Set(taskBuilderState.automationAudience);
+  ui.automationAudienceInputs.forEach((input) => {
+    input.checked = selected.has(input.value);
+  });
+}
+
+function getTaskTypeLabel() {
+  if (isAutomatedMode()) return 'Automated response';
+  if (isStatusMode()) return 'Schedule status';
+  return 'Broadcast message';
+}
+
+function navigateTaskWizard(direction = 'next') {
+  const orderedTabs = ['message', 'audience', 'schedule', 'task-list'];
+  const currentIndex = orderedTabs.indexOf(taskBuilderState.activeTab);
+  if (currentIndex === -1) {
+    setTaskTab('message');
+    return;
+  }
+  const nextIndex = direction === 'back' ? Math.max(0, currentIndex - 1) : Math.min(orderedTabs.length - 1, currentIndex + 1);
+  setTaskTab(orderedTabs[nextIndex]);
+}
+
 function updateTaskModeUI() {
-  const isAutomated = taskBuilderState.taskMode === 'automated_response';
+  const isAutomated = isAutomatedMode();
+  const isStatus = isStatusMode();
+  const hideComposer = isAutomated;
   ui.automationRulesCard?.classList.toggle('hidden', !isAutomated);
   ui.automationScheduleNote?.classList.toggle('hidden', !isAutomated);
-  if (ui.recipientSummaryInput) ui.recipientSummaryInput.closest('label')?.classList.toggle('hidden', isAutomated);
+  if (ui.recipientSummaryInput) ui.recipientSummaryInput.closest('label')?.classList.toggle('hidden', isAutomated || isStatus);
   [ui.startDateInput, ui.startTimeInput, ui.frequencySelect].forEach((element) => element?.closest('label')?.classList.toggle('hidden', isAutomated));
   ui.frequencyOptions?.classList.toggle('hidden', isAutomated);
-  if (ui.scheduleTaskButton) ui.scheduleTaskButton.textContent = isAutomated ? 'Save automated response' : 'Schedule task';
-  if (ui.previewFrequencyPill) ui.previewFrequencyPill.textContent = isAutomated ? 'Automated response' : (taskBuilderState.frequency || 'Not scheduled');
+  document.getElementById('messageEditor')?.closest('div')?.classList.toggle('hidden', hideComposer);
+  ui.openAiTextTabButton?.classList.toggle('hidden', hideComposer);
+  ui.openAiMediaTabButton?.classList.toggle('hidden', hideComposer);
+  document.querySelector('[data-task-tab="ai-text"]')?.classList.toggle('hidden', hideComposer);
+  document.querySelector('[data-task-tab="ai-media"]')?.classList.toggle('hidden', hideComposer);
+  document.getElementById('messageEditor')?.classList.toggle('hidden', hideComposer);
+  if (hideComposer && ['ai-text', 'ai-media'].includes(taskBuilderState.activeTab)) setTaskTab('message');
+  const audiencePanel = document.querySelector('[data-task-panel="audience"]');
+  audiencePanel?.querySelector('h3')?.replaceChildren(document.createTextNode(isAutomated ? 'Select managed groups for automated replies' : isStatus ? 'Audience is not required for scheduled status posts' : 'Select broadcast recipients or managed groups'));
+  if (ui.scheduleTaskButton) ui.scheduleTaskButton.textContent = isAutomated ? 'Save automated response' : isStatus ? 'Schedule status' : 'Schedule task';
+  if (ui.previewFrequencyPill) ui.previewFrequencyPill.textContent = isAutomated ? 'Automated response' : isStatus ? 'Scheduled status' : (taskBuilderState.frequency || 'Not scheduled');
+  syncAutomationAudienceInputs();
+  ui.taskNavButtons?.forEach((button) => { button.disabled = false; });
   if (ui.scheduleSummary && isAutomated) {
-    const labels = {
-      all_incoming: 'Replies to all incoming messages.',
-      unknown_numbers: 'Replies to unsaved numbers only.',
-      all_groups: 'Replies to every group message.',
-      managed_groups: 'Replies only inside the groups you selected in the audience tab.',
-    };
-    ui.scheduleSummary.textContent = labels[taskBuilderState.automationAudience] || 'Automated response is ready.';
+    const labels = getAutomationAudienceLabels();
+    ui.scheduleSummary.textContent = taskBuilderState.automationAudience.includes('all_incoming')
+      ? 'Replies to all incoming messages.'
+      : `Replies to ${taskBuilderState.automationAudience.map((value) => labels[value]).filter(Boolean).join(' and ')}.`;
+  }
+  if (ui.scheduleSummary && isStatus) {
+    ui.scheduleSummary.textContent = 'This scheduled task will publish to WhatsApp Status using the same scheduling workflow as a broadcast.';
   }
 }
 
@@ -744,6 +800,12 @@ function setTaskTab(tabName) {
   taskBuilderState.activeTab = tabName;
   document.querySelectorAll('[data-task-tab]').forEach((button) => button.classList.toggle('active', button.dataset.taskTab === tabName));
   document.querySelectorAll('[data-task-panel]').forEach((panel) => panel.classList.toggle('active', panel.dataset.taskPanel === tabName));
+  const orderedTabs = ['message', 'audience', 'schedule', 'task-list'];
+  const currentIndex = orderedTabs.indexOf(tabName);
+  ui.taskNavButtons?.forEach((button) => {
+    const isBack = button.dataset.taskNav === 'back';
+    button.disabled = currentIndex === -1 || (isBack ? currentIndex === 0 : currentIndex === orderedTabs.length - 1);
+  });
 }
 
 function resolveTagValue(tag, baseDate = new Date()) {
@@ -798,8 +860,8 @@ function updateTaskPreview() {
   const translated = translateTags(extractMessageText()) || 'Your message preview appears here.';
   ui.messagePreview.textContent = translated;
   ui.finalPreview.textContent = translated;
-  ui.previewFrequencyPill.textContent = taskBuilderState.taskMode === 'automated_response' ? 'Automated response' : (taskBuilderState.frequency || 'Not scheduled');
-  ui.nextRunBadge.textContent = taskBuilderState.taskMode === 'automated_response' ? 'Live after save' : buildScheduleLabel();
+  ui.previewFrequencyPill.textContent = isAutomatedMode() ? 'Automated response' : isStatusMode() ? 'Scheduled status' : (taskBuilderState.frequency || 'Not scheduled');
+  ui.nextRunBadge.textContent = buildScheduleLabel();
 
   const selectedGroups = getSelectedItems(audienceState.groups, taskBuilderState.selectedGroups);
   const selectedContacts = getSelectedItems(audienceState.contacts, taskBuilderState.selectedContacts);
@@ -1200,15 +1262,13 @@ function addTimeField(value = '09:00') {
 }
 
 function buildScheduleDescription() {
-  if (taskBuilderState.taskMode === 'automated_response') {
-    const labels = {
-      all_incoming: 'This auto reply will answer all incoming WhatsApp messages.',
-      unknown_numbers: 'This auto reply will answer messages from unsaved numbers only.',
-      all_groups: 'This auto reply will answer messages from all groups.',
-      managed_groups: 'This auto reply will answer messages from groups you manage.',
-    };
-    return labels[taskBuilderState.automationAudience] || 'Automated response will start as soon as it is saved.';
+  if (isAutomatedMode()) {
+    const labels = getAutomationAudienceLabels();
+    if (taskBuilderState.automationAudience.includes('all_incoming')) return 'This auto reply will answer all incoming WhatsApp messages.';
+    const selected = taskBuilderState.automationAudience.map((value) => labels[value]).filter(Boolean);
+    return selected.length ? `This auto reply will answer ${selected.join(' and ')}.` : 'Automated response will start as soon as it is saved.';
   }
+  if (isStatusMode()) return `Status post will follow the selected ${taskBuilderState.frequency || 'schedule'} workflow and publish to WhatsApp Status.`;
   const startDate = ui.startDateInput.value || 'No date selected';
   const startTime = ui.startTimeInput.value || 'No time selected';
   if (!taskBuilderState.frequency) return 'Choose a frequency to see the exact rule summary.';
@@ -1219,14 +1279,15 @@ function buildScheduleDescription() {
 }
 
 function buildScheduleLabel() {
-  if (taskBuilderState.taskMode === 'automated_response') return 'Live after save';
+  if (isAutomatedMode()) return 'Live after save';
+  if (isStatusMode()) return taskBuilderState.frequency ? `Status: ${taskBuilderState.frequency}` : 'Status pending setup';
   return taskBuilderState.frequency ? `Next rule: ${taskBuilderState.frequency}` : 'Pending setup';
 }
 
 function renderFrequencyOptions() {
   const frequency = ui.frequencySelect.value;
   taskBuilderState.frequency = frequency;
-  if (taskBuilderState.taskMode === 'automated_response') {
+  if (isAutomatedMode()) {
     ui.frequencyOptions.innerHTML = '';
     updateTaskPreview();
     return;
@@ -1434,8 +1495,9 @@ function buildScheduleConfig() {
 
 async function scheduleTask() {
   syncManualRecipientsFromInput();
-  const isAutomated = taskBuilderState.taskMode === 'automated_response';
-  const title = sanitizeFormValue(ui.taskTitle.value) || (isAutomated ? 'Automated WhatsApp response' : 'Untitled WhatsApp task');
+  const isAutomated = isAutomatedMode();
+  const isStatus = isStatusMode();
+  const title = sanitizeFormValue(ui.taskTitle.value) || (isAutomated ? 'Automated WhatsApp response' : isStatus ? 'Scheduled WhatsApp status' : 'Untitled WhatsApp task');
   const messageText = sanitizeTextAreaValue(extractMessageText());
   const selectedContacts = getSelectedItems(audienceState.contacts, taskBuilderState.selectedContacts);
   const selectedGroups = getSelectedItems(audienceState.groups, taskBuilderState.selectedGroups);
@@ -1448,12 +1510,12 @@ async function scheduleTask() {
     return !/@s\.whatsapp\.net$/i.test(normalized) && !/@g\.us$/i.test(normalized);
   });
 
-  if (!messageText) {
-    showToast('Enter or generate a message before scheduling.');
+  if (!messageText && !taskBuilderState.mediaQueue.length) {
+    showToast('Add text or media before scheduling.');
     setTaskTab('message');
     return;
   }
-  if (!isAutomated && !selectedGroups.length && !selectedContacts.length && !manualContacts.length) {
+  if (!isAutomated && !isStatus && !selectedGroups.length && !selectedContacts.length && !manualContacts.length) {
     showToast('Select at least one group or contact, or paste a phone number.');
     setTaskTab('audience');
     return;
@@ -1476,17 +1538,17 @@ async function scheduleTask() {
   try {
     const payload = await api.createTask({
       title,
-      type: isAutomated ? 'Automated response' : 'Broadcast message',
+      type: getTaskTypeLabel(),
       mode: taskBuilderState.taskMode,
       automation: isAutomated ? { audience: taskBuilderState.automationAudience } : {},
-      description: translateTags(messageText).slice(0, 240),
+      description: translateTags(messageText || (taskBuilderState.mediaQueue[0]?.previewText || getTaskTypeLabel())).slice(0, 240),
       messageHtml: extractMessageHtml(),
       messageText,
       translatedPreview: translateTags(messageText),
       mediaQueue: taskBuilderState.mediaQueue,
       recipients: {
-        groups: normalizedRecipients.groups,
-        contacts: normalizedRecipients.contacts,
+        groups: isStatus ? [] : normalizedRecipients.groups,
+        contacts: isStatus ? [] : normalizedRecipients.contacts,
         groupDeliveryMode: taskBuilderState.groupDeliveryMode,
       },
       schedule: isAutomated ? {} : buildScheduleConfig(),
@@ -1495,7 +1557,7 @@ async function scheduleTask() {
     resetTaskBuilder();
     localStorage.removeItem(TASK_DRAFT_STORAGE_KEY);
     await loadTasks();
-    showToast(isAutomated ? 'Automated response saved successfully.' : 'Task scheduled successfully.');
+    showToast(isAutomated ? 'Automated response saved successfully.' : isStatus ? 'Status post scheduled successfully.' : 'Task scheduled successfully.');
   } catch (error) {
     showToast(error.message);
   }
@@ -1518,10 +1580,10 @@ function resetTaskBuilder() {
   taskBuilderState.groupDeliveryMode = 'group';
   taskBuilderState.manualRecipients = [];
   taskBuilderState.taskMode = 'broadcast';
-  taskBuilderState.automationAudience = 'all_incoming';
+  taskBuilderState.automationAudience = ['all_incoming'];
   ui.groupDeliveryModeInputs.forEach((input) => { input.checked = input.value === 'group'; });
   ui.taskModeInputs.forEach((input) => { input.checked = input.value === 'broadcast'; });
-  ui.automationAudienceInputs.forEach((input) => { input.checked = input.value === 'all_incoming'; });
+  syncAutomationAudienceInputs();
   ui.aiTextPrompt.value = '';
   ui.aiImagePrompt.value = '';
   ui.aiTextStatus.textContent = 'AI generated text will appear here before it is inserted into the editor.';
@@ -1721,7 +1783,7 @@ ui.connectWhatsappButton.addEventListener('click', async () => {
 ui.openAiTextTabButton.addEventListener('click', () => setTaskTab('ai-text'));
 ui.openAiMediaTabButton.addEventListener('click', () => setTaskTab('ai-media'));
 ui.generateMoreMediaButton.addEventListener('click', () => setTaskTab('ai-media'));
-ui.messageNextButton.addEventListener('click', () => setTaskTab('audience'));
+ui.messageNextButton.addEventListener('click', () => setTaskTab(isStatusMode() ? 'schedule' : 'audience'));
 ui.audienceBackButton.addEventListener('click', () => setTaskTab('message'));
 ui.audienceNextButton.addEventListener('click', () => setTaskTab('schedule'));
 ui.scheduleBackButton.addEventListener('click', () => setTaskTab('audience'));
@@ -1778,14 +1840,26 @@ ui.groupDeliveryModeInputs.forEach((input) => input.addEventListener('change', (
   updateTaskPreview();
 }));
 ui.taskModeInputs.forEach((input) => input.addEventListener('change', (event) => {
-  taskBuilderState.taskMode = event.target.value === 'automated_response' ? 'automated_response' : 'broadcast';
+  taskBuilderState.taskMode = ['automated_response', 'schedule_status'].includes(event.target.value) ? event.target.value : 'broadcast';
   updateTaskModeUI();
   updateTaskPreview();
 }));
 ui.automationAudienceInputs.forEach((input) => input.addEventListener('change', (event) => {
-  taskBuilderState.automationAudience = event.target.value || 'all_incoming';
+  const value = event.target.value || 'all_incoming';
+  const selected = new Set(taskBuilderState.automationAudience);
+  if (value === 'all_incoming') {
+    taskBuilderState.automationAudience = event.target.checked ? ['all_incoming'] : [];
+  } else {
+    selected.delete('all_incoming');
+    if (event.target.checked) selected.add(value);
+    else selected.delete(value);
+    taskBuilderState.automationAudience = Array.from(selected);
+  }
+  if (!taskBuilderState.automationAudience.length) taskBuilderState.automationAudience = ['all_incoming'];
+  syncAutomationAudienceInputs();
   updateTaskPreview();
 }));
+ui.taskNavButtons?.forEach((button) => button.addEventListener('click', () => navigateTaskWizard(button.dataset.taskNav)));
 
 document.addEventListener('click', (event) => {
   const workspaceTab = event.target.closest('[data-workspace-tab]');

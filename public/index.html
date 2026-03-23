@@ -67,14 +67,14 @@
                 <div class="banner-highlight"><strong>QR onboarding</strong><span>Connect WhatsApp and keep the state saved for the next visit.</span></div>
                 <div class="banner-highlight"><strong>Live workspace insight</strong><span>Track credits, connection health, theme, and task activity.</span></div>
               </div>
-              <div class="hero-actions hero-actions--portable">
-                <button id="startButton" class="primary-button primary-button--cta" type="button">Sign up</button>
-                <button id="claimCreditsButton" class="secondary-button secondary-button--cta guest-only" type="button" data-route="login">Login</button>
-              </div>
               <div class="hero-metrics">
                 <div class="metric-card"><strong>150</strong><span>credits awarded</span></div>
                 <div class="metric-card"><strong>24/7</strong><span>persistent browser sessions</span></div>
                 <div class="metric-card"><strong>1</strong><span>workspace for tasks and WhatsApp</span></div>
+              </div>
+              <div class="hero-actions hero-actions--portable guest-only">
+                <button id="startButton" class="primary-button primary-button--cta" type="button">Sign up</button>
+                <button id="claimCreditsButton" class="secondary-button secondary-button--cta" type="button" data-route="login">Login</button>
               </div>
             </div>
           </article>
@@ -88,7 +88,7 @@
                 <button class="secondary-button compact-button" type="button" data-route="dashboard">Create Company Portfolio</button>
               </div>
             </div>
-            <div class="stack-sm sidecard-cta-panel guest-only">
+            <div class="stack-sm sidecard-cta-panel sidecard-cta-panel--guest guest-only">
               <p class="eyebrow">Get started</p>
               <div class="cta-button-grid cta-button-grid--guest">
                 <button class="primary-button compact-button primary-button--cta" type="button" data-route="signup">Sign up</button>
@@ -152,7 +152,7 @@
             <p class="muted">Sign up, connect WhatsApp, and move directly into a task workspace built for action.</p>
             <div class="hero-actions">
               <button class="primary-button guest-only" type="button" data-route="signup">Create free account</button>
-              <button class="secondary-button" type="button" data-route="login">I already have an account</button>
+              <button class="secondary-button guest-only" type="button" data-route="login">I already have an account</button>
             </div>
           </article>
         </section>
@@ -180,9 +180,9 @@
             </label>
             <button class="primary-button" type="submit">Login</button>
           </form>
-          <div class="social-buttons social-buttons--grid" data-auth-mode="login">
-            <button class="social-button social-login" type="button" data-provider="google" data-auth-mode="login"><span>🔵</span><span>Continue with Google</span></button>
-            <button class="social-button social-login" type="button" data-provider="github" data-auth-mode="login"><span>⚫</span><span>Continue with GitHub</span></button>
+          <div class="social-buttons social-buttons--auth" data-auth-mode="login">
+            <button class="social-button social-login social-login--google" type="button" data-provider="google" data-auth-mode="login"><span class="social-login__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path fill="#EA4335" d="M12 10.2v3.9h5.5c-.2 1.3-1.5 3.9-5.5 3.9-3.3 0-6-2.7-6-6s2.7-6 6-6c1.9 0 3.1.8 3.8 1.4l2.6-2.5C16.8 3.4 14.6 2.5 12 2.5A9.5 9.5 0 1 0 12 21.5c5.5 0 9.1-3.8 9.1-9.2 0-.6-.1-1.1-.2-1.6z"/><path fill="#34A853" d="M3.9 7.8l3.2 2.4C8 8 9.8 6.8 12 6.8c1.9 0 3.1.8 3.8 1.4l2.6-2.5C16.8 3.4 14.6 2.5 12 2.5c-3.6 0-6.7 2.1-8.1 5.3z"/><path fill="#4A90E2" d="M12 21.5c2.5 0 4.7-.8 6.3-2.3l-2.9-2.4c-.8.5-1.9.9-3.4.9-3.9 0-5.2-2.6-5.5-3.9l-3.2 2.5c1.4 3.3 4.6 5.2 8.7 5.2z"/><path fill="#FBBC05" d="M3.3 16.3A9.8 9.8 0 0 1 2.5 12c0-1.5.3-2.9.8-4.2l3.2 2.4c-.2.5-.3 1.1-.3 1.8 0 .6.1 1.2.3 1.8z"/></svg></span><span>Continue with Google</span></button>
+            <button class="social-button social-login social-login--github" type="button" data-provider="github" data-auth-mode="login"><span class="social-login__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 .5C5.6.5.8 5.3.8 11.7c0 5.1 3.3 9.4 7.8 10.9.6.1.8-.2.8-.6v-2.1c-3.2.7-3.9-1.3-3.9-1.3-.5-1.3-1.2-1.7-1.2-1.7-1-.7.1-.7.1-.7 1.1.1 1.7 1.1 1.7 1.1 1 .1 1.8-.7 2.2-1.1.1-.7.4-1.2.7-1.4-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.4-2.3 1.1-3.1-.1-.3-.5-1.5.1-3 0 0 .9-.3 3.2 1.2a11 11 0 0 1 5.8 0c2.2-1.5 3.2-1.2 3.2-1.2.6 1.5.2 2.7.1 3 .7.8 1.1 1.8 1.1 3.1 0 4.4-2.7 5.4-5.3 5.7.4.3.8 1 .8 2v3c0 .4.2.7.8.6 4.5-1.5 7.8-5.8 7.8-10.9C23.2 5.3 18.4.5 12 .5z"/></svg></span><span>Continue with GitHub</span></button>
           </div>
         </div>
       </section>
@@ -213,9 +213,9 @@
             </label>
             <button class="primary-button" type="submit">Create account</button>
           </form>
-          <div class="social-buttons social-buttons--grid" data-auth-mode="signup">
-            <button class="social-button social-login" type="button" data-provider="google" data-auth-mode="signup"><span>🔵</span><span>Sign up with Google</span></button>
-            <button class="social-button social-login" type="button" data-provider="github" data-auth-mode="signup"><span>⚫</span><span>Sign up with GitHub</span></button>
+          <div class="social-buttons social-buttons--auth" data-auth-mode="signup">
+            <button class="social-button social-login social-login--google" type="button" data-provider="google" data-auth-mode="signup"><span class="social-login__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path fill="#EA4335" d="M12 10.2v3.9h5.5c-.2 1.3-1.5 3.9-5.5 3.9-3.3 0-6-2.7-6-6s2.7-6 6-6c1.9 0 3.1.8 3.8 1.4l2.6-2.5C16.8 3.4 14.6 2.5 12 2.5A9.5 9.5 0 1 0 12 21.5c5.5 0 9.1-3.8 9.1-9.2 0-.6-.1-1.1-.2-1.6z"/><path fill="#34A853" d="M3.9 7.8l3.2 2.4C8 8 9.8 6.8 12 6.8c1.9 0 3.1.8 3.8 1.4l2.6-2.5C16.8 3.4 14.6 2.5 12 2.5c-3.6 0-6.7 2.1-8.1 5.3z"/><path fill="#4A90E2" d="M12 21.5c2.5 0 4.7-.8 6.3-2.3l-2.9-2.4c-.8.5-1.9.9-3.4.9-3.9 0-5.2-2.6-5.5-3.9l-3.2 2.5c1.4 3.3 4.6 5.2 8.7 5.2z"/><path fill="#FBBC05" d="M3.3 16.3A9.8 9.8 0 0 1 2.5 12c0-1.5.3-2.9.8-4.2l3.2 2.4c-.2.5-.3 1.1-.3 1.8 0 .6.1 1.2.3 1.8z"/></svg></span><span>Sign up with Google</span></button>
+            <button class="social-button social-login social-login--github" type="button" data-provider="github" data-auth-mode="signup"><span class="social-login__icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 .5C5.6.5.8 5.3.8 11.7c0 5.1 3.3 9.4 7.8 10.9.6.1.8-.2.8-.6v-2.1c-3.2.7-3.9-1.3-3.9-1.3-.5-1.3-1.2-1.7-1.2-1.7-1-.7.1-.7.1-.7 1.1.1 1.7 1.1 1.7 1.1 1 .1 1.8-.7 2.2-1.1.1-.7.4-1.2.7-1.4-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.4-2.3 1.1-3.1-.1-.3-.5-1.5.1-3 0 0 .9-.3 3.2 1.2a11 11 0 0 1 5.8 0c2.2-1.5 3.2-1.2 3.2-1.2.6 1.5.2 2.7.1 3 .7.8 1.1 1.8 1.1 3.1 0 4.4-2.7 5.4-5.3 5.7.4.3.8 1 .8 2v3c0 .4.2.7.8.6 4.5-1.5 7.8-5.8 7.8-10.9C23.2 5.3 18.4.5 12 .5z"/></svg></span><span>Sign up with GitHub</span></button>
           </div>
         </div>
       </section>
@@ -338,6 +338,10 @@
             </div>
 
             <section class="workspace-panel active" data-workspace-panel="scheduler">
+            <div class="task-builder-nav">
+              <button class="secondary-button" type="button" data-task-nav="back">← Back</button>
+              <button class="secondary-button" type="button" data-task-nav="next">Next →</button>
+            </div>
             <div class="task-tab-bar" id="taskTabBar">
               <button class="task-tab active" type="button" data-task-tab="message">1. Message</button>
               <button class="task-tab" type="button" data-task-tab="audience">2. Audience</button>
@@ -365,6 +369,10 @@
                         <input type="radio" name="taskMode" value="automated_response" />
                         <span><strong>Automated response</strong><small>Automatically reply when incoming WhatsApp messages match your chosen audience.</small></span>
                       </label>
+                      <label class="radio-option radio-option--feature">
+                        <input type="radio" name="taskMode" value="schedule_status" />
+                        <span><strong>Schedule status</strong><small>Schedule a WhatsApp status post using text, uploaded media, or AI-generated media.</small></span>
+                      </label>
                     </div>
                   </div>
                   <label>
@@ -374,12 +382,12 @@
                   <section id="automationRulesCard" class="tip-card stack-sm hidden">
                     <strong>Choose when the automated response should trigger</strong>
                     <div class="automation-scope-grid">
-                      <label class="radio-option"><input type="radio" name="automationAudience" value="all_incoming" checked /><span>All incoming messages</span></label>
-                      <label class="radio-option"><input type="radio" name="automationAudience" value="unknown_numbers" /><span>Messages from numbers not saved on your WhatsApp</span></label>
-                      <label class="radio-option"><input type="radio" name="automationAudience" value="all_groups" /><span>Messages from all groups</span></label>
-                      <label class="radio-option"><input type="radio" name="automationAudience" value="managed_groups" /><span>Messages from groups you manage</span></label>
+                      <label class="radio-option"><input type="checkbox" name="automationAudience" value="all_incoming" checked /><span>All incoming messages</span></label>
+                      <label class="radio-option"><input type="checkbox" name="automationAudience" value="unknown_numbers" /><span>Messages from numbers not saved on your WhatsApp</span></label>
+                      <label class="radio-option"><input type="checkbox" name="automationAudience" value="all_groups" /><span>Messages from all groups</span></label>
+                      <label class="radio-option"><input type="checkbox" name="automationAudience" value="managed_groups" /><span>Messages from groups you manage</span></label>
                     </div>
-                    <p class="muted">Use “groups you manage” together with the group picker below if you only want auto replies in selected groups.</p>
+                    <p class="muted">Choose <strong>All incoming messages</strong> or combine multiple specific trigger options. Use “groups you manage” together with the group picker below if you only want auto replies in selected groups.</p>
                   </section>
                   <div>
                     <div class="section-heading">
@@ -782,8 +790,7 @@
 
     <footer class="app-footer footer-grid">
       <section class="footer-section stack">
-        <div class="brand-block footer-brand">
-          <div class="brand-logo brand-logo--small"><img src="/assets/logo.png" alt="CodeBot logo" class="brand-logo__image" /></div>
+        <div class="footer-brand footer-brand--text stack-sm">
           <div>
             <h3>CodeBot</h3>
             <p class="muted">CodeBot by CodeIgnite is a WhatsApp automation platform for teams that need reliable messaging, task management, and persistent workspace access.</p>

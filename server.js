@@ -641,14 +641,14 @@ const taskSchema = new mongoose.Schema({
   createdByUserId: { type: String, required: true },
   title: { type: String, required: true, trim: true },
   type: { type: String, required: true, trim: true },
-  mode: { type: String, enum: ['broadcast', 'automated_response'], default: 'broadcast' },
+  mode: { type: String, enum: ['broadcast', 'automated_response', 'schedule_status'], default: 'broadcast' },
   description: { type: String, required: true, trim: true },
   messageHtml: { type: String, default: '' },
   messageText: { type: String, default: '' },
   translatedPreview: { type: String, default: '' },
   mediaQueue: { type: Array, default: [] },
   recipients: { type: Object, default: { groups: [], contacts: [] } },
-  automation: { type: Object, default: { audience: 'all_incoming' } },
+  automation: { type: Object, default: { audience: ['all_incoming'] } },
   schedule: { type: Object, default: {} },
   timezone: { type: String, default: DEFAULT_TIMEZONE },
   status: { type: String, enum: ['draft', 'active', 'paused', 'completed'], default: 'active' },
@@ -1368,6 +1368,7 @@ async function buildMessagePayload(task) {
 }
 
 async function resolveTaskRecipients(task, sock) {
+  if (task?.mode === 'schedule_status') return ['status@broadcast'];
   const recipients = task?.recipients || {};
   const recipientIds = new Set();
   for (const contact of Array.isArray(recipients.contacts) ? recipients.contacts : []) {
@@ -1417,13 +1418,15 @@ async function findMatchingAutomatedResponseTask(tenantId, remoteJid) {
   const groupMessage = isGroupJid(remoteJid);
   const knownContact = groupMessage ? false : await isKnownContactForTenant(tenantId, remoteJid);
   return tasks.find((task) => {
-    const audience = String(task.automation?.audience || 'all_incoming');
-    if (audience === 'all_incoming') return true;
-    if (audience === 'unknown_numbers') return !groupMessage && !knownContact;
-    if (audience === 'all_groups') return groupMessage;
-    if (audience === 'managed_groups') {
+    const audienceList = Array.isArray(task.automation?.audience) && task.automation.audience.length
+      ? task.automation.audience.map((item) => String(item || ''))
+      : [String(task.automation?.audience || 'all_incoming')];
+    if (audienceList.includes('all_incoming')) return true;
+    if (audienceList.includes('unknown_numbers') && !groupMessage && !knownContact) return true;
+    if (audienceList.includes('all_groups') && groupMessage) return true;
+    if (audienceList.includes('managed_groups')) {
       const allowedGroups = Array.isArray(task.recipients?.groups) ? task.recipients.groups.map((group) => normalizeGroupJid(group?.id || '')) : [];
-      return groupMessage && allowedGroups.includes(normalizeGroupJid(remoteJid));
+      if (groupMessage && allowedGroups.includes(normalizeGroupJid(remoteJid))) return true;
     }
     return false;
   }) || null;
@@ -1959,19 +1962,8 @@ app.post('/api/company-profile', authenticateRequest, async (req, res) => {
 app.post('/api/tasks', authenticateRequest, requireScopedPermission('tasks:write'), async (req, res) => {
   const title = sanitizeTextInput(req.body.title);
   const type = sanitizeTextInput(req.body.type);
-  const mode = req.body.mode === 'automated_response' ? 'automated_response' : 'broadcast';
-  const description = sanitizeLongText(req.body.description);
-  if (!title || !type || !description) return res.status(400).json({ error: 'Title, type, and description are required.' });
-  const scope = getScopeContext(req);
-  await ensureCreditsAvailable({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.createTask, label: 'create a task' });
-  const recipients = req.body.recipients || {};
-  const groupDeliveryMode = recipients.groupDeliveryMode === 'members' ? 'members' : 'group';
-  const normalizedRecipients = sanitizeTaskRecipients(recipients);
-  if (mode !== 'automated_response' && !normalizedRecipients.groups.length && !normalizedRecipients.contacts.length) return res.status(400).json({ error: 'At least one valid contact or group recipient is required.' });
-  const timezone = validateTimezone(String(req.body.timezone || scope.timezone || DEFAULT_TIMEZONE));
-  const automationAudience = ['all_incoming', 'unknown_numbers', 'all_groups', 'managed_groups'].includes(String(req.body.automation?.audience || '')) ? String(req.body.automation.audience) : 'all_incoming';
-  if (mode === 'automated_response' && automationAudience === 'managed_groups' && !normalizedRecipients.groups.length) return res.status(400).json({ error: 'Select at least one group when using the managed groups automated response option.' });
-  const schedule = mode === 'automated_response' ? {} : validateSchedule(req.body.schedule || {}, timezone);
+  const mode = ['automated_response', 'schedule_status'].includes(String(req.body.mode || '')) ? String(req.body.mode) : 'broadcast';
+  const description = sanitizeLongText(req.body.description) || 'Media-only task';
   const sanitizedMediaQueue = Array.isArray(req.body.mediaQueue) ? req.body.mediaQueue.slice(0, 10).map((item) => ({
     name: sanitizeTextInput(item?.name || 'attachment'),
     type: sanitizeTextInput(item?.type || 'document'),
@@ -1982,6 +1974,21 @@ app.post('/api/tasks', authenticateRequest, requireScopedPermission('tasks:write
     previewText: sanitizeLongText(item?.previewText || ''),
     source: sanitizeTextInput(item?.source || ''),
   })).filter((item) => item.dataUrl.startsWith('data:')) : [];
+  if (!title || !type || (!description && !sanitizedMediaQueue.length)) return res.status(400).json({ error: 'Title, type, and either description or media are required.' });
+  const scope = getScopeContext(req);
+  await ensureCreditsAvailable({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.createTask, label: 'create a task' });
+  const recipients = req.body.recipients || {};
+  const groupDeliveryMode = recipients.groupDeliveryMode === 'members' ? 'members' : 'group';
+  const normalizedRecipients = sanitizeTaskRecipients(recipients);
+  if (!['automated_response', 'schedule_status'].includes(mode) && !normalizedRecipients.groups.length && !normalizedRecipients.contacts.length) return res.status(400).json({ error: 'At least one valid contact or group recipient is required.' });
+  const timezone = validateTimezone(String(req.body.timezone || scope.timezone || DEFAULT_TIMEZONE));
+  const automationAudience = Array.isArray(req.body.automation?.audience)
+    ? req.body.automation.audience.map((item) => String(item || '')).filter((item) => ['all_incoming', 'unknown_numbers', 'all_groups', 'managed_groups'].includes(item))
+    : ['all_incoming', 'unknown_numbers', 'all_groups', 'managed_groups'].includes(String(req.body.automation?.audience || '')) ? [String(req.body.automation.audience)] : ['all_incoming'];
+  if (!automationAudience.length) automationAudience.push('all_incoming');
+  if (automationAudience.includes('all_incoming')) automationAudience.splice(0, automationAudience.length, 'all_incoming');
+  if (mode === 'automated_response' && automationAudience.includes('managed_groups') && !normalizedRecipients.groups.length) return res.status(400).json({ error: 'Select at least one group when using the managed groups automated response option.' });
+  const schedule = mode === 'automated_response' ? {} : validateSchedule(req.body.schedule || {}, timezone);
   const task = await Task.create({
     tenantId: scope.scopeId,
     createdByUserId: String(req.user._id),
