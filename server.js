@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import path from 'path';
+import tls from 'tls';
 import { fileURLToPath } from 'url';
 import express from 'express';
 import mongoose from 'mongoose';
@@ -63,6 +64,15 @@ const IS_LOCAL = process.env.USE_LOCAL === 'true';
 const MONGO_URI = IS_LOCAL ? 'mongodb://localhost:27017/whatsapp_bot' : process.env.CLOUD_MONGO_URI;
 const PORT = Number(process.env.PORT || 3000);
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'wa_session';
+const SMTP_HOST = process.env.SMTP_HOST || 'smtp.zoho.com';
+const SMTP_PORT = Number(process.env.SMTP_PORT || 465);
+const SMTP_PASSWORD = process.env.SMTP_PASSWORD || '';
+const SMTP_USER = process.env.SMTP_USER || 'codebot@zohomail.com';
+const SMTP_FROM_NAME = process.env.SMTP_FROM_NAME || 'CodeBot';
+const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY || '';
+const PAYSTACK_PUBLIC_KEY = process.env.PAYSTACK_PUBLIC_KEY || '';
+const PAYSTACK_CURRENCY = process.env.PAYSTACK_CURRENCY || 'NGN';
+const PAYSTACK_CREDIT_RATE = Number(process.env.PAYSTACK_CREDIT_RATE || 1);
 const SESSION_COOKIE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const CREDIT_SIGNUP_BONUS = Number(process.env.DEFAULT_SIGNUP_CREDITS || 150);
 const DEFAULT_TIMEZONE = process.env.DEFAULT_TENANT_TIMEZONE || 'UTC';
@@ -129,6 +139,152 @@ function parseCookies(header = '') {
     cookies[decodeURIComponent(rawKey)] = decodeURIComponent(rawValue.join('='));
     return cookies;
   }, {});
+}
+
+function encodeSmtpLine(value = '') {
+  return Buffer.from(String(value || ''), 'utf8').toString('base64');
+}
+
+function quotePrintableHeader(value = '') {
+  return String(value || '').replace(/[\r\n]+/g, ' ').trim();
+}
+
+function readSmtpResponse(socket) {
+  return new Promise((resolve, reject) => {
+    let buffer = '';
+    const cleanup = () => {
+      socket.off('data', onData);
+      socket.off('error', onError);
+      socket.off('close', onClose);
+      clearTimeout(timeout);
+    };
+    const onError = (error) => { cleanup(); reject(error); };
+    const onClose = () => { cleanup(); reject(new Error('SMTP connection closed unexpectedly.')); };
+    const onData = (chunk) => {
+      buffer += chunk.toString('utf8');
+      const lines = buffer.split(/\r?\n/).filter(Boolean);
+      if (!lines.length) return;
+      const lastLine = lines[lines.length - 1];
+      if (/^\d{3} /.test(lastLine)) { cleanup(); resolve(lines); }
+    };
+    const timeout = setTimeout(() => { cleanup(); reject(new Error('SMTP server timed out.')); }, 15000);
+    socket.on('data', onData);
+    socket.on('error', onError);
+    socket.on('close', onClose);
+  });
+}
+
+async function sendSmtpCommand(socket, command, expectedCodes = [250]) {
+  if (command) socket.write(`${command}\r\n`);
+  const lines = await readSmtpResponse(socket);
+  const statusCode = Number(String(lines[lines.length - 1] || '').slice(0, 3));
+  if (!expectedCodes.includes(statusCode)) {
+    throw new Error(lines.join(' | ') || `Unexpected SMTP response ${statusCode}`);
+  }
+  return lines;
+}
+
+async function sendEnquiryEmail({ name, email, message }) {
+  if (!SMTP_PASSWORD) throw new Error('SMTP_PASSWORD is required to send enquiry emails.');
+  const socket = tls.connect({ host: SMTP_HOST, port: SMTP_PORT, servername: SMTP_HOST, minVersion: 'TLSv1.2' });
+  await new Promise((resolve, reject) => {
+    socket.once('secureConnect', resolve);
+    socket.once('error', reject);
+  });
+  try {
+    await sendSmtpCommand(socket, '', [220]);
+    await sendSmtpCommand(socket, `EHLO ${SMTP_HOST}`, [250]);
+    await sendSmtpCommand(socket, 'AUTH LOGIN', [334]);
+    await sendSmtpCommand(socket, encodeSmtpLine(SMTP_USER), [334]);
+    await sendSmtpCommand(socket, encodeSmtpLine(SMTP_PASSWORD), [235]);
+    await sendSmtpCommand(socket, `MAIL FROM:<${SMTP_USER}>`, [250]);
+    await sendSmtpCommand(socket, `RCPT TO:<${SMTP_USER}>`, [250, 251]);
+    await sendSmtpCommand(socket, 'DATA', [354]);
+    const safeName = quotePrintableHeader(name);
+    const safeEmail = quotePrintableHeader(email);
+    const safeMessage = String(message || '').replace(/\r?\n/g, '\r\n').replace(/^\./gm, '..');
+    const composed = [
+      `From: ${SMTP_FROM_NAME} <${SMTP_USER}>`,
+      `To: ${SMTP_USER}`,
+      `Reply-To: ${safeEmail}`,
+      `Subject: CodeBot enquiry from ${safeName}`,
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset=UTF-8',
+      '',
+      `Name: ${safeName}`,
+      `Email: ${safeEmail}`,
+      '',
+      safeMessage,
+      '.',
+    ].join('\r\n');
+    await sendSmtpCommand(socket, composed, [250]);
+    await sendSmtpCommand(socket, 'QUIT', [221]);
+  } finally {
+    socket.end();
+  }
+}
+
+function normalizePaymentAmount(amount) {
+  const normalized = Number(amount || 0);
+  if (!Number.isFinite(normalized) || normalized <= 0) throw new Error('Enter a valid payment amount.');
+  return Math.round(normalized * 100) / 100;
+}
+
+function convertAmountToCredits(amount) {
+  return Math.max(1, Math.round(Number(amount || 0) * PAYSTACK_CREDIT_RATE));
+}
+
+async function creditAccountBalance({ tenant = null, user, amount = 0, type, metadata = {} }) {
+  const normalizedAmount = Number(amount || 0);
+  if (!normalizedAmount) return tenant || user;
+  if (tenant) {
+    tenant.credits = Number(tenant.credits || 0) + normalizedAmount;
+    await tenant.save();
+    await CreditLedger.create({
+      tenantId: String(tenant._id),
+      userId: String(user._id),
+      type,
+      delta: normalizedAmount,
+      balanceAfter: tenant.credits,
+      metadata,
+    });
+    return tenant;
+  }
+  user.credits = Number(user.credits || 0) + normalizedAmount;
+  await user.save();
+  return user;
+}
+
+async function initializePaystackTransaction({ email, amount, reference, metadata = {} }) {
+  if (!PAYSTACK_SECRET_KEY) throw new Error('PAYSTACK_SECRET_KEY is required to initialize payments.');
+  const response = await fetch('https://api.paystack.co/transaction/initialize', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      email,
+      amount: Math.round(Number(amount) * 100),
+      reference,
+      currency: PAYSTACK_CURRENCY,
+      metadata,
+      channels: ['card', 'bank', 'ussd', 'bank_transfer', 'mobile_money'],
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.status === false) throw new Error(payload.message || 'Unable to initialize Paystack payment.');
+  return payload.data;
+}
+
+async function verifyPaystackTransaction(reference) {
+  if (!PAYSTACK_SECRET_KEY) throw new Error('PAYSTACK_SECRET_KEY is required to verify payments.');
+  const response = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
+    headers: { Authorization: `Bearer ${PAYSTACK_SECRET_KEY}` },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.status === false) throw new Error(payload.message || 'Unable to verify Paystack payment.');
+  return payload.data;
 }
 
 function buildSessionCookie(token) {
@@ -445,7 +601,6 @@ const userSchema = new mongoose.Schema({
   socialProviders: {
     google: { type: Boolean, default: false },
     github: { type: Boolean, default: false },
-    microsoft: { type: Boolean, default: false },
   },
 }, { timestamps: true });
 
@@ -547,6 +702,20 @@ const enquirySchema = new mongoose.Schema({
   recipient: { type: String, default: 'admin@codesignite.com' },
 }, { timestamps: true });
 
+const paymentTransactionSchema = new mongoose.Schema({
+  reference: { type: String, required: true, unique: true },
+  userId: { type: String, required: true, index: true },
+  tenantId: { type: String, default: '' },
+  email: { type: String, required: true, trim: true, lowercase: true },
+  amount: { type: Number, required: true },
+  credits: { type: Number, required: true },
+  currency: { type: String, default: PAYSTACK_CURRENCY },
+  status: { type: String, enum: ['initialized', 'success', 'failed'], default: 'initialized' },
+  channel: { type: String, default: 'paystack' },
+  metadata: { type: Object, default: {} },
+  verifiedAt: { type: Date, default: null },
+}, { timestamps: true });
+
 const Tenant = mongoose.model('Tenant', tenantSchema);
 const TenantMembership = mongoose.model('TenantMembership', tenantMembershipSchema);
 const User = mongoose.model('User', userSchema);
@@ -559,6 +728,7 @@ const MessageDispatch = mongoose.model('MessageDispatch', messageDispatchSchema)
 const TenantAudienceGroup = mongoose.model('TenantAudienceGroup', tenantAudienceGroupSchema);
 const TenantAudienceContact = mongoose.model('TenantAudienceContact', tenantAudienceContactSchema);
 const Enquiry = mongoose.model('Enquiry', enquirySchema);
+const PaymentTransaction = mongoose.model('PaymentTransaction', paymentTransactionSchema);
 
 async function connectDatabase() {
   if (!MONGO_URI) throw new Error('Missing MongoDB connection string. Set CLOUD_MONGO_URI or USE_LOCAL=true.');
@@ -909,11 +1079,6 @@ async function callHuggingFaceImage(prompt) {
     }
   }
   throw lastError || new Error('No image was returned by the Hugging Face Space.');
-}
-
-function fallbackImage(prompt) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect width="100%" height="100%" fill="#0f172a"/><rect x="64" y="64" width="896" height="896" rx="48" fill="#25d366" opacity="0.16"/><text x="80" y="220" fill="white" font-size="56" font-family="Arial">AI image placeholder</text><text x="80" y="320" fill="white" font-size="28" font-family="Arial">${String(prompt).replace(/[<&>]/g, '')}</text></svg>`;
-  return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
 }
 
 function normalizeTimeValue(value = '') {
@@ -1407,7 +1572,7 @@ app.patch('/api/users/theme', authenticateRequest, async (req, res) => {
 
 app.get('/api/auth/providers/:provider', (req, res) => {
   const provider = String(req.params.provider || '').toLowerCase();
-  if (!['google', 'github', 'microsoft'].includes(provider)) return res.status(404).json({ error: 'Unsupported provider.' });
+  if (!['google', 'github'].includes(provider)) return res.status(404).json({ error: 'Unsupported provider.' });
   res.json(buildSocialProviderResponse(provider));
 });
 
@@ -1557,7 +1722,8 @@ app.post('/api/ai/text', authenticateRequest, requireScopedPermission('tasks:wri
     await debitCredits({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.generateText, type: 'ai_text', metadata: { promptLength: prompt.length, scopeId: scope.scopeId } });
     res.json({ text, model: 'hugging-face-space', user: sanitizeUser(req.user, req.membership, req.tenant) });
   } catch (error) {
-    res.status(500).json({ error: error.message || 'Unable to generate AI text.' });
+    logger.warn({ error: error.message }, 'AI text generation unavailable');
+    res.status(502).json({ error: 'We are unable to generate text right now. Please try again shortly.' });
   }
 });
 
@@ -1567,18 +1733,12 @@ app.post('/api/ai/image', authenticateRequest, requireScopedPermission('tasks:wr
     if (!prompt) return res.status(400).json({ error: 'Prompt is required.' });
     const scope = getScopeContext(req);
     await ensureCreditsAvailable({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.generateImage, label: 'generate AI image' });
-    let imageUrl;
-    try {
-      imageUrl = await callHuggingFaceImage(prompt);
-    } catch (providerError) {
-      logger.warn({ error: providerError.message }, 'Hugging Face image generation failed, returning fallback image');
-      await debitCredits({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.generateImage, type: 'ai_image_fallback', metadata: { promptLength: prompt.length, scopeId: scope.scopeId } });
-      return res.json({ imageUrl: fallbackImage(prompt), model: 'fallback-placeholder', user: sanitizeUser(req.user, req.membership, req.tenant) });
-    }
+    const imageUrl = await callHuggingFaceImage(prompt);
     await debitCredits({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.generateImage, type: 'ai_image', metadata: { promptLength: prompt.length, scopeId: scope.scopeId } });
     res.json({ imageUrl, user: sanitizeUser(req.user, req.membership, req.tenant) });
   } catch (error) {
-    res.status(500).json({ error: error.message || 'Unable to generate AI image.' });
+    logger.warn({ error: error.message }, 'AI image generation unavailable');
+    res.status(502).json({ error: 'We are unable to generate an image right now. Please try again shortly.' });
   }
 });
 
@@ -1671,14 +1831,118 @@ app.get('/api/tenants/me', authenticateRequest, requireActiveWorkspace, async (r
   res.json({ tenant: req.tenant, membership: req.membership, ledger });
 });
 
+app.post('/api/payments/paystack/initialize', authenticateRequest, async (req, res) => {
+  try {
+    const amount = normalizePaymentAmount(req.body.amount);
+    const credits = convertAmountToCredits(amount);
+    const scope = getScopeContext(req);
+    const reference = `codebot_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
+    await PaymentTransaction.create({
+      reference,
+      userId: String(req.user._id),
+      tenantId: scope.tenant ? String(scope.tenant._id) : '',
+      email: req.user.email,
+      amount,
+      credits,
+      currency: PAYSTACK_CURRENCY,
+      metadata: { scopeId: scope.scopeId, scopeType: scope.tenant ? 'workspace' : 'account' },
+    });
+    const initialized = await initializePaystackTransaction({
+      email: req.user.email,
+      amount,
+      reference,
+      metadata: { credits, scopeId: scope.scopeId, scopeType: scope.tenant ? 'workspace' : 'account' },
+    });
+    res.status(201).json({
+      reference,
+      accessCode: initialized.access_code,
+      authorizationUrl: initialized.authorization_url,
+      amount,
+      credits,
+      currency: PAYSTACK_CURRENCY,
+      publicKey: PAYSTACK_PUBLIC_KEY,
+      email: req.user.email,
+      user: sanitizeUser(req.user, req.membership, req.tenant),
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message || 'Unable to initialize payment.' });
+  }
+});
+
+app.post('/api/payments/paystack/verify', authenticateRequest, async (req, res) => {
+  try {
+    const reference = String(req.body.reference || '').trim();
+    if (!reference) return res.status(400).json({ error: 'Payment reference is required.' });
+    const transaction = await PaymentTransaction.findOne({ reference, userId: String(req.user._id) });
+    if (!transaction) return res.status(404).json({ error: 'Payment transaction not found.' });
+    if (transaction.status === 'success') {
+      if (transaction.tenantId) req.tenant = await Tenant.findById(transaction.tenantId);
+      return res.json({
+        success: true,
+        transaction,
+        user: sanitizeUser(await User.findById(req.user._id), req.membership, req.tenant || null),
+      });
+    }
+    const verified = await verifyPaystackTransaction(reference);
+    if (verified.status !== 'success') {
+      transaction.status = 'failed';
+      transaction.metadata = { ...transaction.metadata, paystackStatus: verified.status || 'failed' };
+      await transaction.save();
+      return res.status(400).json({ error: 'Payment was not successful.' });
+    }
+    const paidAmount = Number(verified.amount || 0) / 100;
+    if (paidAmount < Number(transaction.amount || 0)) {
+      transaction.status = 'failed';
+      transaction.metadata = { ...transaction.metadata, paidAmount };
+      await transaction.save();
+      return res.status(400).json({ error: 'Verified payment amount did not match the expected amount.' });
+    }
+    const scopeTenant = transaction.tenantId ? await Tenant.findById(transaction.tenantId) : null;
+    const freshUser = await User.findById(req.user._id);
+    await creditAccountBalance({
+      tenant: scopeTenant,
+      user: freshUser,
+      amount: Number(transaction.credits || 0),
+      type: 'payment_topup',
+      metadata: { reference, channel: 'paystack', amount: transaction.amount, currency: transaction.currency },
+    });
+    transaction.status = 'success';
+    transaction.verifiedAt = new Date();
+    transaction.metadata = { ...transaction.metadata, gatewayResponse: verified.gateway_response || '', channel: verified.channel || '' };
+    await transaction.save();
+    const membership = transaction.tenantId ? await TenantMembership.findOne({ tenantId: transaction.tenantId, userId: freshUser._id, status: 'active' }) : null;
+    res.json({
+      success: true,
+      transaction,
+      user: sanitizeUser(freshUser, membership, scopeTenant),
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message || 'Unable to verify payment.' });
+  }
+});
+
 app.post('/api/enquiries', async (req, res) => {
-  const name = String(req.body.name || '').trim();
-  const email = String(req.body.email || '').trim().toLowerCase();
-  const message = String(req.body.message || '').trim();
-  if (!name || !email || !message) return res.status(400).json({ error: 'Name, email, and message are required.' });
-  await Enquiry.create({ name, email, message, recipient: 'admin@codesignite.com' });
-  const mailtoUrl = `mailto:admin@codesignite.com?subject=${encodeURIComponent(`CodeBot enquiry from ${name}`)}&body=${encodeURIComponent(`Name: ${name}\nEmail: ${email}\n\n${message}`)}`;
-  res.status(201).json({ success: true, message: 'Enquiry saved and ready to send to admin@codesignite.com.', mailtoUrl });
+  try {
+    const name = String(req.body.name || '').trim();
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const message = String(req.body.message || '').trim();
+    if (!name || !email || !message) return res.status(400).json({ error: 'Name, email, and message are required.' });
+    await Enquiry.create({ name, email, message, recipient: SMTP_USER });
+    await sendEnquiryEmail({ name, email, message });
+    res.status(201).json({ success: true, message: `Enquiry sent successfully to ${SMTP_USER}.` });
+  } catch (error) {
+    logger.warn({ error: error.message }, 'Unable to send enquiry email');
+    res.status(500).json({ error: error.message || 'Unable to send your enquiry right now.' });
+  }
+});
+
+app.get('/api/config/public', (req, res) => {
+  res.json({
+    paystackPublicKey: PAYSTACK_PUBLIC_KEY,
+    paystackCurrency: PAYSTACK_CURRENCY,
+    paystackCreditRate: PAYSTACK_CREDIT_RATE,
+    smtpFrom: SMTP_USER,
+  });
 });
 
 app.get('/api/config/required-credentials', (req, res) => {
@@ -1688,8 +1952,9 @@ app.get('/api/config/required-credentials', (req, res) => {
     socialLogin: {
       google: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_CALLBACK_URL'],
       github: ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET', 'GITHUB_CALLBACK_URL'],
-      microsoft: ['MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_CALLBACK_URL'],
     },
+    payments: ['PAYSTACK_PUBLIC_KEY', 'PAYSTACK_SECRET_KEY', 'PAYSTACK_CURRENCY (optional)', 'PAYSTACK_CREDIT_RATE (optional)'],
+    email: ['SMTP_PORT', 'SMTP_PASSWORD', 'SMTP_HOST (optional)', 'SMTP_USER (optional)', 'SMTP_FROM_NAME (optional)'],
     optional: ['PORT', 'DEFAULT_SIGNUP_CREDITS', 'HUGGINGFACE_TEXT_SPACE_ID', 'HUGGINGFACE_IMAGE_SPACE_ID', 'HUGGINGFACE_TEXT_SYSTEM_PROMPT'],
   });
 });
