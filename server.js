@@ -95,8 +95,9 @@ const HUGGINGFACE_IMAGE_HEIGHT = Number(process.env.HUGGINGFACE_IMAGE_HEIGHT || 
 const HUGGINGFACE_IMAGE_GUIDANCE_SCALE = Number(process.env.HUGGINGFACE_IMAGE_GUIDANCE_SCALE || 0);
 const HUGGINGFACE_IMAGE_STEPS = Number(process.env.HUGGINGFACE_IMAGE_STEPS || 2);
 const CREDIT_COSTS = {
-  whatsappConnect: Number(process.env.CREDIT_COST_WHATSAPP_CONNECT || 5),
-  createTask: Number(process.env.CREDIT_COST_CREATE_TASK || 10),
+  whatsappConnect: Number(process.env.CREDIT_COST_WHATSAPP_CONNECT || 0),
+  createTask: Number(process.env.CREDIT_COST_CREATE_TASK || 0),
+  sendMessage: Number(process.env.CREDIT_COST_SEND_MESSAGE || process.env.CREDIT_COST_CREATE_TASK || 10),
   generateText: Number(process.env.CREDIT_COST_GENERATE_TEXT || 2),
   generateImage: Number(process.env.CREDIT_COST_GENERATE_IMAGE || 6),
 };
@@ -1473,6 +1474,13 @@ async function recordDispatch(tenantId, taskId, recipient, status, error = '', m
   });
 }
 
+async function chargeForMessageSend({ tenant = null, user = null, amount = CREDIT_COSTS.sendMessage, type = 'message_send', metadata = {} }) {
+  const normalizedAmount = Number(amount || 0);
+  if (!normalizedAmount) return;
+  await ensureCreditsAvailable({ tenant, user, amount: normalizedAmount, label: 'send a WhatsApp message' });
+  await debitCredits({ tenant, user, amount: normalizedAmount, type, metadata });
+}
+
 function logTaskFailure(task, reason, extra = {}) {
   const details = {
     taskId: String(task?._id || ''),
@@ -1495,6 +1503,10 @@ async function dispatchTask(task, now = new Date()) {
   }
   const tenantId = String(task.tenantId || '');
   const sock = socketStore.get(tenantId);
+  const billingTarget = tenantId.startsWith('user:') ? await User.findById(task.createdByUserId) : await Tenant.findById(tenantId);
+  const billingContext = tenantId.startsWith('user:')
+    ? { tenant: null, user: billingTarget }
+    : { tenant: billingTarget, user: await User.findById(task.createdByUserId) };
   if (!sock) {
     task.lastError = 'WhatsApp is not connected for this workspace.';
     logTaskFailure(task, task.lastError, { tenantId });
@@ -1522,6 +1534,8 @@ async function dispatchTask(task, now = new Date()) {
     await task.save();
     return task;
   }
+  const projectedCharge = Number(CREDIT_COSTS.sendMessage || 0) * recipients.length;
+  await ensureCreditsAvailable({ ...billingContext, amount: projectedCharge, label: `send ${recipients.length} WhatsApp message${recipients.length === 1 ? '' : 's'}` });
   let deliveredCount = 0;
   let failedCount = 0;
   for (const recipient of recipients) {
@@ -1533,6 +1547,11 @@ async function dispatchTask(task, now = new Date()) {
       } else {
         await sock.sendMessage(recipient, messagePayload);
       }
+      await chargeForMessageSend({
+        ...billingContext,
+        type: task.mode === 'automated_response' ? 'auto_reply_send' : task.mode === 'schedule_status' ? 'status_send' : 'scheduled_message_send',
+        metadata: { taskId: String(task._id), recipient, scopeId: tenantId },
+      });
       deliveredCount += 1;
       await recordDispatch(tenantId, String(task._id), recipient, 'sent', '', messagePayload);
     } catch (error) {
@@ -1798,6 +1817,12 @@ async function startWhatsAppSession(user, tenant) {
       if (!replyPayload) return;
       await new Promise((resolve) => setTimeout(resolve, pickReplyDelay()));
       await sock.sendMessage(remoteJid, replyPayload);
+      await chargeForMessageSend({
+        tenant,
+        user,
+        type: 'auto_reply_send',
+        metadata: { tenantId, remoteJid, scopeId: scope.scopeId, automatedTaskId: matchingAutomatedTask ? String(matchingAutomatedTask._id) : '' },
+      });
       rememberConversation(remoteJid, 'assistant', replyText);
       await upsertConversationHistory(scope, remoteJid, text, replyText);
     } catch (error) {
@@ -1960,9 +1985,7 @@ app.post('/api/workspaces', authenticateRequest, async (req, res) => {
 
 app.post('/api/whatsapp/connect', authenticateRequest, requireActiveWorkspace, requirePermission('whatsapp:connect'), async (req, res) => {
   try {
-    ensureCredits(req.tenant, CREDIT_COSTS.whatsappConnect, 'connect WhatsApp');
     const state = await startWhatsAppSession(req.user, req.tenant);
-    await appendCreditLedger({ tenant: req.tenant, user: req.user, amount: CREDIT_COSTS.whatsappConnect, type: 'whatsapp_connect', metadata: { tenantId: String(req.tenant._id) } });
     res.json({ ...state, user: sanitizeUser(req.user, req.membership, req.tenant) });
   } catch (error) {
     await persistConnectionState(String(req.tenant._id), { status: 'error', qr: '', message: error.message || 'Unable to start WhatsApp connection.', userId: String(req.user._id) });
@@ -2040,7 +2063,6 @@ app.post('/api/tasks', authenticateRequest, requireScopedPermission('tasks:write
   })).filter((item) => item.dataUrl.startsWith('data:')) : [];
   if (!title || !type || (!description && !sanitizedMediaQueue.length)) return res.status(400).json({ error: 'Title, type, and either description or media are required.' });
   const scope = getScopeContext(req);
-  await ensureCreditsAvailable({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.createTask, label: 'create a task' });
   const recipients = req.body.recipients || {};
   const groupDeliveryMode = recipients.groupDeliveryMode === 'members' ? 'members' : 'group';
   const normalizedRecipients = sanitizeTaskRecipients(recipients);
@@ -2071,7 +2093,6 @@ app.post('/api/tasks', authenticateRequest, requireScopedPermission('tasks:write
     status: 'active',
     nextRunAt: mode === 'automated_response' ? null : computeNextRunAt(schedule, timezone),
   });
-  await debitCredits({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.createTask, type: 'task_create', metadata: { taskId: String(task._id), scopeId: scope.scopeId } });
   const finalTask = schedule.frequency === 'now' ? await dispatchTask(task, new Date()) : task;
   res.status(201).json({ task: finalTask, user: sanitizeUser(req.user, req.membership, req.tenant) });
 });
