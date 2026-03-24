@@ -392,9 +392,7 @@ function getTaskTypeLabel() {
 function getTaskWizardTabs() {
   return isAutomatedMode()
     ? ['message', 'schedule', 'task-list']
-    : isStatusMode()
-      ? ['message', 'schedule', 'task-list']
-      : ['message', 'audience', 'schedule', 'task-list'];
+    : ['message', 'audience', 'schedule', 'task-list'];
 }
 
 function navigateTaskWizard(direction = 'next') {
@@ -421,7 +419,7 @@ function updateTaskModeUI() {
   const isAutomated = isAutomatedMode();
   const isStatus = isStatusMode();
   const hideComposer = isAutomated;
-  const hideAudienceStep = isAutomated || isStatus;
+  const hideAudienceStep = isAutomated;
   ui.automationRulesCard?.classList.toggle('hidden', !isAutomated);
   ui.automationScheduleNote?.classList.toggle('hidden', !isAutomated);
   document.querySelector('[data-task-tab="audience"]')?.classList.toggle('hidden', hideAudienceStep);
@@ -442,7 +440,7 @@ function updateTaskModeUI() {
   if (hideComposer && ['ai-text', 'ai-media'].includes(taskBuilderState.activeTab)) setTaskTab('message');
   if (hideAudienceStep && taskBuilderState.activeTab === 'audience') setTaskTab('schedule');
   const audiencePanel = document.querySelector('[data-task-panel="audience"]');
-  audiencePanel?.querySelector('h3')?.replaceChildren(document.createTextNode(isAutomated ? 'Select managed groups for automated replies' : isStatus ? 'Audience is not required for scheduled status posts' : 'Select broadcast recipients or managed groups'));
+  audiencePanel?.querySelector('h3')?.replaceChildren(document.createTextNode(isAutomated ? 'Select managed groups for automated replies' : isStatus ? 'Select status viewers (contacts) and optional broadcast recipients' : 'Select broadcast recipients or managed groups'));
   if (ui.scheduleTaskButton) ui.scheduleTaskButton.textContent = isAutomated ? 'Schedule task' : isStatus ? 'Schedule status' : 'Schedule task';
   if (ui.messageNextButton) {
     ui.messageNextButton.textContent = hideAudienceStep ? 'Go to schedule' : 'Next: audience';
@@ -458,7 +456,8 @@ function updateTaskModeUI() {
       : `Replies to ${taskBuilderState.automationAudience.map((value) => labels[value]).filter(Boolean).join(' and ')}.`;
   }
   if (ui.scheduleSummary && isStatus) {
-    ui.scheduleSummary.textContent = 'This scheduled task will publish to WhatsApp Status using the same scheduling workflow as a broadcast.';
+    const statusAudienceCount = taskBuilderState.selectedContacts.size + taskBuilderState.manualRecipients.length;
+    ui.scheduleSummary.textContent = `This scheduled task will publish to WhatsApp Status for ${statusAudienceCount || 0} selected viewer${statusAudienceCount === 1 ? '' : 's'}.`;
   }
 }
 
@@ -1301,8 +1300,9 @@ function buildScheduleDescription() {
     return selected.length ? `This auto reply will answer ${selected.join(' and ')}.` : 'Automated response will start as soon as it is saved.';
   }
   if (isStatusMode()) {
-    if (taskBuilderState.frequency === 'now') return 'Status post will be published to WhatsApp Status immediately after you save it.';
-    return `Status post will follow the selected ${taskBuilderState.frequency || 'schedule'} workflow and publish to WhatsApp Status.`;
+    const viewerCount = taskBuilderState.selectedContacts.size + taskBuilderState.manualRecipients.length;
+    if (taskBuilderState.frequency === 'now') return `Status post will be published to WhatsApp Status immediately after you save it for ${viewerCount} selected viewer${viewerCount === 1 ? '' : 's'}.`;
+    return `Status post will follow the selected ${taskBuilderState.frequency || 'schedule'} workflow and publish to WhatsApp Status for ${viewerCount} selected viewer${viewerCount === 1 ? '' : 's'}.`;
   }
   const startDate = ui.startDateInput.value || 'No date selected';
   const startTime = ui.startTimeInput.value || 'No time selected';
@@ -1559,6 +1559,11 @@ async function scheduleTask() {
     setTaskTab('audience');
     return;
   }
+  if (isStatus && !selectedContacts.length && !manualContacts.length) {
+    showToast('Select at least one contact or phone number for status viewers.');
+    setTaskTab('audience');
+    return;
+  }
   if (invalidManualRecipients.length) {
     showToast(`These recipients are invalid: ${invalidManualRecipients.join(', ')}`);
     return;
@@ -1591,7 +1596,7 @@ async function scheduleTask() {
       mediaQueue: taskBuilderState.mediaQueue,
       recipients: {
         groups: isStatus ? [] : normalizedRecipients.groups,
-        contacts: isStatus ? [] : normalizedRecipients.contacts,
+        contacts: normalizedRecipients.contacts,
         groupDeliveryMode: taskBuilderState.groupDeliveryMode,
       },
       schedule: isAutomated ? {} : buildScheduleConfig(),
