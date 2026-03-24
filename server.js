@@ -231,6 +231,50 @@ async function sendEnquiryEmail({ name, email, message }) {
   }
 }
 
+async function sendWhatsAppReconnectEmail({ user, tenant, reason = '' }) {
+  if (!SMTP_PASSWORD || !user?.email) return false;
+  const socket = tls.connect({ host: SMTP_HOST, port: SMTP_PORT, servername: SMTP_HOST, minVersion: 'TLSv1.2' });
+  await new Promise((resolve, reject) => {
+    socket.once('secureConnect', resolve);
+    socket.once('error', reject);
+  });
+  try {
+    await sendSmtpCommand(socket, '', [220]);
+    await sendSmtpCommand(socket, `EHLO ${SMTP_HOST}`, [250]);
+    await sendSmtpCommand(socket, 'AUTH LOGIN', [334]);
+    await sendSmtpCommand(socket, encodeSmtpLine(SMTP_USER), [334]);
+    await sendSmtpCommand(socket, encodeSmtpLine(SMTP_PASSWORD), [235]);
+    await sendSmtpCommand(socket, `MAIL FROM:<${SMTP_USER}>`, [250]);
+    await sendSmtpCommand(socket, `RCPT TO:<${quotePrintableHeader(user.email)}>`, [250, 251]);
+    await sendSmtpCommand(socket, 'DATA', [354]);
+    const safeUsername = quotePrintableHeader(user.username || user.email || 'there');
+    const safeWorkspace = quotePrintableHeader(tenant?.name || 'your workspace');
+    const safeReason = quotePrintableHeader(reason || 'Connection handshake failed unexpectedly.');
+    const composed = [
+      `From: ${SMTP_FROM_NAME} <${SMTP_USER}>`,
+      `To: ${quotePrintableHeader(user.email)}`,
+      'Subject: WhatsApp reconnect required',
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset=UTF-8',
+      '',
+      `Hi ${safeUsername},`,
+      '',
+      `We could not keep your WhatsApp connection active for ${safeWorkspace}.`,
+      `Reason: ${safeReason}`,
+      '',
+      'Please open the dashboard and click "Connect WhatsApp" to reconnect.',
+      '',
+      '- CodeBot',
+      '.',
+    ].join('\r\n');
+    await sendSmtpCommand(socket, composed, [250]);
+    await sendSmtpCommand(socket, 'QUIT', [221]);
+    return true;
+  } finally {
+    socket.end();
+  }
+}
+
 function normalizePaymentAmount(amount) {
   const normalized = Number(amount || 0);
   if (!Number.isFinite(normalized) || normalized <= 0) throw new Error('Enter a valid payment amount.');
@@ -559,6 +603,10 @@ async function upsertAudienceGroups(tenantId, groups = []) {
 async function syncAudienceFromSocket(tenantId, sock) {
   const allGroups = await sock.groupFetchAllParticipating().catch(() => ({}));
   await upsertAudienceGroups(tenantId, Object.values(allGroups || {}));
+  const chatMap = sock?.chats && typeof sock.chats === 'object' ? Object.values(sock.chats) : [];
+  if (Array.isArray(chatMap) && chatMap.length) {
+    await upsertAudienceContacts(tenantId, [], chatMap);
+  }
   return audienceStore.get(tenantId) || buildDefaultAudienceState();
 }
 
@@ -1407,6 +1455,15 @@ async function getStatusAudienceJids(tenantId, sock = null) {
   return collectAudienceJids(refreshedAudience);
 }
 
+function getTaskScopedStatusAudience(task = {}) {
+  const contacts = Array.isArray(task?.recipients?.contacts) ? task.recipients.contacts : [];
+  return Array.from(new Set(
+    contacts
+      .map((contact) => normalizePhoneJid(contact?.id || contact?.phone || ''))
+      .filter(Boolean),
+  ));
+}
+
 async function resolveTaskRecipients(task, sock) {
   if (task?.mode === 'schedule_status') return ['status@broadcast'];
   const recipients = task?.recipients || {};
@@ -1536,7 +1593,12 @@ async function dispatchTask(task, now = new Date()) {
     return task;
   }
   const recipients = await resolveTaskRecipients(task, sock);
-  if (!recipients.length) {
+  let statusAudienceJids = [];
+  if (task.mode === 'schedule_status') {
+    statusAudienceJids = getTaskScopedStatusAudience(task);
+    if (!statusAudienceJids.length) statusAudienceJids = await getStatusAudienceJids(tenantId, sock);
+  }
+  if (!recipients.length || (task.mode === 'schedule_status' && !statusAudienceJids.length)) {
     task.lastError = 'No recipients were resolved.';
     logTaskFailure(task, task.lastError, { tenantId });
     task.claimToken = '';
@@ -1544,29 +1606,31 @@ async function dispatchTask(task, now = new Date()) {
     await task.save();
     return task;
   }
-  const projectedCharge = Number(CREDIT_COSTS.sendMessage || 0) * recipients.length;
-  await ensureCreditsAvailable({ ...billingContext, amount: projectedCharge, label: `send ${recipients.length} WhatsApp message${recipients.length === 1 ? '' : 's'}` });
+  const projectedRecipients = task.mode === 'schedule_status' ? statusAudienceJids.length : recipients.length;
+  const projectedCharge = Number(CREDIT_COSTS.sendMessage || 0) * projectedRecipients;
+  await ensureCreditsAvailable({ ...billingContext, amount: projectedCharge, label: `send ${projectedRecipients} WhatsApp message${projectedRecipients === 1 ? '' : 's'}` });
   let deliveredCount = 0;
   let failedCount = 0;
   for (const recipient of recipients) {
     try {
       if (task.mode === 'schedule_status') {
-        const statusJidList = await getStatusAudienceJids(tenantId, sock);
-        if (!statusJidList.length) throw new Error('No WhatsApp contacts are available yet for status delivery. Refresh your workspace audience and try again.');
-        await sock.sendMessage('status@broadcast', messagePayload, { broadcast: true, statusJidList });
+        await sock.sendMessage('status@broadcast', messagePayload, { broadcast: true, statusJidList: statusAudienceJids });
       } else {
         await sock.sendMessage(recipient, messagePayload);
       }
       await chargeForMessageSend({
         ...billingContext,
+        amount: task.mode === 'schedule_status'
+          ? Number(CREDIT_COSTS.sendMessage || 0) * statusAudienceJids.length
+          : CREDIT_COSTS.sendMessage,
         type: task.mode === 'automated_response' ? 'auto_reply_send' : task.mode === 'schedule_status' ? 'status_send' : 'scheduled_message_send',
-        metadata: { taskId: String(task._id), recipient, scopeId: tenantId },
+        metadata: { taskId: String(task._id), recipient: task.mode === 'schedule_status' ? 'status@broadcast' : recipient, scopeId: tenantId, statusAudienceCount: task.mode === 'schedule_status' ? statusAudienceJids.length : 0 },
       });
-      deliveredCount += 1;
-      await recordDispatch(tenantId, String(task._id), recipient, 'sent', '', messagePayload);
+      deliveredCount += task.mode === 'schedule_status' ? statusAudienceJids.length : 1;
+      await recordDispatch(tenantId, String(task._id), task.mode === 'schedule_status' ? `status@broadcast (${statusAudienceJids.length})` : recipient, 'sent', '', messagePayload);
     } catch (error) {
-      failedCount += 1;
-      await recordDispatch(tenantId, String(task._id), recipient, 'failed', error.message, messagePayload);
+      failedCount += task.mode === 'schedule_status' ? statusAudienceJids.length : 1;
+      await recordDispatch(tenantId, String(task._id), task.mode === 'schedule_status' ? `status@broadcast (${statusAudienceJids.length})` : recipient, 'failed', error.message, messagePayload);
       logger.error({ taskId: String(task._id), recipient, error: error.message, stack: error.stack }, 'Failed to send scheduled WhatsApp message');
       console.error(`[task-send-error] task=${String(task._id)} recipient=${recipient}`, error);
     }
@@ -1574,8 +1638,19 @@ async function dispatchTask(task, now = new Date()) {
   task.lastRunAt = now;
   task.lastRunKey = timing.runKey;
   task.lastError = failedCount ? `Failed for ${failedCount} recipient(s).` : '';
-  if (failedCount) logTaskFailure(task, task.lastError, { tenantId, attempted: recipients.length, delivered: deliveredCount, failed: failedCount });
-  task.deliveryStats = { attempted: recipients.length, delivered: deliveredCount, failed: failedCount };
+  if (failedCount) {
+    logTaskFailure(task, task.lastError, {
+      tenantId,
+      attempted: task.mode === 'schedule_status' ? statusAudienceJids.length : recipients.length,
+      delivered: deliveredCount,
+      failed: failedCount,
+    });
+  }
+  task.deliveryStats = {
+    attempted: task.mode === 'schedule_status' ? statusAudienceJids.length : recipients.length,
+    delivered: deliveredCount,
+    failed: failedCount,
+  };
   task.nextRunAt = ['once', 'now'].includes(timing.frequency) ? null : computeNextRunAt(task.schedule, task.timezone, new Date(now.getTime() + 60000));
   if (['once', 'now'].includes(timing.frequency)) {
     task.status = 'completed';
@@ -1841,44 +1916,60 @@ async function startWhatsAppSession(user, tenant) {
     }
   });
   sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect, qr } = update;
-    if (qr) {
-      await persistConnectionState(tenantId, { status: 'qr_ready', qr, message: 'Scan this QR code with WhatsApp on your phone.', userId: String(user._id) });
-    }
-    if (connection === 'open') {
-      const phoneNumber = sock?.user?.id || '';
-      await User.findByIdAndUpdate(user._id, { whatsappStatus: 'connected', whatsappPhone: phoneNumber });
-      await syncAudienceFromSocket(tenantId, sock);
-      await persistConnectionState(tenantId, { status: 'connected', qr: '', phoneNumber, message: 'WhatsApp connected successfully. Credentials were saved to the workspace.', userId: String(user._id) });
-    }
-    if (connection === 'close') {
-      const statusCode = lastDisconnect?.error?.output?.statusCode;
-      const loggedOut = statusCode === DisconnectReason.loggedOut;
-      const restartRequired = statusCode === DisconnectReason.restartRequired;
-      logger.error({ tenantId, statusCode, error: lastDisconnect?.error?.message, stack: lastDisconnect?.error?.stack }, 'WhatsApp connection closed');
-      console.error('[whatsapp-connection-close]', { tenantId, statusCode, error: lastDisconnect?.error?.message });
-      socketStore.delete(tenantId);
-      if (loggedOut) {
-        await AuthState.deleteMany({ tenantId });
-        await User.findByIdAndUpdate(user._id, { whatsappStatus: 'not_connected', whatsappPhone: '' });
-        await persistConnectionState(tenantId, { status: 'logged_out', qr: '', phoneNumber: '', message: 'WhatsApp session logged out. Start a new connection to generate another QR code.', userId: String(user._id) });
-        return;
+    try {
+      const { connection, lastDisconnect, qr } = update;
+      if (qr) {
+        await persistConnectionState(tenantId, { status: 'qr_ready', qr, message: 'Scan this QR code with WhatsApp on your phone.', userId: String(user._id) });
       }
-      await User.findByIdAndUpdate(user._id, { whatsappStatus: 'connecting' });
-      await persistConnectionState(tenantId, {
-        status: 'connecting',
-        qr: '',
-        phoneNumber: user.whatsappPhone || '',
-        message: restartRequired
-          ? 'WhatsApp requested a socket restart. Reconnecting with the saved credentials.'
-          : 'Connection dropped. Attempting to reconnect automatically.',
-        userId: String(user._id),
-      });
-      setTimeout(() => {
-        startWhatsAppSession(user, tenant).catch((error) => {
-          logger.error({ tenantId, statusCode, error: error.message, stack: error.stack }, 'Unable to restart WhatsApp session');
+      if (connection === 'open') {
+        const phoneNumber = sock?.user?.id || '';
+        await User.findByIdAndUpdate(user._id, { whatsappStatus: 'connected', whatsappPhone: phoneNumber });
+        await syncAudienceFromSocket(tenantId, sock);
+        await persistConnectionState(tenantId, { status: 'connected', qr: '', phoneNumber, message: 'WhatsApp connected successfully. Contacts and groups were synced to audience.', userId: String(user._id) });
+      }
+      if (connection === 'close') {
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        const loggedOut = statusCode === DisconnectReason.loggedOut;
+        const restartRequired = statusCode === DisconnectReason.restartRequired;
+        const disconnectReason = lastDisconnect?.error?.message || 'Unknown connection handshake failure.';
+        logger.error({ tenantId, statusCode, error: disconnectReason, stack: lastDisconnect?.error?.stack }, 'WhatsApp connection closed');
+        console.error('[whatsapp-connection-close]', { tenantId, statusCode, error: disconnectReason });
+        socketStore.delete(tenantId);
+        if (loggedOut) {
+          await AuthState.deleteMany({ tenantId });
+          await User.findByIdAndUpdate(user._id, { whatsappStatus: 'not_connected', whatsappPhone: '' });
+          await persistConnectionState(tenantId, { status: 'logged_out', qr: '', phoneNumber: '', message: 'WhatsApp session logged out. Start a new connection to generate another QR code.', userId: String(user._id) });
+          return;
+        }
+        await User.findByIdAndUpdate(user._id, { whatsappStatus: 'connecting' });
+        await persistConnectionState(tenantId, {
+          status: 'connecting',
+          qr: '',
+          phoneNumber: user.whatsappPhone || '',
+          message: restartRequired
+            ? 'WhatsApp requested a socket restart. Reconnecting with the saved credentials.'
+            : 'Connection dropped during handshake. Attempting to reconnect automatically.',
+          userId: String(user._id),
         });
-      }, restartRequired ? 0 : 1_000);
+        sendWhatsAppReconnectEmail({ user, tenant, reason: disconnectReason }).catch(() => null);
+        setTimeout(() => {
+          startWhatsAppSession(user, tenant).catch(async (error) => {
+            logger.error({ tenantId, statusCode, error: error.message, stack: error.stack }, 'Unable to restart WhatsApp session');
+            await persistConnectionState(tenantId, {
+              status: 'error',
+              qr: '',
+              phoneNumber: user.whatsappPhone || '',
+              message: 'Automatic reconnect failed. Please reconnect WhatsApp from your dashboard.',
+              userId: String(user._id),
+            });
+            sendWhatsAppReconnectEmail({ user, tenant, reason: error.message || 'Automatic reconnect failed.' }).catch(() => null);
+          });
+        }, restartRequired ? 0 : 1_000);
+      }
+    } catch (error) {
+      logger.error({ tenantId, error: error.message, stack: error.stack }, 'Unhandled WhatsApp handshake error');
+      await persistConnectionState(tenantId, { status: 'error', qr: '', phoneNumber: user.whatsappPhone || '', message: 'WhatsApp handshake failed. Please reconnect from dashboard.', userId: String(user._id) });
+      sendWhatsAppReconnectEmail({ user, tenant, reason: error.message || 'Unhandled WhatsApp handshake error.' }).catch(() => null);
     }
   });
   return connectionStateStore.get(tenantId) || buildDefaultConnectionState(tenantId);
@@ -2013,6 +2104,7 @@ app.post('/api/whatsapp/connect', authenticateRequest, requireActiveWorkspace, r
     res.json({ ...state, user: sanitizeUser(req.user, req.membership, req.tenant) });
   } catch (error) {
     await persistConnectionState(String(req.tenant._id), { status: 'error', qr: '', message: error.message || 'Unable to start WhatsApp connection.', userId: String(req.user._id) });
+    sendWhatsAppReconnectEmail({ user: req.user, tenant: req.tenant, reason: error.message || 'Unable to start WhatsApp connection.' }).catch(() => null);
     res.status(500).json({ error: error.message || 'Unable to start WhatsApp connection.' });
   }
 });
@@ -2091,6 +2183,7 @@ app.post('/api/tasks', authenticateRequest, requireScopedPermission('tasks:write
   const groupDeliveryMode = recipients.groupDeliveryMode === 'members' ? 'members' : 'group';
   const normalizedRecipients = sanitizeTaskRecipients(recipients);
   if (!['automated_response', 'schedule_status'].includes(mode) && !normalizedRecipients.groups.length && !normalizedRecipients.contacts.length) return res.status(400).json({ error: 'At least one valid contact or group recipient is required.' });
+  if (mode === 'schedule_status' && !normalizedRecipients.contacts.length) return res.status(400).json({ error: 'Select at least one contact for status delivery.' });
   const timezone = validateTimezone(String(req.body.timezone || scope.timezone || DEFAULT_TIMEZONE));
   const automationAudience = Array.isArray(req.body.automation?.audience)
     ? req.body.automation.audience.map((item) => String(item || '')).filter((item) => ['all_incoming', 'unknown_numbers', 'all_groups', 'managed_groups'].includes(item))
