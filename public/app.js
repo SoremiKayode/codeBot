@@ -230,9 +230,6 @@ function dedupeRecipients(values = []) {
 }
 
 function getStatusAudienceContactIds(manualContacts = []) {
-  const syncedContactIds = audienceState.contacts
-    .map((item) => normalizePhoneRecipient(item?.id || item?.phone || ''))
-    .filter((value) => /@s\.whatsapp\.net$/i.test(value));
   const selectedContactIds = getSelectedItems(audienceState.contacts, taskBuilderState.selectedContacts)
     .map((item) => normalizePhoneRecipient(item?.id || item?.phone || ''))
     .filter((value) => /@s\.whatsapp\.net$/i.test(value));
@@ -241,7 +238,6 @@ function getStatusAudienceContactIds(manualContacts = []) {
     .filter((value) => /@s\.whatsapp\.net$/i.test(value));
   const ownWhatsappJid = getCurrentUserWhatsAppJid();
   return dedupeRecipients([
-    ...syncedContactIds,
     ...selectedContactIds,
     ...manualContactIds,
     ownWhatsappJid,
@@ -450,6 +446,7 @@ function updateTaskModeUI() {
   ui.automationScheduleNote?.classList.toggle('hidden', !isAutomated);
   document.querySelector('[data-task-tab="audience"]')?.classList.toggle('hidden', hideAudienceStep);
   document.querySelector('[data-task-panel="audience"]')?.classList.toggle('hidden', hideAudienceStep);
+  ui.groupsTable?.closest('.table-card')?.classList.toggle('hidden', isStatus);
   ui.audienceBackButton?.classList.toggle('hidden', hideAudienceStep);
   ui.audienceNextButton?.classList.toggle('hidden', hideAudienceStep);
   ui.scheduleBackButton?.classList.toggle('hidden', hideAudienceStep);
@@ -925,7 +922,7 @@ function updateTaskPreview() {
     ? selectedNames.map((name) => `<span class="pill">${escapeHtml(name)}</span>`).join('')
     : '<span class="muted">No audience selected yet.</span>';
 
-  ui.recipientSummaryInput.value = selectedNames.join(', ');
+  ui.recipientSummaryInput.value = taskBuilderState.manualRecipients.join(', ');
   renderMediaQueue();
   ui.scheduleSummary.textContent = buildScheduleDescription();
   saveTaskDraft();
@@ -1876,10 +1873,10 @@ ui.connectWhatsappButton.addEventListener('click', async () => {
 ui.openAiTextTabButton.addEventListener('click', () => setTaskTab('ai-text'));
 ui.openAiMediaTabButton.addEventListener('click', () => setTaskTab('ai-media'));
 ui.generateMoreMediaButton.addEventListener('click', () => setTaskTab('ai-media'));
-ui.messageNextButton.addEventListener('click', () => setTaskTab(isAutomatedMode() || isStatusMode() ? 'schedule' : 'audience'));
+ui.messageNextButton.addEventListener('click', () => setTaskTab(isAutomatedMode() ? 'schedule' : 'audience'));
 ui.audienceBackButton.addEventListener('click', () => setTaskTab('message'));
 ui.audienceNextButton.addEventListener('click', () => setTaskTab('schedule'));
-ui.scheduleBackButton.addEventListener('click', () => setTaskTab(isAutomatedMode() || isStatusMode() ? 'message' : 'audience'));
+ui.scheduleBackButton.addEventListener('click', () => setTaskTab(isAutomatedMode() ? 'message' : 'audience'));
 ui.generateTextButton.addEventListener('click', handleTextGeneration);
 ui.generateImageButton.addEventListener('click', handleImageGeneration);
 ui.regenerateImageButton.addEventListener('click', handleImageGeneration);
