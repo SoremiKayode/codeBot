@@ -568,18 +568,12 @@ async function snapshotAudience(tenantId, state) {
   }
 }
 
-async function upsertAudienceContacts(tenantId, contacts = [], chats = []) {
+async function upsertAudienceContacts(tenantId, contacts = []) {
   const current = audienceStore.get(tenantId) || buildDefaultAudienceState();
-  const chatMap = new Map((Array.isArray(chats) ? chats : []).map((chat) => [String(chat.id || ''), chat]));
   const nextContacts = new Map(current.contacts.map((contact) => [contact.id, contact]));
   contacts.forEach((contact) => {
-    const normalized = normalizeContact(contact, chatMap.get(String(contact.id || '')));
+    const normalized = normalizeContact(contact, {});
     if (normalized.id && !normalized.id.endsWith('@g.us')) nextContacts.set(normalized.id, { ...nextContacts.get(normalized.id), ...normalized });
-  });
-  chatMap.forEach((chat, id) => {
-    if (!id || id.endsWith('@g.us') || id === 'status@broadcast') return;
-    const normalized = normalizeContact({}, chat);
-    nextContacts.set(id, { ...nextContacts.get(id), ...normalized });
   });
   const next = { ...current, contacts: Array.from(nextContacts.values()).sort((a, b) => a.name.localeCompare(b.name)), lastSyncedAt: new Date() };
   audienceStore.set(tenantId, next);
@@ -603,9 +597,9 @@ async function upsertAudienceGroups(tenantId, groups = []) {
 async function syncAudienceFromSocket(tenantId, sock) {
   const allGroups = await sock.groupFetchAllParticipating().catch(() => ({}));
   await upsertAudienceGroups(tenantId, Object.values(allGroups || {}));
-  const chatMap = sock?.chats && typeof sock.chats === 'object' ? Object.values(sock.chats) : [];
-  if (Array.isArray(chatMap) && chatMap.length) {
-    await upsertAudienceContacts(tenantId, [], chatMap);
+  const contacts = sock?.contacts && typeof sock.contacts === 'object' ? Object.values(sock.contacts) : [];
+  if (Array.isArray(contacts) && contacts.length) {
+    await upsertAudienceContacts(tenantId, contacts);
   }
   return audienceStore.get(tenantId) || buildDefaultAudienceState();
 }
