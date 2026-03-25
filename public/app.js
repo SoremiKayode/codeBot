@@ -133,6 +133,8 @@ const ui = {
   waitAndFetchContactsButton: document.getElementById('waitAndFetchContactsButton'),
   continueStatusScheduleButton: document.getElementById('continueStatusScheduleButton'),
   adminSidebar: document.getElementById('adminSidebar'),
+  adminLayout: document.getElementById('adminLayout'),
+  adminSidebarGrip: document.getElementById('adminSidebarGrip'),
   adminSidebarToggle: document.getElementById('adminSidebarToggle'),
   adminUsersTable: document.getElementById('adminUsersTable'),
   adminTasksTable: document.getElementById('adminTasksTable'),
@@ -200,6 +202,7 @@ const companyProfileState = { activeTab: 'business', quill: null, profileId: nul
 const COMPANY_TABS = ['business', 'faqs', 'products', 'tone'];
 const connectionRecoveryState = { returnContext: null };
 const adminState = { tab: 'users', users: [], tasks: [], selectedUser: null, canEdit: false, selectedEmailUserIds: new Set() };
+const adminResizeState = { isResizing: false, pointerId: null };
 
 function getEntityId(entity = {}) {
   return String(entity.id || entity._id || '').trim();
@@ -1846,7 +1849,13 @@ function renderAdminUsers() {
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   })), { selectable: false, emptyMessage: 'No users found.' });
+  ui.adminUsersTable.classList.add('task-table--admin-users');
   ui.adminUsersTable.querySelectorAll('[data-task-action="pause"]').forEach((btn) => { btn.textContent = 'Edit'; btn.dataset.taskAction = 'admin-user-edit'; });
+  ui.adminUsersTable.querySelectorAll('[data-task-action="retry"]').forEach((btn) => {
+    btn.textContent = 'Add credit';
+    btn.dataset.taskAction = 'admin-user-credit';
+    btn.disabled = !adminState.canEdit;
+  });
   ui.adminUsersTable.querySelectorAll('[data-task-action="delete"]').forEach((btn) => { btn.textContent = 'Delete'; btn.dataset.taskAction = 'admin-user-delete'; btn.disabled = !adminState.canEdit; });
 }
 
@@ -2294,6 +2303,14 @@ document.addEventListener('click', (event) => {
     api.adminDeleteUser(adminUserDelete.dataset.taskId).then(() => { showToast('User deleted.'); loadAdminUsers(); }).catch((error) => showToast(error.message));
   }
 
+  const adminUserCredit = event.target.closest('[data-task-action="admin-user-credit"]');
+  if (adminUserCredit) {
+    const user = adminState.users.find((item) => item.id === adminUserCredit.dataset.taskId);
+    if (!user) return;
+    setAdminTab('credits');
+    showAdminCreditForm(user);
+  }
+
   const adminTaskRetry = event.target.closest('[data-task-action="admin-task-retry"]');
   if (adminTaskRetry) {
     api.adminRetryTask(adminTaskRetry.dataset.taskId).then(() => { showToast('Task retried.'); loadAdminTasks(); }).catch((error) => showToast(error.message));
@@ -2498,7 +2515,38 @@ updateTaskPreview();
 
 ui.adminUsersRefresh?.addEventListener('click', () => loadAdminUsers().catch((error) => showToast(error.message)));
 ui.adminTasksRefresh?.addEventListener('click', () => loadAdminTasks().catch((error) => showToast(error.message)));
-ui.adminSidebarToggle?.addEventListener('click', () => ui.adminSidebar?.classList.toggle('collapsed'));
+ui.adminSidebarToggle?.addEventListener('click', () => {
+  ui.adminSidebar?.classList.toggle('collapsed');
+  const collapsed = ui.adminSidebar?.classList.contains('collapsed');
+  if (ui.adminLayout) ui.adminLayout.style.setProperty('--admin-sidebar-width', collapsed ? '180px' : '240px');
+});
+
+ui.adminSidebarGrip?.addEventListener('pointerdown', (event) => {
+  if (!ui.adminLayout || window.innerWidth <= 900) return;
+  adminResizeState.isResizing = true;
+  adminResizeState.pointerId = event.pointerId;
+  ui.adminSidebarGrip.setPointerCapture(event.pointerId);
+  document.body.style.userSelect = 'none';
+});
+
+ui.adminSidebarGrip?.addEventListener('pointermove', (event) => {
+  if (!adminResizeState.isResizing || !ui.adminLayout) return;
+  const layoutRect = ui.adminLayout.getBoundingClientRect();
+  const minWidth = 180;
+  const maxWidth = Math.max(minWidth, Math.min(420, layoutRect.width - 460));
+  const nextWidth = Math.max(minWidth, Math.min(maxWidth, event.clientX - layoutRect.left));
+  ui.adminLayout.style.setProperty('--admin-sidebar-width', `${nextWidth}px`);
+});
+
+ui.adminSidebarGrip?.addEventListener('pointerup', (event) => {
+  if (!adminResizeState.isResizing) return;
+  adminResizeState.isResizing = false;
+  if (adminResizeState.pointerId !== null) {
+    ui.adminSidebarGrip.releasePointerCapture(adminResizeState.pointerId);
+    adminResizeState.pointerId = null;
+  }
+  document.body.style.userSelect = '';
+});
 ui.adminEmailUserSearch?.addEventListener('input', () => renderAdminEmailUsers());
 ui.adminCreditFormWrap?.addEventListener('submit', async (event) => {
   event.preventDefault();

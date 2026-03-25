@@ -803,7 +803,7 @@
     
 
       <section id="adminView" class="view">
-        <div class="admin-layout">
+        <div class="admin-layout" id="adminLayout">
           <aside class="admin-sidebar" id="adminSidebar">
             <button id="adminSidebarToggle" class="secondary-button compact-button" type="button">Toggle</button>
             <div class="admin-nav">
@@ -813,6 +813,7 @@
               <button class="secondary-button compact-button" type="button" data-admin-tab="email">Email</button>
             </div>
           </aside>
+          <div id="adminSidebarGrip" class="admin-sidebar-grip" role="separator" aria-orientation="vertical" aria-label="Resize admin sidebar" title="Drag to resize sidebar"></div>
           <section class="info-card stack admin-main">
             <h2>Admin dashboard</h2>
             <div id="adminUsersPanel" data-admin-panel="users" class="admin-panel">
