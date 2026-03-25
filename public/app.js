@@ -231,7 +231,9 @@ function normalizeWhitespace(value = '') {
 function normalizePhoneRecipient(value = '') {
   const trimmed = normalizeWhitespace(value);
   if (!trimmed) return '';
-  if (/@s\.whatsapp\.net$/i.test(trimmed) || /@g\.us$/i.test(trimmed)) return trimmed;
+  const explicitJid = trimmed.match(/(\d{7,})@(s\.whatsapp\.net|g\.us)\b/i);
+  if (explicitJid) return `${explicitJid[1]}@${explicitJid[2].toLowerCase()}`;
+  if (/^\d+@(s\.whatsapp\.net|g\.us)$/i.test(trimmed)) return trimmed.toLowerCase();
   const digits = trimmed.replace(/\D/g, '');
   return digits.length >= 7 ? `${digits}@s.whatsapp.net` : trimmed;
 }
@@ -256,7 +258,10 @@ function getCurrentUserWhatsAppJid() {
 }
 
 function splitRecipientInput(value = '') {
-  return String(value).split(',').map((item) => normalizeWhitespace(item)).filter(Boolean);
+  return String(value)
+    .split(/[,\n;]/)
+    .map((item) => normalizeWhitespace(item))
+    .filter(Boolean);
 }
 
 function dedupeRecipients(values = [], type = 'contact') {

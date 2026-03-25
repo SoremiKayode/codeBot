@@ -552,9 +552,9 @@ function normalizePhoneNumber(jid = '') {
 function normalizePhoneJid(value = '') {
   const trimmed = String(value || '').trim();
   if (!trimmed) return '';
-  if (/@s\.whatsapp\.net$/i.test(trimmed)) {
-    return trimmed;
-  }
+  const explicitJid = trimmed.match(/(\d{7,})@s\.whatsapp\.net\b/i);
+  if (explicitJid) return `${explicitJid[1]}@s.whatsapp.net`;
+  if (/^\d+@s\.whatsapp\.net$/i.test(trimmed)) return trimmed.toLowerCase();
   const digits = trimmed.replace(/\D/g, '');
   return digits.length >= 7 ? `${digits}@s.whatsapp.net` : '';
 }
@@ -562,7 +562,9 @@ function normalizePhoneJid(value = '') {
 function normalizeGroupJid(value = '') {
   const trimmed = String(value || '').trim();
   if (!trimmed) return '';
-  if (/@g\.us$/i.test(trimmed)) return trimmed;
+  const explicitJid = trimmed.match(/(\d+)@g\.us\b/i);
+  if (explicitJid) return `${explicitJid[1]}@g.us`;
+  if (/^\d+@g\.us$/i.test(trimmed)) return trimmed.toLowerCase();
   const digits = trimmed.replace(/\D/g, '');
   return digits ? `${digits}@g.us` : '';
 }
