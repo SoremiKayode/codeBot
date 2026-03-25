@@ -32,6 +32,7 @@
           <button class="nav-link" data-route="home">Home</button>
           <button class="nav-link auth-only" data-route="dashboard">Connect WhatsApp</button>
           <button class="nav-link auth-only" data-route="tasks">Workspace</button>
+          <button class="nav-link auth-only admin-only" data-route="admin">Admin</button>
           <button class="nav-link guest-only" data-route="login">Login</button>
           <button class="nav-link guest-only" data-route="signup">Sign up</button>
         </nav>
@@ -799,7 +800,55 @@
         </div>
       </section>
 
-    </main>
+    
+
+      <section id="adminView" class="view">
+        <div class="admin-layout">
+          <aside class="admin-sidebar" id="adminSidebar">
+            <button id="adminSidebarToggle" class="secondary-button compact-button" type="button">Toggle</button>
+            <div class="admin-nav">
+              <button class="secondary-button compact-button" type="button" data-admin-tab="users">Users</button>
+              <button class="secondary-button compact-button" type="button" data-admin-tab="tasks">Tasks</button>
+              <button class="secondary-button compact-button" type="button" data-admin-tab="credits">Add credit</button>
+              <button class="secondary-button compact-button" type="button" data-admin-tab="email">Email</button>
+            </div>
+          </aside>
+          <section class="info-card stack admin-main">
+            <h2>Admin dashboard</h2>
+            <div id="adminUsersPanel" data-admin-panel="users" class="admin-panel">
+              <div class="hero-actions">
+                <input id="adminUserSearch" type="text" placeholder="Search name/email" />
+                <input id="adminUserFrom" type="date" />
+                <input id="adminUserTo" type="date" />
+                <button id="adminUsersRefresh" class="secondary-button" type="button">Refresh</button>
+              </div>
+              <div id="adminUsersTable" class="task-table"></div>
+            </div>
+            <div id="adminTasksPanel" data-admin-panel="tasks" class="admin-panel hidden">
+              <div class="hero-actions">
+                <input id="adminTaskSearch" type="text" placeholder="Search task/error/type" />
+                <select id="adminTaskStatus"><option value="">All status</option><option value="active">active</option><option value="paused">paused</option><option value="completed">completed</option></select>
+                <select id="adminTaskMode"><option value="">All mode</option><option value="broadcast">broadcast</option><option value="automated_response">automated_response</option><option value="schedule_status">schedule_status</option></select>
+                <button id="adminTasksRefresh" class="secondary-button" type="button">Refresh</button>
+              </div>
+              <div id="adminTasksTable" class="task-table"></div>
+            </div>
+            <div id="adminCreditsPanel" data-admin-panel="credits" class="admin-panel hidden">
+              <p class="muted">Select a user in the user table and click Add credit.</p>
+              <div id="adminCreditFormWrap"></div>
+            </div>
+            <div id="adminEmailPanel" data-admin-panel="email" class="admin-panel hidden">
+              <form id="adminEmailForm" class="stack">
+                <label><span>Recipients (comma separated emails)</span><textarea id="adminEmailRecipients"></textarea></label>
+                <label><span>Subject</span><input id="adminEmailSubject" type="text" value="Message from CodeBot admin" /></label>
+                <label><span>Message</span><textarea id="adminEmailMessage" required></textarea></label>
+                <button class="primary-button" type="submit">Send email</button>
+              </form>
+            </div>
+          </section>
+        </div>
+      </section>
+</main>
 
     <footer class="app-footer footer-grid">
       <section class="footer-section stack">

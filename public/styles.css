@@ -802,3 +802,12 @@ body:not(.is-authenticated) .auth-only { display: none !important; }
 @media (max-width: 768px) { .social-buttons--auth, .cta-button-grid--guest { grid-template-columns: 1fr; } .task-builder-nav { justify-content: stretch; } .task-builder-nav .secondary-button { flex: 1 1 0; } }
 
 .task-error-text { color: #b91c1c; font-weight: 600; }
+
+.admin-layout { display: grid; grid-template-columns: 240px 1fr; gap: 16px; }
+.admin-sidebar { position: sticky; top: 88px; align-self: start; background: var(--card-bg, #fff); border: 1px solid var(--border-color, #ddd); border-radius: 12px; padding: 12px; resize: horizontal; overflow: auto; min-width: 170px; max-width: 360px; }
+.admin-sidebar.collapsed .admin-nav { display: none; }
+.admin-nav { display: grid; gap: 8px; margin-top: 10px; }
+.admin-main { min-height: 60vh; }
+.admin-panel.hidden { display: none; }
+.admin-table-actions { display:flex; gap:6px; flex-wrap:wrap; }
+@media (max-width: 900px) { .admin-layout { grid-template-columns: 1fr; } .admin-sidebar { position: static; max-width: 100%; resize:none; } }

@@ -7,6 +7,7 @@ const views = {
   signup: document.getElementById('signupView'),
   dashboard: document.getElementById('dashboardView'),
   tasks: document.getElementById('tasksView'),
+  admin: document.getElementById('adminView'),
 };
 
 const ui = {
@@ -131,6 +132,23 @@ const ui = {
   statusContactWaitText: document.getElementById('statusContactWaitText'),
   waitAndFetchContactsButton: document.getElementById('waitAndFetchContactsButton'),
   continueStatusScheduleButton: document.getElementById('continueStatusScheduleButton'),
+  adminSidebar: document.getElementById('adminSidebar'),
+  adminSidebarToggle: document.getElementById('adminSidebarToggle'),
+  adminUsersTable: document.getElementById('adminUsersTable'),
+  adminTasksTable: document.getElementById('adminTasksTable'),
+  adminCreditFormWrap: document.getElementById('adminCreditFormWrap'),
+  adminUserSearch: document.getElementById('adminUserSearch'),
+  adminUserFrom: document.getElementById('adminUserFrom'),
+  adminUserTo: document.getElementById('adminUserTo'),
+  adminUsersRefresh: document.getElementById('adminUsersRefresh'),
+  adminTaskSearch: document.getElementById('adminTaskSearch'),
+  adminTaskStatus: document.getElementById('adminTaskStatus'),
+  adminTaskMode: document.getElementById('adminTaskMode'),
+  adminTasksRefresh: document.getElementById('adminTasksRefresh'),
+  adminEmailForm: document.getElementById('adminEmailForm'),
+  adminEmailRecipients: document.getElementById('adminEmailRecipients'),
+  adminEmailSubject: document.getElementById('adminEmailSubject'),
+  adminEmailMessage: document.getElementById('adminEmailMessage'),
   taskNavButtons: document.querySelectorAll('[data-task-nav]'),
   groupDeliveryModeInputs: document.querySelectorAll('input[name="groupDeliveryMode"]'),
   taskModeInputs: document.querySelectorAll('input[name="taskMode"]'),
@@ -178,6 +196,7 @@ const paymentState = { publicKey: '', currency: 'NGN', creditRate: 1 };
 const companyProfileState = { activeTab: 'business', quill: null, profileId: null, faqCount: 0, productCount: 0 };
 const COMPANY_TABS = ['business', 'faqs', 'products', 'tone'];
 const connectionRecoveryState = { returnContext: null };
+const adminState = { tab: 'users', users: [], tasks: [], selectedUser: null, canEdit: false };
 
 function escapeHtml(value = '') {
   return String(value ?? '').replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
@@ -364,12 +383,20 @@ function closeMenu() {
 
 function navigate(route) {
   const normalizedRoute = route === 'task-list' ? 'tasks' : route;
-  const requestedRoute = ['dashboard', 'tasks', 'task-list'].includes(route) && !appState.user ? 'login' : normalizedRoute;
+  const requestedRoute = ['dashboard', 'tasks', 'task-list', 'admin'].includes(route) && !appState.user ? 'login' : normalizedRoute;
   const redirectedRoute = appState.user && ['login', 'signup'].includes(requestedRoute) ? 'dashboard' : requestedRoute;
   const targetRoute = redirectedRoute;
   setRoute(targetRoute);
   closeMenu();
   Object.entries(views).forEach(([key, view]) => view?.classList.toggle('active', key === targetRoute));
+  if (targetRoute === 'admin' && appState.user) {
+    if (!['admin', 'Administartor'].includes(appState.user.role || 'customer')) {
+      showToast('Admin access required.');
+      navigate('dashboard');
+      return;
+    }
+    loadAdminDashboard();
+  }
   if (['tasks', 'task-list'].includes(targetRoute) && appState.user) {
     if (targetRoute === 'tasks') {
       setWorkspaceTab(route === 'task-list' ? 'monitor' : 'scheduler');
@@ -745,6 +772,8 @@ function updateUserUI() {
   if (ui.connectWhatsappButton) ui.connectWhatsappButton.disabled = !hasWorkspace;
   if (ui.companyProfileForm) Array.from(ui.companyProfileForm.elements || []).forEach((element) => { if (element.id !== 'companyBackButton' && element.id !== 'companyNextButton') element.disabled = !user; });
   document.documentElement.dataset.theme = user?.theme || localStorage.getItem('wa_theme') || 'light';
+  document.body.classList.toggle('is-admin', ['admin', 'Administartor'].includes(user?.role || 'customer'));
+  document.querySelectorAll('.admin-only').forEach((el) => el.classList.toggle('hidden', !['admin', 'Administartor'].includes(user?.role || 'customer')));
   renderWorkspaceMembers();
 }
 
@@ -1076,6 +1105,7 @@ function buildTaskRowsMarkup(tasks = [], { selectable = true, emptyMessage = 'No
         </div>
         <div class="task-table__actions">
           <button class="secondary-button" type="button" data-task-action="pause" data-task-id="${task._id}" ${task.status === 'paused' ? 'disabled' : ''}>Pause</button>
+          <button class="secondary-button" type="button" data-task-action="retry" data-task-id="${task._id}" ${task.lastError ? '' : 'disabled'}>Retry</button>
           <button class="secondary-button danger-button" type="button" data-task-action="delete" data-task-id="${task._id}">Delete</button>
         </div>
       </div>`;
@@ -1765,6 +1795,74 @@ async function scheduleTask() {
   }
 }
 
+
+async function loadAdminUsers() {
+  const params = new URLSearchParams();
+  if (ui.adminUserSearch?.value.trim()) params.set('q', ui.adminUserSearch.value.trim());
+  if (ui.adminUserFrom?.value) params.set('from', ui.adminUserFrom.value);
+  if (ui.adminUserTo?.value) params.set('to', ui.adminUserTo.value);
+  const data = await api.adminUsers(params.toString());
+  adminState.users = Array.isArray(data.users) ? data.users : [];
+  renderAdminUsers();
+}
+
+async function loadAdminTasks() {
+  const params = new URLSearchParams();
+  if (ui.adminTaskSearch?.value.trim()) params.set('q', ui.adminTaskSearch.value.trim());
+  if (ui.adminTaskStatus?.value) params.set('status', ui.adminTaskStatus.value);
+  if (ui.adminTaskMode?.value) params.set('mode', ui.adminTaskMode.value);
+  const data = await api.adminTasks(params.toString());
+  adminState.tasks = Array.isArray(data.tasks) ? data.tasks : [];
+  renderAdminTasks();
+}
+
+function renderAdminUsers() {
+  if (!ui.adminUsersTable) return;
+  ui.adminUsersTable.innerHTML = buildTaskRowsMarkup(adminState.users.map((user) => ({
+    _id: user.id,
+    title: user.username,
+    type: user.role || 'customer',
+    description: user.email,
+    recipients: { groups: [], contacts: [] },
+    schedule: { frequency: '-' },
+    status: user.whatsappStatus || 'n/a',
+    deliveryStats: { delivered: user.credits || 0, failed: 0 },
+    lastError: `Created ${formatTaskDate(user.createdAt)}`,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+  })), { selectable: false, emptyMessage: 'No users found.' });
+  ui.adminUsersTable.querySelectorAll('[data-task-action="pause"]').forEach((btn) => { btn.textContent = 'Edit'; btn.dataset.taskAction = 'admin-user-edit'; });
+  ui.adminUsersTable.querySelectorAll('[data-task-action="delete"]').forEach((btn) => { btn.textContent = 'Delete'; btn.dataset.taskAction = 'admin-user-delete'; btn.disabled = !adminState.canEdit; });
+}
+
+function renderAdminTasks() {
+  if (!ui.adminTasksTable) return;
+  ui.adminTasksTable.innerHTML = buildTaskRowsMarkup(adminState.tasks, { selectable: false, emptyMessage: 'No tasks found.' });
+  ui.adminTasksTable.querySelectorAll('[data-task-action="pause"]').forEach((btn) => { btn.textContent = 'Retry'; btn.dataset.taskAction = 'admin-task-retry'; });
+  ui.adminTasksTable.querySelectorAll('[data-task-action="delete"]').forEach((btn) => { btn.textContent = 'Delete'; btn.dataset.taskAction = 'admin-task-delete'; btn.disabled = !adminState.canEdit; });
+}
+
+function showAdminCreditForm(user) {
+  adminState.selectedUser = user;
+  if (!ui.adminCreditFormWrap) return;
+  ui.adminCreditFormWrap.innerHTML = `<form id="adminCreditForm" class="stack"><p><strong>${escapeHtml(user.username)}</strong> (${escapeHtml(user.email)})</p><label><span>Credit amount</span><input id="adminCreditAmount" type="number" min="1" required /></label><button class="primary-button" type="submit" ${adminState.canEdit ? '' : 'disabled'}>Add credit</button></form>`;
+}
+
+async function loadAdminDashboard() {
+  try {
+    const overview = await api.adminOverview();
+    adminState.canEdit = Boolean(overview.canEdit);
+    await Promise.all([loadAdminUsers(), loadAdminTasks()]);
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+function setAdminTab(tab = 'users') {
+  adminState.tab = ['users', 'tasks', 'credits', 'email'].includes(tab) ? tab : 'users';
+  document.querySelectorAll('[data-admin-panel]').forEach((panel) => panel.classList.toggle('hidden', panel.dataset.adminPanel !== adminState.tab));
+}
+
 function resetTaskBuilder() {
   ui.taskTitle.value = '';
   taskBuilderState.quill.setText('');
@@ -2110,7 +2208,38 @@ document.addEventListener('click', (event) => {
   if (taskActionButton) {
     const { taskAction, taskId } = taskActionButton.dataset;
     if (taskAction === 'pause') updateTaskStatus(taskId, 'paused');
+    if (taskAction === 'retry') api.retryTask(taskId).then(() => { showToast('Task moved back to active queue.'); loadTasks(); }).catch((error) => showToast(error.message));
     if (taskAction === 'delete') deleteTask(taskId);
+  }
+
+
+  const adminTabButton = event.target.closest('[data-admin-tab]');
+  if (adminTabButton) setAdminTab(adminTabButton.dataset.adminTab);
+
+  const adminUserEdit = event.target.closest('[data-task-action="admin-user-edit"]');
+  if (adminUserEdit) {
+    const user = adminState.users.find((item) => item.id === adminUserEdit.dataset.taskId);
+    if (!user) return;
+    const username = prompt('Update username', user.username) || user.username;
+    const email = prompt('Update email', user.email) || user.email;
+    const role = prompt('Role (customer/admin/Administartor)', user.role || 'customer') || user.role || 'customer';
+    api.adminUpdateUser(user.id, { username, email, role }).then(() => { showToast('User updated.'); loadAdminUsers(); }).catch((error) => showToast(error.message));
+    showAdminCreditForm(user);
+  }
+
+  const adminUserDelete = event.target.closest('[data-task-action="admin-user-delete"]');
+  if (adminUserDelete) {
+    api.adminDeleteUser(adminUserDelete.dataset.taskId).then(() => { showToast('User deleted.'); loadAdminUsers(); }).catch((error) => showToast(error.message));
+  }
+
+  const adminTaskRetry = event.target.closest('[data-task-action="admin-task-retry"]');
+  if (adminTaskRetry) {
+    api.adminRetryTask(adminTaskRetry.dataset.taskId).then(() => { showToast('Task retried.'); loadAdminTasks(); }).catch((error) => showToast(error.message));
+  }
+
+  const adminTaskDelete = event.target.closest('[data-task-action="admin-task-delete"]');
+  if (adminTaskDelete) {
+    api.adminDeleteTask(adminTaskDelete.dataset.taskId).then(() => { showToast('Task deleted.'); loadAdminTasks(); }).catch((error) => showToast(error.message));
   }
 
   const groupSelect = event.target.closest('[data-select-group]');
@@ -2280,3 +2409,26 @@ updateTaskPreview();
     await loadCompanyProfile();
   }
 })();
+
+
+ui.adminUsersRefresh?.addEventListener('click', () => loadAdminUsers().catch((error) => showToast(error.message)));
+ui.adminTasksRefresh?.addEventListener('click', () => loadAdminTasks().catch((error) => showToast(error.message)));
+ui.adminSidebarToggle?.addEventListener('click', () => ui.adminSidebar?.classList.toggle('collapsed'));
+ui.adminCreditFormWrap?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const amount = Number(document.getElementById('adminCreditAmount')?.value || 0);
+  if (!adminState.selectedUser) return;
+  try {
+    await api.adminAddCredit(adminState.selectedUser.id, amount);
+    showToast('Credit added.');
+    await loadAdminUsers();
+  } catch (error) { showToast(error.message); }
+});
+ui.adminEmailForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    const recipients = ui.adminEmailRecipients.value.split(',').map((item) => item.trim()).filter(Boolean);
+    await api.adminSendEmail({ recipients, subject: ui.adminEmailSubject.value, message: ui.adminEmailMessage.value });
+    showToast('Email sent.');
+  } catch (error) { showToast(error.message); }
+});

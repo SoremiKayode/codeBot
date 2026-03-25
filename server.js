@@ -108,6 +108,23 @@ const APP_PERMISSIONS = {
   VIEWER: ['tasks:read'],
 };
 
+const PLATFORM_ROLES = ['customer', 'admin', 'Administartor'];
+
+function normalizePlatformRole(role = '') {
+  const raw = String(role || '').trim();
+  if (raw === 'admin') return 'admin';
+  if (raw.toLowerCase() === 'administrator' || raw === 'Administartor') return 'Administartor';
+  return 'customer';
+}
+
+function isPlatformAdmin(role = '') {
+  return ['admin', 'Administartor'].includes(normalizePlatformRole(role));
+}
+
+function isCreditEditor(role = '') {
+  return normalizePlatformRole(role) === 'admin';
+}
+
 const connectionStateStore = new Map();
 const socketStore = new Map();
 const audienceStore = new Map();
@@ -189,6 +206,43 @@ async function sendSmtpCommand(socket, command, expectedCodes = [250]) {
     throw new Error(lines.join(' | ') || `Unexpected SMTP response ${statusCode}`);
   }
   return lines;
+}
+
+async function sendCustomEmail({ to, subject, body }) {
+  if (!SMTP_PASSWORD) throw new Error('SMTP_PASSWORD is required to send emails.');
+  const recipient = quotePrintableHeader(to);
+  if (!recipient) throw new Error('A recipient email address is required.');
+  const socket = tls.connect({ host: SMTP_HOST, port: SMTP_PORT, servername: SMTP_HOST, minVersion: 'TLSv1.2' });
+  await new Promise((resolve, reject) => {
+    socket.once('secureConnect', resolve);
+    socket.once('error', reject);
+  });
+  try {
+    await sendSmtpCommand(socket, '', [220]);
+    await sendSmtpCommand(socket, `EHLO ${SMTP_HOST}`, [250]);
+    await sendSmtpCommand(socket, 'AUTH LOGIN', [334]);
+    await sendSmtpCommand(socket, encodeSmtpLine(SMTP_USER), [334]);
+    await sendSmtpCommand(socket, encodeSmtpLine(SMTP_PASSWORD), [235]);
+    await sendSmtpCommand(socket, `MAIL FROM:<${SMTP_USER}>`, [250]);
+    await sendSmtpCommand(socket, `RCPT TO:<${recipient}>`, [250, 251]);
+    await sendSmtpCommand(socket, 'DATA', [354]);
+    const safeSubject = quotePrintableHeader(subject || 'Message from CodeBot');
+    const safeBody = String(body || '').replace(/\r?\n/g, '\r\n').replace(/^\./gm, '..');
+    const composed = [
+      `From: ${SMTP_FROM_NAME} <${SMTP_USER}>`,
+      `To: ${recipient}`,
+      `Subject: ${safeSubject}`,
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset=UTF-8',
+      '',
+      safeBody,
+      '.',
+    ].join('\r\n');
+    await sendSmtpCommand(socket, composed, [250]);
+    await sendSmtpCommand(socket, 'QUIT', [221]);
+  } finally {
+    socket.end();
+  }
 }
 
 async function sendEnquiryEmail({ name, email, message }) {
@@ -454,6 +508,7 @@ function sanitizeUser(user, membership = null, tenant = null) {
     whatsappStatus: user.whatsappStatus,
     whatsappPhone: user.whatsappPhone,
     walletBalance: user.walletBalance,
+    role: normalizePlatformRole(user.role),
     activeTenant: tenant ? {
       id: String(tenant._id),
       name: tenant.name,
@@ -647,6 +702,7 @@ const userSchema = new mongoose.Schema({
   theme: { type: String, enum: ['light', 'dark'], default: 'light' },
   whatsappStatus: { type: String, enum: ['not_connected', 'connecting', 'connected'], default: 'not_connected' },
   whatsappPhone: { type: String, default: '' },
+  role: { type: String, enum: PLATFORM_ROLES, default: 'customer' },
   socialProviders: {
     google: { type: Boolean, default: false },
     github: { type: Boolean, default: false },
@@ -1101,6 +1157,13 @@ function requirePermission(permission) {
     }
     next();
   };
+}
+
+function requirePlatformAdmin(req, res, next) {
+  if (!isPlatformAdmin(req.user?.role)) {
+    return res.status(403).json({ error: 'Admin access required.' });
+  }
+  next();
 }
 
 function validateTimezone(timezone = DEFAULT_TIMEZONE) {
@@ -1976,7 +2039,7 @@ app.post('/api/auth/signup', async (req, res) => {
     const { username, email, password } = validateSignupPayload(req.body);
     const existing = await User.findOne({ email });
     if (existing) return res.status(409).json({ error: 'An account with that email already exists.' });
-    const user = await User.create({ username, email, passwordHash: derivePasswordHash(password) });
+    const user = await User.create({ username, email, passwordHash: derivePasswordHash(password), role: 'customer' });
     const session = await issueSession(user, null, null, 'password');
     res.setHeader('Set-Cookie', buildSessionCookie(session.token));
     res.status(201).json(session);
@@ -2272,6 +2335,19 @@ app.patch('/api/tasks/:taskId/status', authenticateRequest, requireScopedPermiss
   res.json({ task });
 });
 
+app.post('/api/tasks/:taskId/retry', authenticateRequest, requireScopedPermission('tasks:write'), async (req, res) => {
+  const scope = getScopeContext(req);
+  const task = await Task.findOne({ _id: req.params.taskId, tenantId: scope.scopeId });
+  if (!task) return res.status(404).json({ error: 'Task not found.' });
+  task.status = 'active';
+  task.lastError = '';
+  task.claimToken = '';
+  task.claimExpiresAt = null;
+  task.nextRunAt = computeNextRunAt(task.schedule || {}, task.timezone || DEFAULT_TIMEZONE) || new Date();
+  await task.save();
+  res.json({ task });
+});
+
 app.delete('/api/tasks/:taskId', authenticateRequest, requireScopedPermission('tasks:write'), async (req, res) => {
   const scope = getScopeContext(req);
   const task = await Task.findOneAndDelete({ _id: req.params.taskId, tenantId: scope.scopeId });
@@ -2296,6 +2372,129 @@ app.post('/api/tasks/bulk-action', authenticateRequest, requireScopedPermission(
   return res.status(400).json({ error: 'Unsupported bulk action.' });
 });
 
+
+app.get('/api/admin/overview', authenticateRequest, requirePlatformAdmin, async (req, res) => {
+  const role = normalizePlatformRole(req.user.role);
+  const [usersCount, tasksCount, creditsSum] = await Promise.all([
+    User.countDocuments({}),
+    Task.countDocuments({}),
+    User.aggregate([{ $group: { _id: null, total: { $sum: '$credits' } } }]),
+  ]);
+  res.json({
+    role,
+    stats: { users: usersCount, tasks: tasksCount, credits: Number(creditsSum?.[0]?.total || 0) },
+    canEdit: isCreditEditor(role),
+  });
+});
+
+app.get('/api/admin/users', authenticateRequest, requirePlatformAdmin, async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const role = normalizePlatformRole(req.query.role || '');
+  const from = req.query.from ? new Date(String(req.query.from)) : null;
+  const to = req.query.to ? new Date(String(req.query.to)) : null;
+  const query = {};
+  if (q) query.$or = [{ username: { $regex: q, $options: 'i' } }, { email: { $regex: q, $options: 'i' } }];
+  if (['customer', 'admin', 'Administartor'].includes(role)) query.role = role;
+  if (from || to) {
+    query.createdAt = {};
+    if (from && !Number.isNaN(from.getTime())) query.createdAt.$gte = from;
+    if (to && !Number.isNaN(to.getTime())) query.createdAt.$lte = to;
+  }
+  const users = await User.find(query).sort({ createdAt: -1 }).limit(500).lean();
+  res.json({ users: users.map((user) => ({ ...user, role: normalizePlatformRole(user.role), id: String(user._id) })) });
+});
+
+app.patch('/api/admin/users/:userId', authenticateRequest, requirePlatformAdmin, async (req, res) => {
+  if (!isCreditEditor(req.user.role) && req.body.credits !== undefined) {
+    return res.status(403).json({ error: 'Administrator can view and email only.' });
+  }
+  const updates = {};
+  if (req.body.username !== undefined) updates.username = sanitizeTextInput(req.body.username);
+  if (req.body.email !== undefined) updates.email = sanitizeTextInput(req.body.email).toLowerCase();
+  if (req.body.role !== undefined) updates.role = normalizePlatformRole(req.body.role);
+  const user = await User.findByIdAndUpdate(req.params.userId, updates, { returnDocument: 'after' });
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+  res.json({ user: { ...user.toObject(), role: normalizePlatformRole(user.role), id: String(user._id) } });
+});
+
+app.delete('/api/admin/users/:userId', authenticateRequest, requirePlatformAdmin, async (req, res) => {
+  if (!isCreditEditor(req.user.role)) return res.status(403).json({ error: 'Administrator can view and email only.' });
+  await User.deleteOne({ _id: req.params.userId });
+  await AppSession.deleteMany({ userId: req.params.userId });
+  res.json({ success: true });
+});
+
+app.post('/api/admin/users/:userId/credit', authenticateRequest, requirePlatformAdmin, async (req, res) => {
+  if (!isCreditEditor(req.user.role)) return res.status(403).json({ error: 'Administrator can view and email only.' });
+  const amount = Number(req.body.amount || 0);
+  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'Provide a positive credit amount.' });
+  const targetUser = await User.findById(req.params.userId);
+  if (!targetUser) return res.status(404).json({ error: 'User not found.' });
+  await creditAccountBalance({ user: targetUser, amount, type: 'admin_credit', metadata: { by: String(req.user._id) } });
+  res.json({ user: { ...targetUser.toObject(), role: normalizePlatformRole(targetUser.role), id: String(targetUser._id) } });
+});
+
+app.get('/api/admin/tasks', authenticateRequest, requirePlatformAdmin, async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const status = String(req.query.status || '').trim();
+  const mode = String(req.query.mode || '').trim();
+  const from = req.query.from ? new Date(String(req.query.from)) : null;
+  const to = req.query.to ? new Date(String(req.query.to)) : null;
+  const query = {};
+  if (q) query.$or = [{ title: { $regex: q, $options: 'i' } }, { description: { $regex: q, $options: 'i' } }, { lastError: { $regex: q, $options: 'i' } }, { type: { $regex: q, $options: 'i' } }];
+  if (['draft', 'active', 'paused', 'completed'].includes(status)) query.status = status;
+  if (['broadcast', 'automated_response', 'schedule_status'].includes(mode)) query.mode = mode;
+  if (from || to) {
+    query.createdAt = {};
+    if (from && !Number.isNaN(from.getTime())) query.createdAt.$gte = from;
+    if (to && !Number.isNaN(to.getTime())) query.createdAt.$lte = to;
+  }
+  const tasks = await Task.find(query).sort({ createdAt: -1 }).limit(600).lean();
+  res.json({ tasks });
+});
+
+app.patch('/api/admin/tasks/:taskId', authenticateRequest, requirePlatformAdmin, async (req, res) => {
+  if (!isCreditEditor(req.user.role)) return res.status(403).json({ error: 'Administrator can view and email only.' });
+  const updates = {};
+  if (req.body.status) updates.status = String(req.body.status).trim().toLowerCase();
+  if (req.body.title) updates.title = sanitizeTextInput(req.body.title);
+  if (req.body.description) updates.description = sanitizeLongText(req.body.description);
+  const task = await Task.findByIdAndUpdate(req.params.taskId, updates, { returnDocument: 'after' });
+  if (!task) return res.status(404).json({ error: 'Task not found.' });
+  res.json({ task });
+});
+
+app.delete('/api/admin/tasks/:taskId', authenticateRequest, requirePlatformAdmin, async (req, res) => {
+  if (!isCreditEditor(req.user.role)) return res.status(403).json({ error: 'Administrator can view and email only.' });
+  await Task.deleteOne({ _id: req.params.taskId });
+  res.json({ success: true });
+});
+
+app.post('/api/admin/tasks/:taskId/retry', authenticateRequest, requirePlatformAdmin, async (req, res) => {
+  if (!isCreditEditor(req.user.role)) return res.status(403).json({ error: 'Administrator can view and email only.' });
+  const task = await Task.findById(req.params.taskId);
+  if (!task) return res.status(404).json({ error: 'Task not found.' });
+  task.status = 'active';
+  task.lastError = '';
+  task.claimToken = '';
+  task.claimExpiresAt = null;
+  task.nextRunAt = computeNextRunAt(task.schedule || {}, task.timezone || DEFAULT_TIMEZONE) || new Date();
+  await task.save();
+  res.json({ task });
+});
+
+app.post('/api/admin/email', authenticateRequest, requirePlatformAdmin, async (req, res) => {
+  const recipients = Array.isArray(req.body.recipients) ? req.body.recipients.map((item) => sanitizeTextInput(item).toLowerCase()).filter((item) => item.includes('@')) : [];
+  const subject = sanitizeTextInput(req.body.subject || 'Message from CodeBot admin');
+  const message = sanitizeLongText(req.body.message || '');
+  if (!recipients.length) return res.status(400).json({ error: 'Add at least one recipient.' });
+  if (!message) return res.status(400).json({ error: 'Email message is required.' });
+  for (const email of recipients.slice(0, 100)) {
+    // eslint-disable-next-line no-await-in-loop
+    await sendCustomEmail({ to: email, subject, body: message });
+  }
+  res.json({ success: true, sent: recipients.slice(0, 100).length });
+});
 
 app.get('/api/workspaces/members', authenticateRequest, requireActiveWorkspace, requirePermission('members:manage'), async (req, res) => {
   const members = await listWorkspaceMembers(req.tenant._id);
