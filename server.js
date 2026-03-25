@@ -2187,6 +2187,23 @@ app.post('/api/tasks', authenticateRequest, requireScopedPermission('tasks:write
   if (!automationAudience.length) automationAudience.push('all_incoming');
   if (automationAudience.includes('all_incoming')) automationAudience.splice(0, automationAudience.length, 'all_incoming');
   if (mode === 'automated_response' && automationAudience.includes('managed_groups') && !normalizedRecipients.groups.length) return res.status(400).json({ error: 'Select at least one group when using the managed groups automated response option.' });
+  if (mode === 'automated_response') {
+    const profile = await CompanyProfile.findOne({ scopeId: scope.scopeId }).lean();
+    const hasPortfolio = Boolean(String(profile?.businessNameText || '').trim() || String(profile?.businessName || '').trim());
+    if (!hasPortfolio) return res.status(400).json({ error: 'Complete your company portfolio before enabling automated responses.' });
+  }
+  const connectionState = connectionStateStore.get(scope.scopeId) || await WhatsAppConnection.findOne({ tenantId: scope.scopeId }).lean() || buildDefaultConnectionState(scope.scopeId);
+  if (connectionState.status !== 'connected') {
+    try {
+      await getOrCreateSocket(req.user, scope.scopeId);
+    } catch (error) {
+      logger.warn({ scopeId: scope.scopeId, error: error.message }, 'Unable to reconnect WhatsApp before scheduling task');
+    }
+  }
+  const refreshedConnectionState = connectionStateStore.get(scope.scopeId) || await WhatsAppConnection.findOne({ tenantId: scope.scopeId }).lean() || buildDefaultConnectionState(scope.scopeId);
+  if (refreshedConnectionState.status !== 'connected') {
+    return res.status(409).json({ error: 'WhatsApp is not connected. Please reconnect from the dashboard and try again.' });
+  }
   const schedule = mode === 'automated_response' ? {} : validateSchedule(req.body.schedule || {}, timezone);
   const task = await Task.create({
     tenantId: scope.scopeId,
