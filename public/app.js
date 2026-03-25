@@ -102,6 +102,7 @@ const ui = {
   groupsTable: document.getElementById('groupsTable'),
   contactsTable: document.getElementById('contactsTable'),
   groupSearch: document.getElementById('groupSearch'),
+  groupRecipientsInput: document.getElementById('groupRecipientsInput'),
   contactSearch: document.getElementById('contactSearch'),
   groupSortButton: document.getElementById('groupSortButton'),
   contactSortButton: document.getElementById('contactSortButton'),
@@ -193,6 +194,7 @@ const taskBuilderState = {
   automationAudience: ['all_incoming'],
   pendingStatusConfirmation: null,
   isScheduling: false,
+  autoGroupMemberRecipients: new Set(),
 };
 
 const TASK_DRAFT_STORAGE_KEY = 'wa_task_builder_draft_v1';
@@ -283,6 +285,22 @@ function getStatusAudienceContactIds(manualContacts = []) {
 
 function syncManualRecipientsFromInput() {
   taskBuilderState.manualRecipients = dedupeRecipients(splitRecipientInput(ui.recipientSummaryInput.value));
+}
+
+function getSelectedGroupParticipantIds() {
+  const selectedGroups = getSelectedItems(audienceState.groups, taskBuilderState.selectedGroups);
+  return dedupeRecipients(selectedGroups.flatMap((group) => Array.isArray(group.participantIds) ? group.participantIds : []));
+}
+
+function syncGroupRecipientInputs() {
+  const autoRecipientIds = taskBuilderState.groupDeliveryMode === 'members' ? getSelectedGroupParticipantIds() : [];
+  const currentRecipients = dedupeRecipients(splitRecipientInput(ui.recipientSummaryInput.value));
+  const preservedRecipients = currentRecipients.filter((value) => !taskBuilderState.autoGroupMemberRecipients.has(normalizePhoneRecipient(value)));
+  const mergedRecipients = dedupeRecipients([...preservedRecipients, ...autoRecipientIds]);
+  taskBuilderState.autoGroupMemberRecipients = new Set(autoRecipientIds);
+  taskBuilderState.manualRecipients = mergedRecipients;
+  ui.recipientSummaryInput.value = mergedRecipients.join(', ');
+  if (ui.groupRecipientsInput) ui.groupRecipientsInput.value = autoRecipientIds.join(', ');
 }
 
 function getSelectedRecipientLabels() {
@@ -1342,6 +1360,7 @@ function renderTable(type) {
 
 function renderAudienceTables() {
   pruneSelections();
+  syncGroupRecipientInputs();
   renderTable('groups');
   renderTable('contacts');
   updateTaskPreview();
@@ -1415,16 +1434,7 @@ function redirectToWhatsAppConnection(message = 'WhatsApp is not connected yet. 
 
 async function ensureWhatsAppConnectedBeforeScheduling() {
   const currentState = await api.whatsappStatus();
-  if (currentState.status === 'connected') return true;
-  await api.connectWhatsApp();
-  await syncWhatsAppStatus();
-  const maxAttempts = 3;
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const retryState = await api.whatsappStatus();
-    if (retryState.status === 'connected') return true;
-    if (attempt < maxAttempts - 1) await new Promise((resolve) => setTimeout(resolve, 900));
-  }
-  return false;
+  return currentState.status === 'connected';
 }
 
 function addTimeField(value = '09:00') {
@@ -1747,6 +1757,7 @@ async function scheduleTask() {
   }
 
   const statusAudienceIds = isStatus ? getStatusAudienceContactIds(manualContacts) : [];
+  const resolvedGroups = taskBuilderState.groupDeliveryMode === 'members' ? [] : selectedGroups;
   const contacts = (isStatus
     ? statusAudienceIds
     : dedupeRecipients([
@@ -1755,7 +1766,7 @@ async function scheduleTask() {
     ]))
     .map((id) => audienceState.contacts.find((item) => item.id === id) || selectedContacts.find((item) => item.id === id) || manualContacts.find((item) => item.id === id) || { id, name: id, phone: `+${id.split('@')[0]}`, segment: 'Status viewer' })
     .filter(Boolean);
-  const normalizedRecipients = sanitizeTaskRecipients(selectedGroups, contacts);
+  const normalizedRecipients = sanitizeTaskRecipients(resolvedGroups, contacts);
 
   try {
     const returnContext = captureReturnContext();
@@ -1781,7 +1792,7 @@ async function scheduleTask() {
       recipients: {
         groups: isStatus ? [] : normalizedRecipients.groups,
         contacts: normalizedRecipients.contacts,
-        groupDeliveryMode: taskBuilderState.groupDeliveryMode,
+        groupDeliveryMode: taskBuilderState.groupDeliveryMode === 'members' ? 'group' : taskBuilderState.groupDeliveryMode,
       },
       schedule: isAutomated ? {} : buildScheduleConfig(),
     });
@@ -1953,6 +1964,7 @@ function resetTaskBuilder() {
   taskBuilderState.taskMode = 'broadcast';
   taskBuilderState.automationAudience = ['all_incoming'];
   taskBuilderState.pendingStatusConfirmation = null;
+  taskBuilderState.autoGroupMemberRecipients = new Set();
   ui.statusContactWaitCard?.classList.add('hidden');
   ui.groupDeliveryModeInputs.forEach((input) => { input.checked = input.value === 'group'; });
   ui.taskModeInputs.forEach((input) => { input.checked = input.value === 'broadcast'; });
@@ -1968,6 +1980,8 @@ function resetTaskBuilder() {
   ui.startDateInput.value = '';
   ui.startTimeInput.value = '';
   ui.frequencySelect.value = '';
+  ui.recipientSummaryInput.value = '';
+  if (ui.groupRecipientsInput) ui.groupRecipientsInput.value = '';
   ui.frequencyOptions.innerHTML = '';
   renderAudienceTables();
   setTaskTab('message');
@@ -2215,6 +2229,7 @@ ui.refreshContactsButton?.addEventListener('click', async () => {
 
 ui.selectAllGroups.addEventListener('change', () => {
   getFilteredData(audienceState.groups, ui.groupSearch.value, taskBuilderState.groupSortAsc).forEach((item) => ui.selectAllGroups.checked ? taskBuilderState.selectedGroups.add(item.id) : taskBuilderState.selectedGroups.delete(item.id));
+  syncGroupRecipientInputs();
   renderTable('groups');
   updateTaskPreview();
 });
@@ -2225,6 +2240,7 @@ ui.selectAllContacts.addEventListener('change', () => {
 });
 ui.groupDeliveryModeInputs.forEach((input) => input.addEventListener('change', (event) => {
   taskBuilderState.groupDeliveryMode = event.target.value === 'members' ? 'members' : 'group';
+  syncGroupRecipientInputs();
   updateTaskPreview();
 }));
 ui.taskModeInputs.forEach((input) => input.addEventListener('change', (event) => {
@@ -2325,6 +2341,7 @@ document.addEventListener('click', (event) => {
   if (groupSelect) {
     if (groupSelect.checked) taskBuilderState.selectedGroups.add(groupSelect.dataset.selectGroup);
     else taskBuilderState.selectedGroups.delete(groupSelect.dataset.selectGroup);
+    syncGroupRecipientInputs();
     updateTaskPreview();
   }
 
