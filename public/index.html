@@ -822,7 +822,9 @@
                 <input id="adminUserTo" type="date" />
                 <button id="adminUsersRefresh" class="secondary-button" type="button">Refresh</button>
               </div>
-              <div id="adminUsersTable" class="task-table"></div>
+              <div class="task-table-shell admin-table-shell">
+                <div id="adminUsersTable" class="task-table"></div>
+              </div>
             </div>
             <div id="adminTasksPanel" data-admin-panel="tasks" class="admin-panel hidden">
               <div class="hero-actions">
@@ -831,7 +833,9 @@
                 <select id="adminTaskMode"><option value="">All mode</option><option value="broadcast">broadcast</option><option value="automated_response">automated_response</option><option value="schedule_status">schedule_status</option></select>
                 <button id="adminTasksRefresh" class="secondary-button" type="button">Refresh</button>
               </div>
-              <div id="adminTasksTable" class="task-table"></div>
+              <div class="task-table-shell admin-table-shell">
+                <div id="adminTasksTable" class="task-table"></div>
+              </div>
             </div>
             <div id="adminCreditsPanel" data-admin-panel="credits" class="admin-panel hidden">
               <p class="muted">Select a user in the user table and click Add credit.</p>
@@ -839,7 +843,22 @@
             </div>
             <div id="adminEmailPanel" data-admin-panel="email" class="admin-panel hidden">
               <form id="adminEmailForm" class="stack">
-                <label><span>Recipients (comma separated emails)</span><textarea id="adminEmailRecipients"></textarea></label>
+                <div class="admin-email-users stack-sm">
+                  <div class="table-toolbar">
+                    <label class="search-field">
+                      <span class="input-label">Filter users</span>
+                      <input id="adminEmailUserSearch" type="text" placeholder="Search username/email/role" />
+                    </label>
+                    <label class="checkbox-inline">
+                      <input id="adminEmailSelectAll" type="checkbox" />
+                      <span>Select all filtered users</span>
+                    </label>
+                  </div>
+                  <div class="task-table-shell admin-table-shell">
+                    <div id="adminEmailUsersTable" class="task-table task-table--email"></div>
+                  </div>
+                </div>
+                <label><span>Recipients (comma separated emails)</span><textarea id="adminEmailRecipients" placeholder="Selected users are added here automatically."></textarea></label>
                 <label><span>Subject</span><input id="adminEmailSubject" type="text" value="Message from CodeBot admin" /></label>
                 <label><span>Message</span><textarea id="adminEmailMessage" required></textarea></label>
                 <button class="primary-button" type="submit">Send email</button>

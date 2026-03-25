@@ -2389,12 +2389,13 @@ app.get('/api/admin/overview', authenticateRequest, requirePlatformAdmin, async 
 
 app.get('/api/admin/users', authenticateRequest, requirePlatformAdmin, async (req, res) => {
   const q = String(req.query.q || '').trim();
-  const role = normalizePlatformRole(req.query.role || '');
+  const roleQuery = String(req.query.role || '').trim();
+  const role = roleQuery ? normalizePlatformRole(roleQuery) : '';
   const from = req.query.from ? new Date(String(req.query.from)) : null;
   const to = req.query.to ? new Date(String(req.query.to)) : null;
   const query = {};
   if (q) query.$or = [{ username: { $regex: q, $options: 'i' } }, { email: { $regex: q, $options: 'i' } }];
-  if (['customer', 'admin', 'Administartor'].includes(role)) query.role = role;
+  if (role && ['customer', 'admin', 'Administartor'].includes(role)) query.role = role;
   if (from || to) {
     query.createdAt = {};
     if (from && !Number.isNaN(from.getTime())) query.createdAt.$gte = from;
