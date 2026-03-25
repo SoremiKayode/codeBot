@@ -552,7 +552,11 @@ function normalizePhoneNumber(jid = '') {
 function normalizePhoneJid(value = '') {
   const trimmed = String(value || '').trim();
   if (!trimmed) return '';
-  if (/@s\.whatsapp\.net$/i.test(trimmed)) return trimmed;
+  if (/@s\.whatsapp\.net$/i.test(trimmed)) {
+    const [local] = trimmed.split('@');
+    const userDigits = String(local || '').split(':')[0].replace(/\D/g, '');
+    return userDigits ? `${userDigits}@s.whatsapp.net` : '';
+  }
   const digits = trimmed.replace(/\D/g, '');
   return digits.length >= 7 ? `${digits}@s.whatsapp.net` : '';
 }
