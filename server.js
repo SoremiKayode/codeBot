@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import path from 'path';
+import tls from 'tls';
 import { fileURLToPath } from 'url';
 import express from 'express';
 import mongoose from 'mongoose';
@@ -63,6 +64,15 @@ const IS_LOCAL = process.env.USE_LOCAL === 'true';
 const MONGO_URI = IS_LOCAL ? 'mongodb://localhost:27017/whatsapp_bot' : process.env.CLOUD_MONGO_URI;
 const PORT = Number(process.env.PORT || 3000);
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'wa_session';
+const SMTP_HOST = process.env.SMTP_HOST || 'smtp.zoho.com';
+const SMTP_PORT = Number(process.env.SMTP_PORT || 465);
+const SMTP_PASSWORD = process.env.SMTP_PASSWORD || '';
+const SMTP_USER = process.env.SMTP_USER || 'codebot@zohomail.com';
+const SMTP_FROM_NAME = process.env.SMTP_FROM_NAME || 'CodeBot';
+const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY || '';
+const PAYSTACK_PUBLIC_KEY = process.env.PAYSTACK_PUBLIC_KEY || '';
+const PAYSTACK_CURRENCY = process.env.PAYSTACK_CURRENCY || 'NGN';
+const PAYSTACK_CREDIT_RATE = Number(process.env.PAYSTACK_CREDIT_RATE || 1);
 const SESSION_COOKIE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
 const CREDIT_SIGNUP_BONUS = Number(process.env.DEFAULT_SIGNUP_CREDITS || 150);
 const DEFAULT_TIMEZONE = process.env.DEFAULT_TENANT_TIMEZONE || 'UTC';
@@ -75,6 +85,9 @@ const HUGGINGFACE_TEXT_MAX_TOKENS = Number(process.env.HUGGINGFACE_TEXT_MAX_TOKE
 const HUGGINGFACE_TEXT_TEMPERATURE = Number(process.env.HUGGINGFACE_TEXT_TEMPERATURE || 0.7);
 const HUGGINGFACE_TEXT_TOP_P = Number(process.env.HUGGINGFACE_TEXT_TOP_P || 0.95);
 const HUGGINGFACE_IMAGE_NEGATIVE_PROMPT = process.env.HUGGINGFACE_IMAGE_NEGATIVE_PROMPT || '';
+const AUTO_REPLY_MIN_DELAY_MS = Number(process.env.AUTO_REPLY_MIN_DELAY_MS || 2000);
+const AUTO_REPLY_MAX_DELAY_MS = Number(process.env.AUTO_REPLY_MAX_DELAY_MS || 10000);
+const AUTO_REPLY_LIMIT_PER_MINUTE = Number(process.env.AUTO_REPLY_LIMIT_PER_MINUTE || 8);
 const HUGGINGFACE_IMAGE_SEED = Number(process.env.HUGGINGFACE_IMAGE_SEED || 0);
 const HUGGINGFACE_IMAGE_RANDOMIZE_SEED = process.env.HUGGINGFACE_IMAGE_RANDOMIZE_SEED !== 'false';
 const HUGGINGFACE_IMAGE_WIDTH = Number(process.env.HUGGINGFACE_IMAGE_WIDTH || 384);
@@ -82,8 +95,9 @@ const HUGGINGFACE_IMAGE_HEIGHT = Number(process.env.HUGGINGFACE_IMAGE_HEIGHT || 
 const HUGGINGFACE_IMAGE_GUIDANCE_SCALE = Number(process.env.HUGGINGFACE_IMAGE_GUIDANCE_SCALE || 0);
 const HUGGINGFACE_IMAGE_STEPS = Number(process.env.HUGGINGFACE_IMAGE_STEPS || 2);
 const CREDIT_COSTS = {
-  whatsappConnect: Number(process.env.CREDIT_COST_WHATSAPP_CONNECT || 5),
-  createTask: Number(process.env.CREDIT_COST_CREATE_TASK || 10),
+  whatsappConnect: Number(process.env.CREDIT_COST_WHATSAPP_CONNECT || 0),
+  createTask: Number(process.env.CREDIT_COST_CREATE_TASK || 0),
+  sendMessage: Number(process.env.CREDIT_COST_SEND_MESSAGE || process.env.CREDIT_COST_CREATE_TASK || 10),
   generateText: Number(process.env.CREDIT_COST_GENERATE_TEXT || 2),
   generateImage: Number(process.env.CREDIT_COST_GENERATE_IMAGE || 6),
 };
@@ -94,10 +108,30 @@ const APP_PERMISSIONS = {
   VIEWER: ['tasks:read'],
 };
 
+const PLATFORM_ROLES = ['customer', 'admin', 'Administartor'];
+
+function normalizePlatformRole(role = '') {
+  const raw = String(role || '').trim();
+  if (raw === 'admin') return 'admin';
+  if (raw.toLowerCase() === 'administrator' || raw === 'Administartor') return 'Administartor';
+  return 'customer';
+}
+
+function isPlatformAdmin(role = '') {
+  return ['admin', 'Administartor'].includes(normalizePlatformRole(role));
+}
+
+function isCreditEditor(role = '') {
+  return normalizePlatformRole(role) === 'admin';
+}
+
 const connectionStateStore = new Map();
 const socketStore = new Map();
 const audienceStore = new Map();
 const huggingFaceClientStore = new Map();
+const autoReplyRateStore = new Map();
+const conversationStore = new Map();
+const unsubscribeStore = new Set();
 const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000;
 const TASK_CLAIM_WINDOW_MS = 2 * 60 * 1000;
 const OAUTH_STATE_SECRET = process.env.OAUTH_STATE_SECRET || process.env.APP_SECRET || process.env.SESSION_SECRET || 'dev-oauth-state-secret';
@@ -129,6 +163,233 @@ function parseCookies(header = '') {
     cookies[decodeURIComponent(rawKey)] = decodeURIComponent(rawValue.join('='));
     return cookies;
   }, {});
+}
+
+function encodeSmtpLine(value = '') {
+  return Buffer.from(String(value || ''), 'utf8').toString('base64');
+}
+
+function quotePrintableHeader(value = '') {
+  return String(value || '').replace(/[\r\n]+/g, ' ').trim();
+}
+
+function readSmtpResponse(socket) {
+  return new Promise((resolve, reject) => {
+    let buffer = '';
+    const cleanup = () => {
+      socket.off('data', onData);
+      socket.off('error', onError);
+      socket.off('close', onClose);
+      clearTimeout(timeout);
+    };
+    const onError = (error) => { cleanup(); reject(error); };
+    const onClose = () => { cleanup(); reject(new Error('SMTP connection closed unexpectedly.')); };
+    const onData = (chunk) => {
+      buffer += chunk.toString('utf8');
+      const lines = buffer.split(/\r?\n/).filter(Boolean);
+      if (!lines.length) return;
+      const lastLine = lines[lines.length - 1];
+      if (/^\d{3} /.test(lastLine)) { cleanup(); resolve(lines); }
+    };
+    const timeout = setTimeout(() => { cleanup(); reject(new Error('SMTP server timed out.')); }, 15000);
+    socket.on('data', onData);
+    socket.on('error', onError);
+    socket.on('close', onClose);
+  });
+}
+
+async function sendSmtpCommand(socket, command, expectedCodes = [250]) {
+  if (command) socket.write(`${command}\r\n`);
+  const lines = await readSmtpResponse(socket);
+  const statusCode = Number(String(lines[lines.length - 1] || '').slice(0, 3));
+  if (!expectedCodes.includes(statusCode)) {
+    throw new Error(lines.join(' | ') || `Unexpected SMTP response ${statusCode}`);
+  }
+  return lines;
+}
+
+async function sendCustomEmail({ to, subject, body }) {
+  if (!SMTP_PASSWORD) throw new Error('SMTP_PASSWORD is required to send emails.');
+  const recipient = quotePrintableHeader(to);
+  if (!recipient) throw new Error('A recipient email address is required.');
+  const socket = tls.connect({ host: SMTP_HOST, port: SMTP_PORT, servername: SMTP_HOST, minVersion: 'TLSv1.2' });
+  await new Promise((resolve, reject) => {
+    socket.once('secureConnect', resolve);
+    socket.once('error', reject);
+  });
+  try {
+    await sendSmtpCommand(socket, '', [220]);
+    await sendSmtpCommand(socket, `EHLO ${SMTP_HOST}`, [250]);
+    await sendSmtpCommand(socket, 'AUTH LOGIN', [334]);
+    await sendSmtpCommand(socket, encodeSmtpLine(SMTP_USER), [334]);
+    await sendSmtpCommand(socket, encodeSmtpLine(SMTP_PASSWORD), [235]);
+    await sendSmtpCommand(socket, `MAIL FROM:<${SMTP_USER}>`, [250]);
+    await sendSmtpCommand(socket, `RCPT TO:<${recipient}>`, [250, 251]);
+    await sendSmtpCommand(socket, 'DATA', [354]);
+    const safeSubject = quotePrintableHeader(subject || 'Message from CodeBot');
+    const safeBody = String(body || '').replace(/\r?\n/g, '\r\n').replace(/^\./gm, '..');
+    const composed = [
+      `From: ${SMTP_FROM_NAME} <${SMTP_USER}>`,
+      `To: ${recipient}`,
+      `Subject: ${safeSubject}`,
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset=UTF-8',
+      '',
+      safeBody,
+      '.',
+    ].join('\r\n');
+    await sendSmtpCommand(socket, composed, [250]);
+    await sendSmtpCommand(socket, 'QUIT', [221]);
+  } finally {
+    socket.end();
+  }
+}
+
+async function sendEnquiryEmail({ name, email, message }) {
+  if (!SMTP_PASSWORD) throw new Error('SMTP_PASSWORD is required to send enquiry emails.');
+  const socket = tls.connect({ host: SMTP_HOST, port: SMTP_PORT, servername: SMTP_HOST, minVersion: 'TLSv1.2' });
+  await new Promise((resolve, reject) => {
+    socket.once('secureConnect', resolve);
+    socket.once('error', reject);
+  });
+  try {
+    await sendSmtpCommand(socket, '', [220]);
+    await sendSmtpCommand(socket, `EHLO ${SMTP_HOST}`, [250]);
+    await sendSmtpCommand(socket, 'AUTH LOGIN', [334]);
+    await sendSmtpCommand(socket, encodeSmtpLine(SMTP_USER), [334]);
+    await sendSmtpCommand(socket, encodeSmtpLine(SMTP_PASSWORD), [235]);
+    await sendSmtpCommand(socket, `MAIL FROM:<${SMTP_USER}>`, [250]);
+    await sendSmtpCommand(socket, `RCPT TO:<${SMTP_USER}>`, [250, 251]);
+    await sendSmtpCommand(socket, 'DATA', [354]);
+    const safeName = quotePrintableHeader(name);
+    const safeEmail = quotePrintableHeader(email);
+    const safeMessage = String(message || '').replace(/\r?\n/g, '\r\n').replace(/^\./gm, '..');
+    const composed = [
+      `From: ${SMTP_FROM_NAME} <${SMTP_USER}>`,
+      `To: ${SMTP_USER}`,
+      `Reply-To: ${safeEmail}`,
+      `Subject: CodeBot enquiry from ${safeName}`,
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset=UTF-8',
+      '',
+      `Name: ${safeName}`,
+      `Email: ${safeEmail}`,
+      '',
+      safeMessage,
+      '.',
+    ].join('\r\n');
+    await sendSmtpCommand(socket, composed, [250]);
+    await sendSmtpCommand(socket, 'QUIT', [221]);
+  } finally {
+    socket.end();
+  }
+}
+
+async function sendWhatsAppReconnectEmail({ user, tenant, reason = '' }) {
+  if (!SMTP_PASSWORD || !user?.email) return false;
+  const socket = tls.connect({ host: SMTP_HOST, port: SMTP_PORT, servername: SMTP_HOST, minVersion: 'TLSv1.2' });
+  await new Promise((resolve, reject) => {
+    socket.once('secureConnect', resolve);
+    socket.once('error', reject);
+  });
+  try {
+    await sendSmtpCommand(socket, '', [220]);
+    await sendSmtpCommand(socket, `EHLO ${SMTP_HOST}`, [250]);
+    await sendSmtpCommand(socket, 'AUTH LOGIN', [334]);
+    await sendSmtpCommand(socket, encodeSmtpLine(SMTP_USER), [334]);
+    await sendSmtpCommand(socket, encodeSmtpLine(SMTP_PASSWORD), [235]);
+    await sendSmtpCommand(socket, `MAIL FROM:<${SMTP_USER}>`, [250]);
+    await sendSmtpCommand(socket, `RCPT TO:<${quotePrintableHeader(user.email)}>`, [250, 251]);
+    await sendSmtpCommand(socket, 'DATA', [354]);
+    const safeUsername = quotePrintableHeader(user.username || user.email || 'there');
+    const safeWorkspace = quotePrintableHeader(tenant?.name || 'your workspace');
+    const safeReason = quotePrintableHeader(reason || 'Connection handshake failed unexpectedly.');
+    const composed = [
+      `From: ${SMTP_FROM_NAME} <${SMTP_USER}>`,
+      `To: ${quotePrintableHeader(user.email)}`,
+      'Subject: WhatsApp reconnect required',
+      'MIME-Version: 1.0',
+      'Content-Type: text/plain; charset=UTF-8',
+      '',
+      `Hi ${safeUsername},`,
+      '',
+      `We could not keep your WhatsApp connection active for ${safeWorkspace}.`,
+      `Reason: ${safeReason}`,
+      '',
+      'Please open the dashboard and click "Connect WhatsApp" to reconnect.',
+      '',
+      '- CodeBot',
+      '.',
+    ].join('\r\n');
+    await sendSmtpCommand(socket, composed, [250]);
+    await sendSmtpCommand(socket, 'QUIT', [221]);
+    return true;
+  } finally {
+    socket.end();
+  }
+}
+
+function normalizePaymentAmount(amount) {
+  const normalized = Number(amount || 0);
+  if (!Number.isFinite(normalized) || normalized <= 0) throw new Error('Enter a valid payment amount.');
+  return Math.round(normalized * 100) / 100;
+}
+
+function convertAmountToCredits(amount) {
+  return Math.max(1, Math.round(Number(amount || 0) * PAYSTACK_CREDIT_RATE));
+}
+
+async function creditAccountBalance({ tenant = null, user, amount = 0, type, metadata = {} }) {
+  const normalizedAmount = Number(amount || 0);
+  if (!normalizedAmount) return tenant || user;
+  if (tenant) {
+    tenant.credits = Number(tenant.credits || 0) + normalizedAmount;
+    await tenant.save();
+    await CreditLedger.create({
+      tenantId: String(tenant._id),
+      userId: String(user._id),
+      type,
+      delta: normalizedAmount,
+      balanceAfter: tenant.credits,
+      metadata,
+    });
+    return tenant;
+  }
+  user.credits = Number(user.credits || 0) + normalizedAmount;
+  await user.save();
+  return user;
+}
+
+async function initializePaystackTransaction({ email, amount, reference, metadata = {} }) {
+  if (!PAYSTACK_SECRET_KEY) throw new Error('PAYSTACK_SECRET_KEY is required to initialize payments.');
+  const response = await fetch('https://api.paystack.co/transaction/initialize', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      email,
+      amount: Math.round(Number(amount) * 100),
+      reference,
+      currency: PAYSTACK_CURRENCY,
+      metadata,
+      channels: ['card', 'bank', 'ussd', 'bank_transfer', 'mobile_money'],
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.status === false) throw new Error(payload.message || 'Unable to initialize Paystack payment.');
+  return payload.data;
+}
+
+async function verifyPaystackTransaction(reference) {
+  if (!PAYSTACK_SECRET_KEY) throw new Error('PAYSTACK_SECRET_KEY is required to verify payments.');
+  const response = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
+    headers: { Authorization: `Bearer ${PAYSTACK_SECRET_KEY}` },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload.status === false) throw new Error(payload.message || 'Unable to verify Paystack payment.');
+  return payload.data;
 }
 
 function buildSessionCookie(token) {
@@ -247,6 +508,7 @@ function sanitizeUser(user, membership = null, tenant = null) {
     whatsappStatus: user.whatsappStatus,
     whatsappPhone: user.whatsappPhone,
     walletBalance: user.walletBalance,
+    role: normalizePlatformRole(user.role),
     activeTenant: tenant ? {
       id: String(tenant._id),
       name: tenant.name,
@@ -290,7 +552,11 @@ function normalizePhoneNumber(jid = '') {
 function normalizePhoneJid(value = '') {
   const trimmed = String(value || '').trim();
   if (!trimmed) return '';
-  if (/@s\.whatsapp\.net$/i.test(trimmed)) return trimmed;
+  if (/@s\.whatsapp\.net$/i.test(trimmed)) {
+    const [local] = trimmed.split('@');
+    const userDigits = String(local || '').split(':')[0].replace(/\D/g, '');
+    return userDigits ? `${userDigits}@s.whatsapp.net` : '';
+  }
   const digits = trimmed.replace(/\D/g, '');
   return digits.length >= 7 ? `${digits}@s.whatsapp.net` : '';
 }
@@ -361,18 +627,12 @@ async function snapshotAudience(tenantId, state) {
   }
 }
 
-async function upsertAudienceContacts(tenantId, contacts = [], chats = []) {
+async function upsertAudienceContacts(tenantId, contacts = []) {
   const current = audienceStore.get(tenantId) || buildDefaultAudienceState();
-  const chatMap = new Map((Array.isArray(chats) ? chats : []).map((chat) => [String(chat.id || ''), chat]));
   const nextContacts = new Map(current.contacts.map((contact) => [contact.id, contact]));
   contacts.forEach((contact) => {
-    const normalized = normalizeContact(contact, chatMap.get(String(contact.id || '')));
+    const normalized = normalizeContact(contact, {});
     if (normalized.id && !normalized.id.endsWith('@g.us')) nextContacts.set(normalized.id, { ...nextContacts.get(normalized.id), ...normalized });
-  });
-  chatMap.forEach((chat, id) => {
-    if (!id || id.endsWith('@g.us') || id === 'status@broadcast') return;
-    const normalized = normalizeContact({}, chat);
-    nextContacts.set(id, { ...nextContacts.get(id), ...normalized });
   });
   const next = { ...current, contacts: Array.from(nextContacts.values()).sort((a, b) => a.name.localeCompare(b.name)), lastSyncedAt: new Date() };
   audienceStore.set(tenantId, next);
@@ -396,6 +656,10 @@ async function upsertAudienceGroups(tenantId, groups = []) {
 async function syncAudienceFromSocket(tenantId, sock) {
   const allGroups = await sock.groupFetchAllParticipating().catch(() => ({}));
   await upsertAudienceGroups(tenantId, Object.values(allGroups || {}));
+  const contacts = sock?.contacts && typeof sock.contacts === 'object' ? Object.values(sock.contacts) : [];
+  if (Array.isArray(contacts) && contacts.length) {
+    await upsertAudienceContacts(tenantId, contacts);
+  }
   return audienceStore.get(tenantId) || buildDefaultAudienceState();
 }
 
@@ -442,10 +706,10 @@ const userSchema = new mongoose.Schema({
   theme: { type: String, enum: ['light', 'dark'], default: 'light' },
   whatsappStatus: { type: String, enum: ['not_connected', 'connecting', 'connected'], default: 'not_connected' },
   whatsappPhone: { type: String, default: '' },
+  role: { type: String, enum: PLATFORM_ROLES, default: 'customer' },
   socialProviders: {
     google: { type: Boolean, default: false },
     github: { type: Boolean, default: false },
-    microsoft: { type: Boolean, default: false },
   },
 }, { timestamps: true });
 
@@ -480,12 +744,14 @@ const taskSchema = new mongoose.Schema({
   createdByUserId: { type: String, required: true },
   title: { type: String, required: true, trim: true },
   type: { type: String, required: true, trim: true },
+  mode: { type: String, enum: ['broadcast', 'automated_response', 'schedule_status'], default: 'broadcast' },
   description: { type: String, required: true, trim: true },
   messageHtml: { type: String, default: '' },
   messageText: { type: String, default: '' },
   translatedPreview: { type: String, default: '' },
   mediaQueue: { type: Array, default: [] },
   recipients: { type: Object, default: { groups: [], contacts: [] } },
+  automation: { type: Object, default: { audience: ['all_incoming'] } },
   schedule: { type: Object, default: {} },
   timezone: { type: String, default: DEFAULT_TIMEZONE },
   status: { type: String, enum: ['draft', 'active', 'paused', 'completed'], default: 'active' },
@@ -540,11 +806,56 @@ const tenantAudienceContactSchema = new mongoose.Schema({
 }, { timestamps: true });
 tenantAudienceContactSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 
+const companyProfileSchema = new mongoose.Schema({
+  scopeId: { type: String, required: true, unique: true, index: true },
+  ownerType: { type: String, enum: ['workspace', 'user'], default: 'user' },
+  tenantId: { type: String, default: '' },
+  userId: { type: String, required: true, index: true },
+  businessName: { type: String, default: '' },
+  businessNameText: { type: String, default: '' },
+  faqs: { type: [{ question: String, answer: String }], default: [] },
+  products: { type: [{ name: String, description: String, price: String }], default: [] },
+  toneStyle: { type: String, default: '' },
+  safetyControls: {
+    replyDelayRangeMs: { type: [Number], default: [AUTO_REPLY_MIN_DELAY_MS, AUTO_REPLY_MAX_DELAY_MS] },
+    repliesPerMinute: { type: Number, default: AUTO_REPLY_LIMIT_PER_MINUTE },
+    allowStop: { type: Boolean, default: true },
+    ignoreSpam: { type: Boolean, default: true },
+    avoidReplyingToEveryMessage: { type: Boolean, default: true },
+  },
+}, { timestamps: true });
+
+const conversationHistorySchema = new mongoose.Schema({
+  scopeId: { type: String, required: true, index: true },
+  tenantId: { type: String, default: '' },
+  userId: { type: String, required: true, index: true },
+  remoteJid: { type: String, required: true, index: true },
+  messages: { type: [{ role: String, text: String, createdAt: { type: Date, default: Date.now } }], default: [] },
+  unsubscribed: { type: Boolean, default: false },
+  lastIncomingAt: { type: Date, default: null },
+  lastReplyAt: { type: Date, default: null },
+}, { timestamps: true });
+conversationHistorySchema.index({ scopeId: 1, remoteJid: 1 }, { unique: true });
+
 const enquirySchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true },
   email: { type: String, required: true, trim: true, lowercase: true },
   message: { type: String, required: true, trim: true },
   recipient: { type: String, default: 'admin@codesignite.com' },
+}, { timestamps: true });
+
+const paymentTransactionSchema = new mongoose.Schema({
+  reference: { type: String, required: true, unique: true },
+  userId: { type: String, required: true, index: true },
+  tenantId: { type: String, default: '' },
+  email: { type: String, required: true, trim: true, lowercase: true },
+  amount: { type: Number, required: true },
+  credits: { type: Number, required: true },
+  currency: { type: String, default: PAYSTACK_CURRENCY },
+  status: { type: String, enum: ['initialized', 'success', 'failed'], default: 'initialized' },
+  channel: { type: String, default: 'paystack' },
+  metadata: { type: Object, default: {} },
+  verifiedAt: { type: Date, default: null },
 }, { timestamps: true });
 
 const Tenant = mongoose.model('Tenant', tenantSchema);
@@ -559,6 +870,9 @@ const MessageDispatch = mongoose.model('MessageDispatch', messageDispatchSchema)
 const TenantAudienceGroup = mongoose.model('TenantAudienceGroup', tenantAudienceGroupSchema);
 const TenantAudienceContact = mongoose.model('TenantAudienceContact', tenantAudienceContactSchema);
 const Enquiry = mongoose.model('Enquiry', enquirySchema);
+const PaymentTransaction = mongoose.model('PaymentTransaction', paymentTransactionSchema);
+const CompanyProfile = mongoose.model('CompanyProfile', companyProfileSchema);
+const ConversationHistory = mongoose.model('ConversationHistory', conversationHistorySchema);
 
 async function connectDatabase() {
   if (!MONGO_URI) throw new Error('Missing MongoDB connection string. Set CLOUD_MONGO_URI or USE_LOCAL=true.');
@@ -568,6 +882,12 @@ async function connectDatabase() {
     if (indexes.some((index) => index.name === 'userId_1' && index.unique)) await WhatsAppConnection.collection.dropIndex('userId_1');
   } catch (error) {
     logger.warn({ error: error.message }, 'Unable to reconcile WhatsApp connection indexes');
+  }
+  try {
+    const indexes = await AuthState.collection.indexes();
+    if (indexes.some((index) => index.name === 'userId_1_key_1' && index.unique)) await AuthState.collection.dropIndex('userId_1_key_1');
+  } catch (error) {
+    logger.warn({ error: error.message }, 'Unable to reconcile auth state indexes');
   }
   logger.info({ mode: IS_LOCAL ? 'local' : 'cloud' }, 'MongoDB connected');
 }
@@ -676,6 +996,109 @@ function getScopeContext(req) {
   };
 }
 
+function getAutoReplyScope(tenantId, userId) {
+  return tenantId ? { scopeId: tenantId, ownerType: 'workspace', tenantId, userId } : { scopeId: `user:${userId}`, ownerType: 'user', tenantId: '', userId };
+}
+
+function getUserFromSession(remoteJid = '') {
+  const jid = String(remoteJid || '');
+  const [tenantId] = jid.split(':');
+  return tenantId || '';
+}
+
+function getMessageText(msg = {}) {
+  return String(msg?.message?.conversation || msg?.message?.extendedTextMessage?.text || msg?.message?.imageMessage?.caption || msg?.message?.videoMessage?.caption || '').trim();
+}
+
+function rememberConversation(remoteJid, role, text) {
+  if (!text) return [];
+  const current = conversationStore.get(remoteJid) || [];
+  const next = [...current, { role, text, createdAt: new Date().toISOString() }].slice(-8);
+  conversationStore.set(remoteJid, next);
+  return next;
+}
+
+function ruleBasedReply(userData, message) {
+  const msg = String(message || '').toLowerCase();
+  if (msg.includes('price')) {
+    return (userData.products || []).map((p) => `${p.name}: ${p.price}`).join('\n');
+  }
+  if (msg.includes('hello') || msg.includes('hi')) {
+    return `Hello 👋 welcome to ${userData.businessNameText || userData.businessName || 'our business'}`;
+  }
+  const faq = (userData.faqs || []).find((item) => msg.includes(String(item.question || '').toLowerCase()));
+  if (faq?.answer) return faq.answer;
+  return null;
+}
+
+function isSpamMessage(text = '') {
+  const normalized = String(text || '').trim();
+  if (!normalized) return true;
+  if (normalized.length > 1000) return true;
+  if (/https?:\/\//i.test(normalized) && normalized.split(/https?:\/\//i).length > 3) return true;
+  if (/([a-zA-Z0-9])\1{7,}/.test(normalized)) return true;
+  return false;
+}
+
+function pickReplyDelay() {
+  const min = Math.max(0, AUTO_REPLY_MIN_DELAY_MS);
+  const max = Math.max(min, AUTO_REPLY_MAX_DELAY_MS);
+  return Math.floor(min + Math.random() * (max - min + 1));
+}
+
+function canSendAutoReply(scopeId) {
+  const bucket = autoReplyRateStore.get(scopeId) || { minute: 0, count: 0 };
+  const minute = Math.floor(Date.now() / 60000);
+  if (bucket.minute !== minute) {
+    autoReplyRateStore.set(scopeId, { minute, count: 1 });
+    return true;
+  }
+  if (bucket.count >= AUTO_REPLY_LIMIT_PER_MINUTE) return false;
+  bucket.count += 1;
+  autoReplyRateStore.set(scopeId, bucket);
+  return true;
+}
+
+async function getCompanyProfileForScope(scopeId) {
+  const profile = await CompanyProfile.findOne({ scopeId }).lean();
+  return profile || null;
+}
+
+async function upsertConversationHistory(scope, remoteJid, incomingText, replyText = '') {
+  const existing = await ConversationHistory.findOne({ scopeId: scope.scopeId, remoteJid });
+  const messages = [...(existing?.messages || []), ...(incomingText ? [{ role: 'user', text: incomingText, createdAt: new Date() }] : []), ...(replyText ? [{ role: 'assistant', text: replyText, createdAt: new Date() }] : [])].slice(-12);
+  return ConversationHistory.findOneAndUpdate(
+    { scopeId: scope.scopeId, remoteJid },
+    {
+      scopeId: scope.scopeId, tenantId: scope.tenantId || '', userId: scope.userId, remoteJid, messages,
+      lastIncomingAt: incomingText ? new Date() : existing?.lastIncomingAt || null,
+      lastReplyAt: replyText ? new Date() : existing?.lastReplyAt || null,
+      unsubscribed: existing?.unsubscribed || false,
+    },
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
+  );
+}
+
+async function craftAutoReply(profile, message, history = []) {
+  const fallback = ruleBasedReply(profile || {}, message);
+  const prompt = [
+    'You are generating a concise WhatsApp auto-reply for a business.',
+    `Business info: ${profile?.businessNameText || profile?.businessName || 'Unknown business'}`,
+    `Tone/style: ${profile?.toneStyle || 'Friendly and professional'}`,
+    `FAQs: ${JSON.stringify(profile?.faqs || [])}`,
+    `Products: ${JSON.stringify(profile?.products || [])}`,
+    `Last conversation: ${JSON.stringify(history.slice(-6))}`,
+    `User message: ${message}`,
+    'Respond in a safe, concise, helpful WhatsApp style. If you are unsure, say so briefly.',
+  ].join('\n');
+  try {
+    const aiReply = await callHuggingFaceText(prompt);
+    return aiReply || fallback || 'Thanks for your message. We will get back to you shortly.';
+  } catch {
+    return fallback || 'Thanks for your message. We will get back to you shortly.';
+  }
+}
+
 function hasScopedPermission(req, permission) {
   if (req.membership) return hasPermission(req.membership.role, permission);
   return ['tasks:write', 'tasks:read'].includes(permission);
@@ -740,6 +1163,13 @@ function requirePermission(permission) {
   };
 }
 
+function requirePlatformAdmin(req, res, next) {
+  if (!isPlatformAdmin(req.user?.role)) {
+    return res.status(403).json({ error: 'Admin access required.' });
+  }
+  next();
+}
+
 function validateTimezone(timezone = DEFAULT_TIMEZONE) {
   try {
     Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(new Date());
@@ -749,9 +1179,21 @@ function validateTimezone(timezone = DEFAULT_TIMEZONE) {
   }
 }
 
+function sanitizeTextInput(value = '') {
+  return String(value || '').replace(/[<>]/g, '').replace(/[\x00-\x1F\x7F]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function sanitizeLongText(value = '') {
+  return String(value || '').replace(/[<>]/g, '').replace(/\r/g, '').trim();
+}
+
+function sanitizeRichText(value = '') {
+  return String(value || '').replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '').replace(/on\w+=/gi, '').trim();
+}
+
 function validateSignupPayload(payload) {
-  const username = String(payload.username || '').trim();
-  const email = String(payload.email || '').trim().toLowerCase();
+  const username = sanitizeTextInput(payload.username);
+  const email = sanitizeTextInput(payload.email).toLowerCase();
   const password = String(payload.password || '');
   if (!username || username.length < 2) throw new Error('Username must be at least 2 characters long.');
   if (!email.includes('@')) throw new Error('Enter a valid email address.');
@@ -759,8 +1201,18 @@ function validateSignupPayload(payload) {
   return { username, email, password };
 }
 
+function validateCompanyProfilePayload(payload = {}) {
+  const businessName = sanitizeRichText(payload.businessName);
+  const businessNameText = sanitizeLongText(payload.businessNameText);
+  const faqs = Array.isArray(payload.faqs) ? payload.faqs.map((item) => ({ question: sanitizeTextInput(item?.question), answer: sanitizeLongText(item?.answer) })).filter((item) => item.question && item.answer) : [];
+  const products = Array.isArray(payload.products) ? payload.products.map((item) => ({ name: sanitizeTextInput(item?.name), description: sanitizeLongText(item?.description), price: sanitizeTextInput(item?.price) })).filter((item) => item.name) : [];
+  const toneStyle = sanitizeLongText(payload.toneStyle);
+  if (!businessName && !businessNameText) throw new Error('Business name and overview are required.');
+  return { businessName, businessNameText, faqs, products, toneStyle };
+}
+
 function validateWorkspacePayload(payload, fallbackName = 'New Workspace') {
-  const workspaceName = String(payload.workspaceName || fallbackName).trim();
+  const workspaceName = sanitizeTextInput(payload.workspaceName || fallbackName);
   const timezone = validateTimezone(String(payload.timezone || DEFAULT_TIMEZONE).trim());
   if (!workspaceName || workspaceName.length < 2) throw new Error('Workspace name must be at least 2 characters long.');
   return { workspaceName, timezone };
@@ -911,11 +1363,6 @@ async function callHuggingFaceImage(prompt) {
   throw lastError || new Error('No image was returned by the Hugging Face Space.');
 }
 
-function fallbackImage(prompt) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><rect width="100%" height="100%" fill="#0f172a"/><rect x="64" y="64" width="896" height="896" rx="48" fill="#25d366" opacity="0.16"/><text x="80" y="220" fill="white" font-size="56" font-family="Arial">AI image placeholder</text><text x="80" y="320" fill="white" font-size="28" font-family="Arial">${String(prompt).replace(/[<&>]/g, '')}</text></svg>`;
-  return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
-}
-
 function normalizeTimeValue(value = '') {
   return /^\d{2}:\d{2}$/.test(String(value || '').trim()) ? String(value).trim() : '';
 }
@@ -957,6 +1404,7 @@ function buildRunKey(date, frequency, timeValue, timezone) {
 
 function computeNextRunAt(schedule = {}, timezone = DEFAULT_TIMEZONE, now = new Date()) {
   const frequency = String(schedule.frequency || '').trim().toLowerCase();
+  if (frequency === 'now') return now;
   const startDate = String(schedule.startDate || '').trim();
   const startTime = normalizeTimeValue(schedule.startTime);
   if (!frequency || !startDate || !startTime) return null;
@@ -978,9 +1426,19 @@ function validateSchedule(schedule = {}, timezone = DEFAULT_TIMEZONE) {
     monthlyDays: Array.isArray(schedule.monthlyDays) ? schedule.monthlyDays.map((value) => Number(value)).filter((value) => Number.isInteger(value) && value >= 1 && value <= 31) : [],
     timezone: validateTimezone(timezone),
   };
+  if (!['now', 'once', 'daily', 'weekly', 'monthly'].includes(normalized.frequency)) throw new Error('A valid schedule frequency is required.');
+  if (normalized.frequency === 'now') {
+    const parts = getDatePartsForTimezone(new Date(), normalized.timezone);
+    normalized.startDate = parts.today;
+    normalized.startTime = parts.currentTime;
+    normalized.dailyTimes = [];
+    normalized.weeklySlots = [];
+    normalized.monthlyWeeks = [];
+    normalized.monthlyDays = [];
+    return normalized;
+  }
   if (!normalized.startDate || !/^\d{4}-\d{2}-\d{2}$/.test(normalized.startDate)) throw new Error('A valid start date is required.');
   if (!normalized.startTime) throw new Error('A valid start time is required.');
-  if (!['once', 'daily', 'weekly', 'monthly'].includes(normalized.frequency)) throw new Error('A valid schedule frequency is required.');
   if (normalized.frequency === 'daily' && !normalized.dailyTimes.length) normalized.dailyTimes = [normalized.startTime];
   if (normalized.frequency === 'weekly' && !normalized.weeklySlots.length) throw new Error('Weekly tasks require at least one weekday/time slot.');
   if (normalized.frequency === 'monthly' && !normalized.monthlyWeeks.length && !normalized.monthlyDays.length) throw new Error('Monthly tasks require at least one week or day rule.');
@@ -993,7 +1451,14 @@ function shouldRunTaskNow(task, now = new Date()) {
   const startDate = String(schedule.startDate || '').trim();
   const startTime = normalizeTimeValue(schedule.startTime);
   const frequency = String(schedule.frequency || '').trim().toLowerCase();
-  if (!startDate || !startTime || !frequency) return { due: false, reason: 'missing_schedule' };
+  if (!frequency) return { due: false, reason: 'missing_schedule' };
+  if (frequency === 'now') {
+    const { currentTime } = getDatePartsForTimezone(now, timezone);
+    const runKey = buildRunKey(now, frequency, currentTime, timezone);
+    if (task.lastRunKey === runKey) return { due: false, reason: 'already_ran', runKey };
+    return { due: true, runKey, frequency, currentTime, timezone };
+  }
+  if (!startDate || !startTime) return { due: false, reason: 'missing_schedule' };
   const { today, currentTime, dayName } = getDatePartsForTimezone(now, timezone);
   if (today < startDate) return { due: false, reason: 'before_start_date' };
   let due = false;
@@ -1036,7 +1501,34 @@ async function buildMessagePayload(task) {
   return { document: parsed.buffer, mimetype: parsed.mimeType, fileName, caption };
 }
 
+async function getStatusAudienceJids(tenantId, sock = null) {
+  const ownJid = normalizePhoneJid(sock?.user?.id || '');
+  const collectAudienceJids = (audience = {}) => Array.from(new Set(
+    (Array.isArray(audience.contacts) ? audience.contacts : [])
+      .map((contact) => normalizePhoneJid(contact?.id || contact?.phone || ''))
+      .filter(Boolean),
+  ));
+
+  const existingAudience = await getAudienceState(tenantId);
+  const existingJids = Array.from(new Set([...collectAudienceJids(existingAudience), ownJid].filter(Boolean)));
+  if (existingJids.length || !sock) return existingJids;
+
+  const refreshedAudience = await syncAudienceFromSocket(tenantId, sock).catch(() => existingAudience);
+  return Array.from(new Set([...collectAudienceJids(refreshedAudience), ownJid].filter(Boolean)));
+}
+
+function getTaskScopedStatusAudience(task = {}, sock = null) {
+  const ownJid = normalizePhoneJid(sock?.user?.id || '');
+  const contacts = Array.isArray(task?.recipients?.contacts) ? task.recipients.contacts : [];
+  return Array.from(new Set(
+    [...contacts, { id: ownJid }]
+      .map((contact) => normalizePhoneJid(contact?.id || contact?.phone || ''))
+      .filter(Boolean),
+  ));
+}
+
 async function resolveTaskRecipients(task, sock) {
+  if (task?.mode === 'schedule_status') return ['status@broadcast'];
   const recipients = task?.recipients || {};
   const recipientIds = new Set();
   for (const contact of Array.isArray(recipients.contacts) ? recipients.contacts : []) {
@@ -1069,6 +1561,37 @@ async function resolveTaskRecipients(task, sock) {
   return Array.from(recipientIds);
 }
 
+function isGroupJid(jid = '') {
+  return String(jid || '').endsWith('@g.us');
+}
+
+async function isKnownContactForTenant(tenantId, remoteJid) {
+  const jid = normalizePhoneJid(remoteJid);
+  if (!jid) return false;
+  const record = await TenantAudienceContact.findOne({ tenantId, id: jid }).lean();
+  return Boolean(record);
+}
+
+async function findMatchingAutomatedResponseTask(tenantId, remoteJid) {
+  const tasks = await Task.find({ tenantId, mode: 'automated_response', status: 'active' }).sort({ createdAt: -1 }).lean();
+  if (!tasks.length) return null;
+  const groupMessage = isGroupJid(remoteJid);
+  const knownContact = groupMessage ? false : await isKnownContactForTenant(tenantId, remoteJid);
+  return tasks.find((task) => {
+    const audienceList = Array.isArray(task.automation?.audience) && task.automation.audience.length
+      ? task.automation.audience.map((item) => String(item || ''))
+      : [String(task.automation?.audience || 'all_incoming')];
+    if (audienceList.includes('all_incoming')) return true;
+    if (audienceList.includes('unknown_numbers') && !groupMessage && !knownContact) return true;
+    if (audienceList.includes('all_groups') && groupMessage) return true;
+    if (audienceList.includes('managed_groups')) {
+      const allowedGroups = Array.isArray(task.recipients?.groups) ? task.recipients.groups.map((group) => normalizeGroupJid(group?.id || '')) : [];
+      if (groupMessage && allowedGroups.includes(normalizeGroupJid(remoteJid))) return true;
+    }
+    return false;
+  }) || null;
+}
+
 async function recordDispatch(tenantId, taskId, recipient, status, error = '', messagePayload = {}) {
   await MessageDispatch.create({
     tenantId,
@@ -1079,6 +1602,139 @@ async function recordDispatch(tenantId, taskId, recipient, status, error = '', m
     dispatchedAt: status === 'sent' ? new Date() : null,
     messageType: messagePayload.image ? 'image' : messagePayload.video ? 'video' : messagePayload.audio ? 'audio' : messagePayload.document ? 'document' : 'text',
   });
+}
+
+async function chargeForMessageSend({ tenant = null, user = null, amount = CREDIT_COSTS.sendMessage, type = 'message_send', metadata = {} }) {
+  const normalizedAmount = Number(amount || 0);
+  if (!normalizedAmount) return;
+  await ensureCreditsAvailable({ tenant, user, amount: normalizedAmount, label: 'send a WhatsApp message' });
+  await debitCredits({ tenant, user, amount: normalizedAmount, type, metadata });
+}
+
+function logTaskFailure(task, reason, extra = {}) {
+  const details = {
+    taskId: String(task?._id || ''),
+    title: String(task?.title || ''),
+    mode: String(task?.mode || 'broadcast'),
+    reason,
+    ...extra,
+  };
+  logger.error(details, 'Task execution failed');
+  console.error('[task-error]', JSON.stringify(details, null, 2));
+}
+
+async function dispatchTask(task, now = new Date()) {
+  const timing = shouldRunTaskNow(task, now);
+  if (!timing.due) {
+    task.claimToken = '';
+    task.claimExpiresAt = null;
+    await task.save();
+    return task;
+  }
+  const tenantId = String(task.tenantId || '');
+  const taskOwner = await User.findById(task.createdByUserId);
+  const taskTenant = tenantId.startsWith('user:') ? null : await Tenant.findById(tenantId);
+  let sock = socketStore.get(tenantId);
+  const liveConnectionState = connectionStateStore.get(tenantId) || await WhatsAppConnection.findOne({ tenantId }).lean() || buildDefaultConnectionState(tenantId);
+  if ((!sock || liveConnectionState.status !== 'connected') && taskOwner && taskTenant) {
+    try {
+      await startWhatsAppSession(taskOwner, taskTenant);
+    } catch (error) {
+      logger.warn({ tenantId, taskId: String(task._id), error: error.message }, 'Unable to reconnect WhatsApp before dispatching scheduled task');
+    }
+    sock = socketStore.get(tenantId);
+  }
+  const refreshedConnectionState = connectionStateStore.get(tenantId) || await WhatsAppConnection.findOne({ tenantId }).lean() || buildDefaultConnectionState(tenantId);
+  const billingTarget = tenantId.startsWith('user:') ? taskOwner : taskTenant;
+  const billingContext = tenantId.startsWith('user:')
+    ? { tenant: null, user: billingTarget }
+    : { tenant: billingTarget, user: taskOwner };
+  if (!sock || refreshedConnectionState.status !== 'connected') {
+    task.lastError = 'WhatsApp is not connected for this workspace.';
+    logTaskFailure(task, task.lastError, { tenantId });
+    task.nextRunAt = computeNextRunAt(task.schedule, task.timezone, new Date(now.getTime() + 60000));
+    task.claimToken = '';
+    task.claimExpiresAt = null;
+    await task.save();
+    return task;
+  }
+  const messagePayload = await buildMessagePayload(task);
+  if (!messagePayload) {
+    task.lastError = 'No sendable message payload was available.';
+    logTaskFailure(task, task.lastError, { tenantId });
+    task.claimToken = '';
+    task.claimExpiresAt = null;
+    await task.save();
+    return task;
+  }
+  const recipients = await resolveTaskRecipients(task, sock);
+  let statusAudienceJids = [];
+  if (task.mode === 'schedule_status') {
+    statusAudienceJids = getTaskScopedStatusAudience(task, sock);
+    if (!statusAudienceJids.length) statusAudienceJids = await getStatusAudienceJids(tenantId, sock);
+  }
+  if (!recipients.length || (task.mode === 'schedule_status' && !statusAudienceJids.length)) {
+    task.lastError = 'No recipients were resolved.';
+    logTaskFailure(task, task.lastError, { tenantId });
+    task.claimToken = '';
+    task.claimExpiresAt = null;
+    await task.save();
+    return task;
+  }
+  const projectedRecipients = task.mode === 'schedule_status' ? statusAudienceJids.length : recipients.length;
+  const projectedCharge = Number(CREDIT_COSTS.sendMessage || 0) * projectedRecipients;
+  await ensureCreditsAvailable({ ...billingContext, amount: projectedCharge, label: `send ${projectedRecipients} WhatsApp message${projectedRecipients === 1 ? '' : 's'}` });
+  let deliveredCount = 0;
+  let failedCount = 0;
+  for (const recipient of recipients) {
+    try {
+      if (task.mode === 'schedule_status') {
+        await sock.sendMessage('status@broadcast', messagePayload, { broadcast: true, statusJidList: statusAudienceJids });
+      } else {
+        await sock.sendMessage(recipient, messagePayload);
+      }
+      await chargeForMessageSend({
+        ...billingContext,
+        amount: task.mode === 'schedule_status'
+          ? Number(CREDIT_COSTS.sendMessage || 0) * statusAudienceJids.length
+          : CREDIT_COSTS.sendMessage,
+        type: task.mode === 'automated_response' ? 'auto_reply_send' : task.mode === 'schedule_status' ? 'status_send' : 'scheduled_message_send',
+        metadata: { taskId: String(task._id), recipient: task.mode === 'schedule_status' ? 'status@broadcast' : recipient, scopeId: tenantId, statusAudienceCount: task.mode === 'schedule_status' ? statusAudienceJids.length : 0 },
+      });
+      deliveredCount += task.mode === 'schedule_status' ? statusAudienceJids.length : 1;
+      await recordDispatch(tenantId, String(task._id), task.mode === 'schedule_status' ? `status@broadcast (${statusAudienceJids.length})` : recipient, 'sent', '', messagePayload);
+    } catch (error) {
+      failedCount += task.mode === 'schedule_status' ? statusAudienceJids.length : 1;
+      await recordDispatch(tenantId, String(task._id), task.mode === 'schedule_status' ? `status@broadcast (${statusAudienceJids.length})` : recipient, 'failed', error.message, messagePayload);
+      logger.error({ taskId: String(task._id), recipient, error: error.message, stack: error.stack }, 'Failed to send scheduled WhatsApp message');
+      console.error(`[task-send-error] task=${String(task._id)} recipient=${recipient}`, error);
+    }
+  }
+  task.lastRunAt = now;
+  task.lastRunKey = timing.runKey;
+  task.lastError = failedCount ? `Failed for ${failedCount} recipient(s).` : '';
+  if (failedCount) {
+    logTaskFailure(task, task.lastError, {
+      tenantId,
+      attempted: task.mode === 'schedule_status' ? statusAudienceJids.length : recipients.length,
+      delivered: deliveredCount,
+      failed: failedCount,
+    });
+  }
+  task.deliveryStats = {
+    attempted: task.mode === 'schedule_status' ? statusAudienceJids.length : recipients.length,
+    delivered: deliveredCount,
+    failed: failedCount,
+  };
+  task.nextRunAt = ['once', 'now'].includes(timing.frequency) ? null : computeNextRunAt(task.schedule, task.timezone, new Date(now.getTime() + 60000));
+  if (['once', 'now'].includes(timing.frequency)) {
+    task.status = 'completed';
+    task.completedAt = now;
+  }
+  task.claimToken = '';
+  task.claimExpiresAt = null;
+  await task.save();
+  return task;
 }
 
 async function processDueTasks() {
@@ -1102,66 +1758,9 @@ async function processDueTasks() {
         { claimExpiresAt: null },
         { claimExpiresAt: { $lte: now } },
       ],
-    }, { claimToken, claimExpiresAt }, { new: true });
+    }, { claimToken, claimExpiresAt }, { returnDocument: 'after' });
     if (!task) continue;
-    const timing = shouldRunTaskNow(task, now);
-    if (!timing.due) {
-      task.claimToken = '';
-      task.claimExpiresAt = null;
-      await task.save();
-      continue;
-    }
-    const tenantId = String(task.tenantId || '');
-    const sock = socketStore.get(tenantId);
-    if (!sock) {
-      task.lastError = 'WhatsApp is not connected for this workspace.';
-      task.nextRunAt = computeNextRunAt(task.schedule, task.timezone, new Date(now.getTime() + 60000));
-      task.claimToken = '';
-      task.claimExpiresAt = null;
-      await task.save();
-      continue;
-    }
-    const messagePayload = await buildMessagePayload(task);
-    if (!messagePayload) {
-      task.lastError = 'No sendable message payload was available.';
-      task.claimToken = '';
-      task.claimExpiresAt = null;
-      await task.save();
-      continue;
-    }
-    const recipients = await resolveTaskRecipients(task, sock);
-    if (!recipients.length) {
-      task.lastError = 'No recipients were resolved.';
-      task.claimToken = '';
-      task.claimExpiresAt = null;
-      await task.save();
-      continue;
-    }
-    let deliveredCount = 0;
-    let failedCount = 0;
-    for (const recipient of recipients) {
-      try {
-        await sock.sendMessage(recipient, messagePayload);
-        deliveredCount += 1;
-        await recordDispatch(tenantId, String(task._id), recipient, 'sent', '', messagePayload);
-      } catch (error) {
-        failedCount += 1;
-        await recordDispatch(tenantId, String(task._id), recipient, 'failed', error.message, messagePayload);
-        logger.error({ taskId: String(task._id), recipient, error: error.message }, 'Failed to send scheduled WhatsApp message');
-      }
-    }
-    task.lastRunAt = now;
-    task.lastRunKey = timing.runKey;
-    task.lastError = failedCount ? `Failed for ${failedCount} recipient(s).` : '';
-    task.deliveryStats = { attempted: recipients.length, delivered: deliveredCount, failed: failedCount };
-    task.nextRunAt = timing.frequency === 'once' ? null : computeNextRunAt(task.schedule, task.timezone, new Date(now.getTime() + 60000));
-    if (timing.frequency === 'once') {
-      task.status = 'completed';
-      task.completedAt = now;
-    }
-    task.claimToken = '';
-    task.claimExpiresAt = null;
-    await task.save();
+    await dispatchTask(task, now);
   }
 }
 
@@ -1336,29 +1935,116 @@ async function startWhatsAppSession(user, tenant) {
   sock.ev.on('chats.update', (chats) => { upsertAudienceContacts(tenantId, [], chats); });
   sock.ev.on('groups.upsert', (groups) => { upsertAudienceGroups(tenantId, groups); });
   sock.ev.on('groups.update', (groups) => { upsertAudienceGroups(tenantId, groups); });
-  sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect, qr } = update;
-    if (qr) {
-      await persistConnectionState(tenantId, { status: 'qr_ready', qr, message: 'Scan this QR code with WhatsApp on your phone.', userId: String(user._id) });
-    }
-    if (connection === 'open') {
-      const phoneNumber = sock?.user?.id || '';
-      await User.findByIdAndUpdate(user._id, { whatsappStatus: 'connected', whatsappPhone: phoneNumber });
-      await syncAudienceFromSocket(tenantId, sock);
-      await persistConnectionState(tenantId, { status: 'connected', qr: '', phoneNumber, message: 'WhatsApp connected successfully. Credentials were saved to the workspace.', userId: String(user._id) });
-    }
-    if (connection === 'close') {
-      const statusCode = lastDisconnect?.error?.output?.statusCode;
-      const loggedOut = statusCode === DisconnectReason.loggedOut;
-      socketStore.delete(tenantId);
-      if (loggedOut) {
-        await AuthState.deleteMany({ tenantId });
-        await User.findByIdAndUpdate(user._id, { whatsappStatus: 'not_connected', whatsappPhone: '' });
-        await persistConnectionState(tenantId, { status: 'logged_out', qr: '', phoneNumber: '', message: 'WhatsApp session logged out. Start a new connection to generate another QR code.', userId: String(user._id) });
+  sock.ev.on('messages.upsert', async ({ messages }) => {
+    try {
+      const msg = messages[0];
+      if (!msg?.message || msg.key?.fromMe) return;
+      const text = getMessageText(msg);
+      if (!text || isSpamMessage(text)) return;
+      const stopRequested = /^(stop|unsubscribe|cancel)$/i.test(text.trim());
+      const remoteJid = String(msg.key?.remoteJid || '');
+      const derivedUserId = getUserFromSession(`${tenantId}:${remoteJid}`) || String(user._id);
+      const scope = getAutoReplyScope(tenantId, derivedUserId);
+      const existingConversation = await ConversationHistory.findOne({ scopeId: scope.scopeId, remoteJid });
+      if (stopRequested) {
+        unsubscribeStore.add(`${scope.scopeId}:${remoteJid}`);
+        await ConversationHistory.findOneAndUpdate({ scopeId: scope.scopeId, remoteJid }, { unsubscribed: true }, { upsert: true, setDefaultsOnInsert: true });
+        await sock.sendMessage(remoteJid, { text: 'You have been unsubscribed. Reply START anytime to resume updates.' });
         return;
       }
-      await User.findByIdAndUpdate(user._id, { whatsappStatus: 'not_connected' });
-      await persistConnectionState(tenantId, { status: 'disconnected', qr: '', message: 'Connection dropped. Start the session again to reconnect.', userId: String(user._id) });
+      if (/^start$/i.test(text.trim())) {
+        unsubscribeStore.delete(`${scope.scopeId}:${remoteJid}`);
+        await ConversationHistory.findOneAndUpdate({ scopeId: scope.scopeId, remoteJid }, { unsubscribed: false }, { upsert: true, setDefaultsOnInsert: true });
+      }
+      if (unsubscribeStore.has(`${scope.scopeId}:${remoteJid}`) || existingConversation?.unsubscribed) return;
+      if (!canSendAutoReply(scope.scopeId)) return;
+      if (existingConversation?.lastIncomingAt && Date.now() - new Date(existingConversation.lastIncomingAt).getTime() < 15000) return;
+      const matchingAutomatedTask = await findMatchingAutomatedResponseTask(tenantId, remoteJid);
+      const inMemoryHistory = rememberConversation(remoteJid, 'user', text);
+      const dbHistory = existingConversation?.messages || [];
+      let replyPayload = null;
+      let replyText = '';
+      if (matchingAutomatedTask) {
+        replyPayload = await buildMessagePayload(matchingAutomatedTask);
+        replyText = String(matchingAutomatedTask.messageText || matchingAutomatedTask.translatedPreview || matchingAutomatedTask.description || '').trim();
+      } else {
+        const profile = await getCompanyProfileForScope(scope.scopeId);
+        if (!profile) return;
+        const reply = await craftAutoReply(profile, text, [...dbHistory, ...inMemoryHistory]);
+        replyPayload = { text: reply };
+        replyText = reply;
+      }
+      if (!replyPayload) return;
+      await new Promise((resolve) => setTimeout(resolve, pickReplyDelay()));
+      await sock.sendMessage(remoteJid, replyPayload);
+      await chargeForMessageSend({
+        tenant,
+        user,
+        type: 'auto_reply_send',
+        metadata: { tenantId, remoteJid, scopeId: scope.scopeId, automatedTaskId: matchingAutomatedTask ? String(matchingAutomatedTask._id) : '' },
+      });
+      rememberConversation(remoteJid, 'assistant', replyText);
+      await upsertConversationHistory(scope, remoteJid, text, replyText);
+    } catch (error) {
+      logger.error({ tenantId, error: error.message, stack: error.stack }, 'Unable to process incoming WhatsApp message');
+      console.error('[messages-upsert-error]', error);
+    }
+  });
+  sock.ev.on('connection.update', async (update) => {
+    try {
+      const { connection, lastDisconnect, qr } = update;
+      if (qr) {
+        await persistConnectionState(tenantId, { status: 'qr_ready', qr, message: 'Scan this QR code with WhatsApp on your phone.', userId: String(user._id) });
+      }
+      if (connection === 'open') {
+        const phoneNumber = sock?.user?.id || '';
+        await User.findByIdAndUpdate(user._id, { whatsappStatus: 'connected', whatsappPhone: phoneNumber });
+        await syncAudienceFromSocket(tenantId, sock);
+        await persistConnectionState(tenantId, { status: 'connected', qr: '', phoneNumber, message: 'WhatsApp connected successfully. Contacts and groups were synced to audience.', userId: String(user._id) });
+      }
+      if (connection === 'close') {
+        const statusCode = lastDisconnect?.error?.output?.statusCode;
+        const loggedOut = statusCode === DisconnectReason.loggedOut;
+        const restartRequired = statusCode === DisconnectReason.restartRequired;
+        const disconnectReason = lastDisconnect?.error?.message || 'Unknown connection handshake failure.';
+        logger.error({ tenantId, statusCode, error: disconnectReason, stack: lastDisconnect?.error?.stack }, 'WhatsApp connection closed');
+        console.error('[whatsapp-connection-close]', { tenantId, statusCode, error: disconnectReason });
+        socketStore.delete(tenantId);
+        if (loggedOut) {
+          await AuthState.deleteMany({ tenantId });
+          await User.findByIdAndUpdate(user._id, { whatsappStatus: 'not_connected', whatsappPhone: '' });
+          await persistConnectionState(tenantId, { status: 'logged_out', qr: '', phoneNumber: '', message: 'WhatsApp session logged out. Start a new connection to generate another QR code.', userId: String(user._id) });
+          return;
+        }
+        await User.findByIdAndUpdate(user._id, { whatsappStatus: 'connecting' });
+        await persistConnectionState(tenantId, {
+          status: 'connecting',
+          qr: '',
+          phoneNumber: user.whatsappPhone || '',
+          message: restartRequired
+            ? 'WhatsApp requested a socket restart. Reconnecting with the saved credentials.'
+            : 'Connection dropped during handshake. Attempting to reconnect automatically.',
+          userId: String(user._id),
+        });
+        sendWhatsAppReconnectEmail({ user, tenant, reason: disconnectReason }).catch(() => null);
+        setTimeout(() => {
+          startWhatsAppSession(user, tenant).catch(async (error) => {
+            logger.error({ tenantId, statusCode, error: error.message, stack: error.stack }, 'Unable to restart WhatsApp session');
+            await persistConnectionState(tenantId, {
+              status: 'error',
+              qr: '',
+              phoneNumber: user.whatsappPhone || '',
+              message: 'Automatic reconnect failed. Please reconnect WhatsApp from your dashboard.',
+              userId: String(user._id),
+            });
+            sendWhatsAppReconnectEmail({ user, tenant, reason: error.message || 'Automatic reconnect failed.' }).catch(() => null);
+          });
+        }, restartRequired ? 0 : 1_000);
+      }
+    } catch (error) {
+      logger.error({ tenantId, error: error.message, stack: error.stack }, 'Unhandled WhatsApp handshake error');
+      await persistConnectionState(tenantId, { status: 'error', qr: '', phoneNumber: user.whatsappPhone || '', message: 'WhatsApp handshake failed. Please reconnect from dashboard.', userId: String(user._id) });
+      sendWhatsAppReconnectEmail({ user, tenant, reason: error.message || 'Unhandled WhatsApp handshake error.' }).catch(() => null);
     }
   });
   return connectionStateStore.get(tenantId) || buildDefaultConnectionState(tenantId);
@@ -1369,7 +2055,7 @@ app.post('/api/auth/signup', async (req, res) => {
     const { username, email, password } = validateSignupPayload(req.body);
     const existing = await User.findOne({ email });
     if (existing) return res.status(409).json({ error: 'An account with that email already exists.' });
-    const user = await User.create({ username, email, passwordHash: derivePasswordHash(password) });
+    const user = await User.create({ username, email, passwordHash: derivePasswordHash(password), role: 'customer' });
     const session = await issueSession(user, null, null, 'password');
     res.setHeader('Set-Cookie', buildSessionCookie(session.token));
     res.status(201).json(session);
@@ -1379,7 +2065,7 @@ app.post('/api/auth/signup', async (req, res) => {
 });
 
 app.post('/api/auth/login', async (req, res) => {
-  const email = String(req.body.email || '').trim().toLowerCase();
+  const email = sanitizeTextInput(req.body.email).toLowerCase();
   const password = String(req.body.password || '');
   const user = await User.findOne({ email });
   if (!user || !verifyPassword(password, user.passwordHash)) return res.status(401).json({ error: 'Invalid email or password.' });
@@ -1407,7 +2093,7 @@ app.patch('/api/users/theme', authenticateRequest, async (req, res) => {
 
 app.get('/api/auth/providers/:provider', (req, res) => {
   const provider = String(req.params.provider || '').toLowerCase();
-  if (!['google', 'github', 'microsoft'].includes(provider)) return res.status(404).json({ error: 'Unsupported provider.' });
+  if (!['google', 'github'].includes(provider)) return res.status(404).json({ error: 'Unsupported provider.' });
   res.json(buildSocialProviderResponse(provider));
 });
 
@@ -1489,12 +2175,11 @@ app.post('/api/workspaces', authenticateRequest, async (req, res) => {
 
 app.post('/api/whatsapp/connect', authenticateRequest, requireActiveWorkspace, requirePermission('whatsapp:connect'), async (req, res) => {
   try {
-    ensureCredits(req.tenant, CREDIT_COSTS.whatsappConnect, 'connect WhatsApp');
     const state = await startWhatsAppSession(req.user, req.tenant);
-    await appendCreditLedger({ tenant: req.tenant, user: req.user, amount: CREDIT_COSTS.whatsappConnect, type: 'whatsapp_connect', metadata: { tenantId: String(req.tenant._id) } });
     res.json({ ...state, user: sanitizeUser(req.user, req.membership, req.tenant) });
   } catch (error) {
     await persistConnectionState(String(req.tenant._id), { status: 'error', qr: '', message: error.message || 'Unable to start WhatsApp connection.', userId: String(req.user._id) });
+    sendWhatsAppReconnectEmail({ user: req.user, tenant: req.tenant, reason: error.message || 'Unable to start WhatsApp connection.' }).catch(() => null);
     res.status(500).json({ error: error.message || 'Unable to start WhatsApp connection.' });
   }
 });
@@ -1514,37 +2199,111 @@ app.get('/api/whatsapp/audience', authenticateRequest, requireActiveWorkspace, a
   res.json({ status: connectionState.status, groups: audience.groups, contacts: audience.contacts, lastSyncedAt: audience.lastSyncedAt });
 });
 
-app.post('/api/tasks', authenticateRequest, requireScopedPermission('tasks:write'), async (req, res) => {
-  const title = String(req.body.title || '').trim();
-  const type = String(req.body.type || '').trim();
-  const description = String(req.body.description || '').trim();
-  if (!title || !type || !description) return res.status(400).json({ error: 'Title, type, and description are required.' });
+app.get('/api/company-profile', authenticateRequest, async (req, res) => {
   const scope = getScopeContext(req);
-  await ensureCreditsAvailable({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.createTask, label: 'create a task' });
+  const profile = await CompanyProfile.findOne({ scopeId: scope.scopeId }).lean();
+  res.json({ profile: profile ? { ...profile, id: String(profile._id) } : null, user: sanitizeUser(req.user, req.membership, req.tenant) });
+});
+
+app.post('/api/company-profile', authenticateRequest, async (req, res) => {
+  try {
+    const scope = getScopeContext(req);
+    const payload = validateCompanyProfilePayload(req.body || {});
+    const profile = await CompanyProfile.findOneAndUpdate(
+      { scopeId: scope.scopeId },
+      {
+        scopeId: scope.scopeId,
+        ownerType: scope.hasWorkspace ? 'workspace' : 'user',
+        tenantId: scope.tenant ? String(scope.tenant._id) : '',
+        userId: String(req.user._id),
+        businessName: payload.businessName,
+        businessNameText: payload.businessNameText,
+        faqs: payload.faqs,
+        products: payload.products,
+        toneStyle: payload.toneStyle,
+        safetyControls: {
+          replyDelayRangeMs: [AUTO_REPLY_MIN_DELAY_MS, AUTO_REPLY_MAX_DELAY_MS],
+          repliesPerMinute: AUTO_REPLY_LIMIT_PER_MINUTE,
+          allowStop: true,
+          ignoreSpam: true,
+          avoidReplyingToEveryMessage: true,
+        },
+      },
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
+    );
+    res.status(201).json({ profile: { ...profile.toObject(), id: String(profile._id) }, user: sanitizeUser(req.user, req.membership, req.tenant) });
+  } catch (error) {
+    res.status(400).json({ error: error.message || 'Unable to save company profile.' });
+  }
+});
+
+app.post('/api/tasks', authenticateRequest, requireScopedPermission('tasks:write'), async (req, res) => {
+  const title = sanitizeTextInput(req.body.title);
+  const type = sanitizeTextInput(req.body.type);
+  const mode = ['automated_response', 'schedule_status'].includes(String(req.body.mode || '')) ? String(req.body.mode) : 'broadcast';
+  const description = sanitizeLongText(req.body.description) || 'Media-only task';
+  const sanitizedMediaQueue = Array.isArray(req.body.mediaQueue) ? req.body.mediaQueue.slice(0, 10).map((item) => ({
+    name: sanitizeTextInput(item?.name || 'attachment'),
+    type: sanitizeTextInput(item?.type || 'document'),
+    dataUrl: String(item?.dataUrl || ''),
+    mimeType: sanitizeTextInput(item?.mimeType || 'application/octet-stream'),
+    size: Number(item?.size || 0),
+    sizeLabel: sanitizeTextInput(item?.sizeLabel || ''),
+    previewText: sanitizeLongText(item?.previewText || ''),
+    source: sanitizeTextInput(item?.source || ''),
+  })).filter((item) => item.dataUrl.startsWith('data:')) : [];
+  if (!title || !type || (!description && !sanitizedMediaQueue.length)) return res.status(400).json({ error: 'Title, type, and either description or media are required.' });
+  const scope = getScopeContext(req);
   const recipients = req.body.recipients || {};
   const groupDeliveryMode = recipients.groupDeliveryMode === 'members' ? 'members' : 'group';
   const normalizedRecipients = sanitizeTaskRecipients(recipients);
-  if (!normalizedRecipients.groups.length && !normalizedRecipients.contacts.length) return res.status(400).json({ error: 'At least one valid contact or group recipient is required.' });
+  if (!['automated_response', 'schedule_status'].includes(mode) && !normalizedRecipients.groups.length && !normalizedRecipients.contacts.length) return res.status(400).json({ error: 'At least one valid contact or group recipient is required.' });
+  if (mode === 'schedule_status' && !normalizedRecipients.contacts.length) return res.status(400).json({ error: 'Select at least one contact for status delivery.' });
   const timezone = validateTimezone(String(req.body.timezone || scope.timezone || DEFAULT_TIMEZONE));
-  const schedule = validateSchedule(req.body.schedule || {}, timezone);
+  const automationAudience = Array.isArray(req.body.automation?.audience)
+    ? req.body.automation.audience.map((item) => String(item || '')).filter((item) => ['all_incoming', 'unknown_numbers', 'all_groups', 'managed_groups'].includes(item))
+    : ['all_incoming', 'unknown_numbers', 'all_groups', 'managed_groups'].includes(String(req.body.automation?.audience || '')) ? [String(req.body.automation.audience)] : ['all_incoming'];
+  if (!automationAudience.length) automationAudience.push('all_incoming');
+  if (automationAudience.includes('all_incoming')) automationAudience.splice(0, automationAudience.length, 'all_incoming');
+  if (mode === 'automated_response' && automationAudience.includes('managed_groups') && !normalizedRecipients.groups.length) return res.status(400).json({ error: 'Select at least one group when using the managed groups automated response option.' });
+  if (mode === 'automated_response') {
+    const profile = await CompanyProfile.findOne({ scopeId: scope.scopeId }).lean();
+    const hasPortfolio = Boolean(String(profile?.businessNameText || '').trim() || String(profile?.businessName || '').trim());
+    if (!hasPortfolio) return res.status(400).json({ error: 'Complete your company portfolio before enabling automated responses.' });
+  }
+  const connectionState = connectionStateStore.get(scope.scopeId) || await WhatsAppConnection.findOne({ tenantId: scope.scopeId }).lean() || buildDefaultConnectionState(scope.scopeId);
+  if (connectionState.status !== 'connected') {
+    try {
+      if (scope.tenant) await startWhatsAppSession(req.user, scope.tenant);
+    } catch (error) {
+      logger.warn({ scopeId: scope.scopeId, error: error.message }, 'Unable to reconnect WhatsApp before scheduling task');
+    }
+  }
+  const refreshedConnectionState = connectionStateStore.get(scope.scopeId) || await WhatsAppConnection.findOne({ tenantId: scope.scopeId }).lean() || buildDefaultConnectionState(scope.scopeId);
+  if (refreshedConnectionState.status !== 'connected') {
+    return res.status(409).json({ error: 'WhatsApp is not connected. Please reconnect from the dashboard and try again.' });
+  }
+  const schedule = mode === 'automated_response' ? {} : validateSchedule(req.body.schedule || {}, timezone);
   const task = await Task.create({
     tenantId: scope.scopeId,
     createdByUserId: String(req.user._id),
     title,
     type,
+    mode,
     description,
-    messageHtml: String(req.body.messageHtml || ''),
-    messageText: String(req.body.messageText || ''),
-    translatedPreview: String(req.body.translatedPreview || ''),
-    mediaQueue: Array.isArray(req.body.mediaQueue) ? req.body.mediaQueue.slice(0, 10) : [],
+    messageHtml: sanitizeRichText(req.body.messageHtml || ''),
+    messageText: sanitizeLongText(req.body.messageText || ''),
+    translatedPreview: sanitizeLongText(req.body.translatedPreview || ''),
+    mediaQueue: sanitizedMediaQueue,
     recipients: { groups: normalizedRecipients.groups, contacts: normalizedRecipients.contacts, groupDeliveryMode },
+    automation: { audience: automationAudience },
     schedule,
     timezone,
     status: 'active',
-    nextRunAt: computeNextRunAt(schedule, timezone),
+    nextRunAt: mode === 'automated_response' ? null : computeNextRunAt(schedule, timezone),
   });
-  await debitCredits({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.createTask, type: 'task_create', metadata: { taskId: String(task._id), scopeId: scope.scopeId } });
-  res.status(201).json({ task, user: sanitizeUser(req.user, req.membership, req.tenant) });
+  const finalTask = schedule.frequency === 'now' ? await dispatchTask(task, new Date()) : task;
+  res.status(201).json({ task: finalTask, user: sanitizeUser(req.user, req.membership, req.tenant) });
 });
 
 app.post('/api/ai/text', authenticateRequest, requireScopedPermission('tasks:write'), async (req, res) => {
@@ -1557,7 +2316,8 @@ app.post('/api/ai/text', authenticateRequest, requireScopedPermission('tasks:wri
     await debitCredits({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.generateText, type: 'ai_text', metadata: { promptLength: prompt.length, scopeId: scope.scopeId } });
     res.json({ text, model: 'hugging-face-space', user: sanitizeUser(req.user, req.membership, req.tenant) });
   } catch (error) {
-    res.status(500).json({ error: error.message || 'Unable to generate AI text.' });
+    logger.warn({ error: error.message }, 'AI text generation unavailable');
+    res.status(502).json({ error: 'We are unable to generate text right now. Please try again shortly.' });
   }
 });
 
@@ -1567,18 +2327,12 @@ app.post('/api/ai/image', authenticateRequest, requireScopedPermission('tasks:wr
     if (!prompt) return res.status(400).json({ error: 'Prompt is required.' });
     const scope = getScopeContext(req);
     await ensureCreditsAvailable({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.generateImage, label: 'generate AI image' });
-    let imageUrl;
-    try {
-      imageUrl = await callHuggingFaceImage(prompt);
-    } catch (providerError) {
-      logger.warn({ error: providerError.message }, 'Hugging Face image generation failed, returning fallback image');
-      await debitCredits({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.generateImage, type: 'ai_image_fallback', metadata: { promptLength: prompt.length, scopeId: scope.scopeId } });
-      return res.json({ imageUrl: fallbackImage(prompt), model: 'fallback-placeholder', user: sanitizeUser(req.user, req.membership, req.tenant) });
-    }
+    const imageUrl = await callHuggingFaceImage(prompt);
     await debitCredits({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.generateImage, type: 'ai_image', metadata: { promptLength: prompt.length, scopeId: scope.scopeId } });
     res.json({ imageUrl, user: sanitizeUser(req.user, req.membership, req.tenant) });
   } catch (error) {
-    res.status(500).json({ error: error.message || 'Unable to generate AI image.' });
+    logger.warn({ error: error.message }, 'AI image generation unavailable');
+    res.status(502).json({ error: 'We are unable to generate an image right now. Please try again shortly.' });
   }
 });
 
@@ -1594,6 +2348,19 @@ app.patch('/api/tasks/:taskId/status', authenticateRequest, requireScopedPermiss
   const scope = getScopeContext(req);
   const task = await Task.findOneAndUpdate({ _id: req.params.taskId, tenantId: scope.scopeId }, { status }, { returnDocument: 'after' });
   if (!task) return res.status(404).json({ error: 'Task not found.' });
+  res.json({ task });
+});
+
+app.post('/api/tasks/:taskId/retry', authenticateRequest, requireScopedPermission('tasks:write'), async (req, res) => {
+  const scope = getScopeContext(req);
+  const task = await Task.findOne({ _id: req.params.taskId, tenantId: scope.scopeId });
+  if (!task) return res.status(404).json({ error: 'Task not found.' });
+  task.status = 'active';
+  task.lastError = '';
+  task.claimToken = '';
+  task.claimExpiresAt = null;
+  task.nextRunAt = computeNextRunAt(task.schedule || {}, task.timezone || DEFAULT_TIMEZONE) || new Date();
+  await task.save();
   res.json({ task });
 });
 
@@ -1622,6 +2389,142 @@ app.post('/api/tasks/bulk-action', authenticateRequest, requireScopedPermission(
 });
 
 
+app.get('/api/admin/overview', authenticateRequest, requirePlatformAdmin, async (req, res) => {
+  const role = normalizePlatformRole(req.user.role);
+  const [usersCount, tasksCount, creditsSum] = await Promise.all([
+    User.countDocuments({}),
+    Task.countDocuments({}),
+    User.aggregate([{ $group: { _id: null, total: { $sum: '$credits' } } }]),
+  ]);
+  res.json({
+    role,
+    stats: { users: usersCount, tasks: tasksCount, credits: Number(creditsSum?.[0]?.total || 0) },
+    canEdit: isCreditEditor(role),
+  });
+});
+
+app.get('/api/admin/users', authenticateRequest, requirePlatformAdmin, async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const roleQuery = String(req.query.role || '').trim();
+  const role = roleQuery ? normalizePlatformRole(roleQuery) : '';
+  const from = req.query.from ? new Date(String(req.query.from)) : null;
+  const to = req.query.to ? new Date(String(req.query.to)) : null;
+  const query = {};
+  if (q) query.$or = [{ username: { $regex: q, $options: 'i' } }, { email: { $regex: q, $options: 'i' } }];
+  if (role && ['customer', 'admin', 'Administartor'].includes(role)) query.role = role;
+  if (from || to) {
+    query.createdAt = {};
+    if (from && !Number.isNaN(from.getTime())) query.createdAt.$gte = from;
+    if (to && !Number.isNaN(to.getTime())) query.createdAt.$lte = to;
+  }
+  const users = await User.find(query).sort({ createdAt: -1 }).limit(500).lean();
+  res.json({ users: users.map((user) => ({ ...user, role: normalizePlatformRole(user.role), id: String(user._id) })) });
+});
+
+app.patch('/api/admin/users/:userId', authenticateRequest, requirePlatformAdmin, async (req, res) => {
+  if (!isCreditEditor(req.user.role) && req.body.credits !== undefined) {
+    return res.status(403).json({ error: 'Administrator can view and email only.' });
+  }
+  const updates = {};
+  if (req.body.username !== undefined) updates.username = sanitizeTextInput(req.body.username);
+  if (req.body.email !== undefined) updates.email = sanitizeTextInput(req.body.email).toLowerCase();
+  if (req.body.role !== undefined) updates.role = normalizePlatformRole(req.body.role);
+  const user = await User.findByIdAndUpdate(req.params.userId, updates, { returnDocument: 'after' });
+  if (!user) return res.status(404).json({ error: 'User not found.' });
+  res.json({ user: { ...user.toObject(), role: normalizePlatformRole(user.role), id: String(user._id) } });
+});
+
+app.delete('/api/admin/users/:userId', authenticateRequest, requirePlatformAdmin, async (req, res) => {
+  if (!isCreditEditor(req.user.role)) return res.status(403).json({ error: 'Administrator can view and email only.' });
+  await User.deleteOne({ _id: req.params.userId });
+  await AppSession.deleteMany({ userId: req.params.userId });
+  res.json({ success: true });
+});
+
+app.post('/api/admin/users/:userId/credit', authenticateRequest, requirePlatformAdmin, async (req, res) => {
+  if (!isCreditEditor(req.user.role)) return res.status(403).json({ error: 'Administrator can view and email only.' });
+  const amount = Number(req.body.amount || 0);
+  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'Provide a positive credit amount.' });
+  const targetUser = await User.findById(req.params.userId);
+  if (!targetUser) return res.status(404).json({ error: 'User not found.' });
+  const activeMembership = await TenantMembership.findOne({ userId: targetUser._id, status: 'active' }).sort({ createdAt: 1 });
+  const activeTenant = activeMembership ? await Tenant.findById(activeMembership.tenantId) : null;
+  await creditAccountBalance({
+    tenant: activeTenant,
+    user: targetUser,
+    amount,
+    type: 'admin_credit',
+    metadata: { by: String(req.user._id), scopeType: activeTenant ? 'workspace' : 'account' },
+  });
+  const refreshedUser = await User.findById(targetUser._id).lean();
+  res.json({
+    user: refreshedUser ? { ...refreshedUser, role: normalizePlatformRole(refreshedUser.role), id: String(refreshedUser._id) } : null,
+    workspace: activeTenant ? { id: String(activeTenant._id), name: activeTenant.name, credits: activeTenant.credits } : null,
+  });
+});
+
+app.get('/api/admin/tasks', authenticateRequest, requirePlatformAdmin, async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  const status = String(req.query.status || '').trim();
+  const mode = String(req.query.mode || '').trim();
+  const from = req.query.from ? new Date(String(req.query.from)) : null;
+  const to = req.query.to ? new Date(String(req.query.to)) : null;
+  const query = {};
+  if (q) query.$or = [{ title: { $regex: q, $options: 'i' } }, { description: { $regex: q, $options: 'i' } }, { lastError: { $regex: q, $options: 'i' } }, { type: { $regex: q, $options: 'i' } }];
+  if (['draft', 'active', 'paused', 'completed'].includes(status)) query.status = status;
+  if (['broadcast', 'automated_response', 'schedule_status'].includes(mode)) query.mode = mode;
+  if (from || to) {
+    query.createdAt = {};
+    if (from && !Number.isNaN(from.getTime())) query.createdAt.$gte = from;
+    if (to && !Number.isNaN(to.getTime())) query.createdAt.$lte = to;
+  }
+  const tasks = await Task.find(query).sort({ createdAt: -1 }).limit(600).lean();
+  res.json({ tasks });
+});
+
+app.patch('/api/admin/tasks/:taskId', authenticateRequest, requirePlatformAdmin, async (req, res) => {
+  if (!isCreditEditor(req.user.role)) return res.status(403).json({ error: 'Administrator can view and email only.' });
+  const updates = {};
+  if (req.body.status) updates.status = String(req.body.status).trim().toLowerCase();
+  if (req.body.title) updates.title = sanitizeTextInput(req.body.title);
+  if (req.body.description) updates.description = sanitizeLongText(req.body.description);
+  const task = await Task.findByIdAndUpdate(req.params.taskId, updates, { returnDocument: 'after' });
+  if (!task) return res.status(404).json({ error: 'Task not found.' });
+  res.json({ task });
+});
+
+app.delete('/api/admin/tasks/:taskId', authenticateRequest, requirePlatformAdmin, async (req, res) => {
+  if (!isCreditEditor(req.user.role)) return res.status(403).json({ error: 'Administrator can view and email only.' });
+  await Task.deleteOne({ _id: req.params.taskId });
+  res.json({ success: true });
+});
+
+app.post('/api/admin/tasks/:taskId/retry', authenticateRequest, requirePlatformAdmin, async (req, res) => {
+  if (!isCreditEditor(req.user.role)) return res.status(403).json({ error: 'Administrator can view and email only.' });
+  const task = await Task.findById(req.params.taskId);
+  if (!task) return res.status(404).json({ error: 'Task not found.' });
+  task.status = 'active';
+  task.lastError = '';
+  task.claimToken = '';
+  task.claimExpiresAt = null;
+  task.nextRunAt = computeNextRunAt(task.schedule || {}, task.timezone || DEFAULT_TIMEZONE) || new Date();
+  await task.save();
+  res.json({ task });
+});
+
+app.post('/api/admin/email', authenticateRequest, requirePlatformAdmin, async (req, res) => {
+  const recipients = Array.isArray(req.body.recipients) ? req.body.recipients.map((item) => sanitizeTextInput(item).toLowerCase()).filter((item) => item.includes('@')) : [];
+  const subject = sanitizeTextInput(req.body.subject || 'Message from CodeBot admin');
+  const message = sanitizeLongText(req.body.message || '');
+  if (!recipients.length) return res.status(400).json({ error: 'Add at least one recipient.' });
+  if (!message) return res.status(400).json({ error: 'Email message is required.' });
+  for (const email of recipients.slice(0, 100)) {
+    // eslint-disable-next-line no-await-in-loop
+    await sendCustomEmail({ to: email, subject, body: message });
+  }
+  res.json({ success: true, sent: recipients.slice(0, 100).length });
+});
+
 app.get('/api/workspaces/members', authenticateRequest, requireActiveWorkspace, requirePermission('members:manage'), async (req, res) => {
   const members = await listWorkspaceMembers(req.tenant._id);
   res.json({ members, workspace: req.tenant });
@@ -1629,7 +2532,7 @@ app.get('/api/workspaces/members', authenticateRequest, requireActiveWorkspace, 
 
 app.post('/api/workspaces/members', authenticateRequest, requireActiveWorkspace, requirePermission('members:manage'), async (req, res) => {
   try {
-    const email = String(req.body.email || '').trim().toLowerCase();
+    const email = sanitizeTextInput(req.body.email).toLowerCase();
     const role = ['admin', 'operator', 'viewer'].includes(String(req.body.role || '').trim().toLowerCase())
       ? String(req.body.role || '').trim().toLowerCase()
       : 'viewer';
@@ -1671,14 +2574,118 @@ app.get('/api/tenants/me', authenticateRequest, requireActiveWorkspace, async (r
   res.json({ tenant: req.tenant, membership: req.membership, ledger });
 });
 
+app.post('/api/payments/paystack/initialize', authenticateRequest, async (req, res) => {
+  try {
+    const amount = normalizePaymentAmount(req.body.amount);
+    const credits = convertAmountToCredits(amount);
+    const scope = getScopeContext(req);
+    const reference = `codebot_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
+    await PaymentTransaction.create({
+      reference,
+      userId: String(req.user._id),
+      tenantId: scope.tenant ? String(scope.tenant._id) : '',
+      email: req.user.email,
+      amount,
+      credits,
+      currency: PAYSTACK_CURRENCY,
+      metadata: { scopeId: scope.scopeId, scopeType: scope.tenant ? 'workspace' : 'account' },
+    });
+    const initialized = await initializePaystackTransaction({
+      email: req.user.email,
+      amount,
+      reference,
+      metadata: { credits, scopeId: scope.scopeId, scopeType: scope.tenant ? 'workspace' : 'account' },
+    });
+    res.status(201).json({
+      reference,
+      accessCode: initialized.access_code,
+      authorizationUrl: initialized.authorization_url,
+      amount,
+      credits,
+      currency: PAYSTACK_CURRENCY,
+      publicKey: PAYSTACK_PUBLIC_KEY,
+      email: req.user.email,
+      user: sanitizeUser(req.user, req.membership, req.tenant),
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message || 'Unable to initialize payment.' });
+  }
+});
+
+app.post('/api/payments/paystack/verify', authenticateRequest, async (req, res) => {
+  try {
+    const reference = String(req.body.reference || '').trim();
+    if (!reference) return res.status(400).json({ error: 'Payment reference is required.' });
+    const transaction = await PaymentTransaction.findOne({ reference, userId: String(req.user._id) });
+    if (!transaction) return res.status(404).json({ error: 'Payment transaction not found.' });
+    if (transaction.status === 'success') {
+      if (transaction.tenantId) req.tenant = await Tenant.findById(transaction.tenantId);
+      return res.json({
+        success: true,
+        transaction,
+        user: sanitizeUser(await User.findById(req.user._id), req.membership, req.tenant || null),
+      });
+    }
+    const verified = await verifyPaystackTransaction(reference);
+    if (verified.status !== 'success') {
+      transaction.status = 'failed';
+      transaction.metadata = { ...transaction.metadata, paystackStatus: verified.status || 'failed' };
+      await transaction.save();
+      return res.status(400).json({ error: 'Payment was not successful.' });
+    }
+    const paidAmount = Number(verified.amount || 0) / 100;
+    if (paidAmount < Number(transaction.amount || 0)) {
+      transaction.status = 'failed';
+      transaction.metadata = { ...transaction.metadata, paidAmount };
+      await transaction.save();
+      return res.status(400).json({ error: 'Verified payment amount did not match the expected amount.' });
+    }
+    const scopeTenant = transaction.tenantId ? await Tenant.findById(transaction.tenantId) : null;
+    const freshUser = await User.findById(req.user._id);
+    await creditAccountBalance({
+      tenant: scopeTenant,
+      user: freshUser,
+      amount: Number(transaction.credits || 0),
+      type: 'payment_topup',
+      metadata: { reference, channel: 'paystack', amount: transaction.amount, currency: transaction.currency },
+    });
+    transaction.status = 'success';
+    transaction.verifiedAt = new Date();
+    transaction.metadata = { ...transaction.metadata, gatewayResponse: verified.gateway_response || '', channel: verified.channel || '' };
+    await transaction.save();
+    const membership = transaction.tenantId ? await TenantMembership.findOne({ tenantId: transaction.tenantId, userId: freshUser._id, status: 'active' }) : null;
+    res.json({
+      success: true,
+      transaction,
+      user: sanitizeUser(freshUser, membership, scopeTenant),
+    });
+  } catch (error) {
+    res.status(400).json({ error: error.message || 'Unable to verify payment.' });
+  }
+});
+
 app.post('/api/enquiries', async (req, res) => {
-  const name = String(req.body.name || '').trim();
-  const email = String(req.body.email || '').trim().toLowerCase();
-  const message = String(req.body.message || '').trim();
-  if (!name || !email || !message) return res.status(400).json({ error: 'Name, email, and message are required.' });
-  await Enquiry.create({ name, email, message, recipient: 'admin@codesignite.com' });
-  const mailtoUrl = `mailto:admin@codesignite.com?subject=${encodeURIComponent(`CodeBot enquiry from ${name}`)}&body=${encodeURIComponent(`Name: ${name}\nEmail: ${email}\n\n${message}`)}`;
-  res.status(201).json({ success: true, message: 'Enquiry saved and ready to send to admin@codesignite.com.', mailtoUrl });
+  try {
+    const name = String(req.body.name || '').trim();
+    const email = sanitizeTextInput(req.body.email).toLowerCase();
+    const message = String(req.body.message || '').trim();
+    if (!name || !email || !message) return res.status(400).json({ error: 'Name, email, and message are required.' });
+    await Enquiry.create({ name, email, message, recipient: SMTP_USER });
+    await sendEnquiryEmail({ name, email, message });
+    res.status(201).json({ success: true, message: `Enquiry sent successfully to ${SMTP_USER}.` });
+  } catch (error) {
+    logger.warn({ error: error.message }, 'Unable to send enquiry email');
+    res.status(500).json({ error: error.message || 'Unable to send your enquiry right now.' });
+  }
+});
+
+app.get('/api/config/public', (req, res) => {
+  res.json({
+    paystackPublicKey: PAYSTACK_PUBLIC_KEY,
+    paystackCurrency: PAYSTACK_CURRENCY,
+    paystackCreditRate: PAYSTACK_CREDIT_RATE,
+    smtpFrom: SMTP_USER,
+  });
 });
 
 app.get('/api/config/required-credentials', (req, res) => {
@@ -1688,8 +2695,9 @@ app.get('/api/config/required-credentials', (req, res) => {
     socialLogin: {
       google: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_CALLBACK_URL'],
       github: ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET', 'GITHUB_CALLBACK_URL'],
-      microsoft: ['MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_CALLBACK_URL'],
     },
+    payments: ['PAYSTACK_PUBLIC_KEY', 'PAYSTACK_SECRET_KEY', 'PAYSTACK_CURRENCY (optional)', 'PAYSTACK_CREDIT_RATE (optional)'],
+    email: ['SMTP_PORT', 'SMTP_PASSWORD', 'SMTP_HOST (optional)', 'SMTP_USER (optional)', 'SMTP_FROM_NAME (optional)'],
     optional: ['PORT', 'DEFAULT_SIGNUP_CREDITS', 'HUGGINGFACE_TEXT_SPACE_ID', 'HUGGINGFACE_IMAGE_SPACE_ID', 'HUGGINGFACE_TEXT_SYSTEM_PROMPT'],
   });
 });
