@@ -177,6 +177,7 @@ const workspaceState = { members: [] };
 const paymentState = { publicKey: '', currency: 'NGN', creditRate: 1 };
 const companyProfileState = { activeTab: 'business', quill: null, profileId: null, faqCount: 0, productCount: 0 };
 const COMPANY_TABS = ['business', 'faqs', 'products', 'tone'];
+const connectionRecoveryState = { returnContext: null };
 
 function escapeHtml(value = '') {
   return String(value ?? '').replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
@@ -835,7 +836,7 @@ async function syncWhatsAppStatus() {
       stopPoller();
       await refreshUser();
       await loadAudience(true);
-      navigate('tasks');
+      restorePostConnectionRoute();
     } else {
       ui.qrWrapper.classList.remove('connected');
       ui.qrWrapper.classList.add('empty');
@@ -1340,9 +1341,35 @@ function scrollToConnectionSection() {
   if (connectionCard) connectionCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function redirectToWhatsAppConnection(message = 'WhatsApp is not connected yet. Please connect it from your dashboard.') {
+function getActiveWorkspaceTab() {
+  return document.querySelector('[data-workspace-tab].active')?.dataset.workspaceTab || 'scheduler';
+}
+
+function captureReturnContext() {
+  return {
+    route: appState.route || 'tasks',
+    workspaceTab: getActiveWorkspaceTab(),
+    taskTab: taskBuilderState.activeTab || 'message',
+  };
+}
+
+function restorePostConnectionRoute() {
+  const context = connectionRecoveryState.returnContext;
+  connectionRecoveryState.returnContext = null;
+  if (!context) {
+    navigate('tasks');
+    return;
+  }
+  navigate(context.route || 'tasks');
+  setWorkspaceTab(context.workspaceTab || 'scheduler');
+  setTaskTab(context.taskTab || 'message');
+}
+
+function redirectToWhatsAppConnection(message = 'WhatsApp is not connected yet. Please connect it from your dashboard.', returnContext = null) {
+  if (returnContext) connectionRecoveryState.returnContext = returnContext;
   showToast(message);
   navigate('dashboard');
+  startWhatsAppPolling();
   scrollToConnectionSection();
 }
 
@@ -1691,12 +1718,13 @@ async function scheduleTask() {
   const normalizedRecipients = sanitizeTaskRecipients(selectedGroups, contacts);
 
   try {
+    const returnContext = captureReturnContext();
     taskBuilderState.isScheduling = true;
     ui.scheduleTaskButton.disabled = true;
-    ui.scheduleTaskButton.textContent = 'Checking WhatsApp connection…';
+    ui.scheduleTaskButton.innerHTML = '<span class="inline-spinner" aria-hidden="true"></span>Checking WhatsApp connection…';
     const isConnected = await ensureWhatsAppConnectedBeforeScheduling();
     if (!isConnected) {
-      redirectToWhatsAppConnection('WhatsApp is not connected. Please connect it from your dashboard before scheduling.');
+      redirectToWhatsAppConnection('WhatsApp is not connected. Please connect it from your dashboard before scheduling.', returnContext);
       return;
     }
     ui.scheduleTaskButton.textContent = 'Scheduling…';
@@ -1725,7 +1753,7 @@ async function scheduleTask() {
     setTaskTab('task-list');
   } catch (error) {
     if (/whatsapp is not connected/i.test(String(error.message || ''))) {
-      redirectToWhatsAppConnection('WhatsApp is not connected. Please connect it from your dashboard before scheduling.');
+      redirectToWhatsAppConnection('WhatsApp is not connected. Please connect it from your dashboard before scheduling.', captureReturnContext());
     } else {
       showToast(error.message);
     }
