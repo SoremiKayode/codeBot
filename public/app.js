@@ -256,10 +256,10 @@ function splitRecipientInput(value = '') {
   return String(value).split(',').map((item) => normalizeWhitespace(item)).filter(Boolean);
 }
 
-function dedupeRecipients(values = []) {
+function dedupeRecipients(values = [], type = 'contact') {
   const seen = new Set();
   return values.filter((value) => {
-    const key = normalizePhoneRecipient(value).toLowerCase();
+    const key = normalizeRecipientToken(value, type).toLowerCase();
     if (!key || seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -1213,8 +1213,8 @@ function sanitizeTaskRecipients(groups = [], contacts = []) {
   }).filter((item) => item.id.endsWith('@s.whatsapp.net'));
 
   return {
-    groups: dedupeRecipients(normalizedGroups.map((item) => item.id)).map((id) => normalizedGroups.find((item) => item.id === id)).filter(Boolean),
-    contacts: dedupeRecipients(normalizedContacts.map((item) => item.id)).map((id) => normalizedContacts.find((item) => item.id === id)).filter(Boolean),
+    groups: dedupeRecipients(normalizedGroups.map((item) => item.id), 'group').map((id) => normalizedGroups.find((item) => item.id === id)).filter(Boolean),
+    contacts: dedupeRecipients(normalizedContacts.map((item) => item.id), 'contact').map((id) => normalizedContacts.find((item) => item.id === id)).filter(Boolean),
   };
 }
 
