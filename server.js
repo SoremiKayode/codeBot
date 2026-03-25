@@ -1441,6 +1441,7 @@ async function buildMessagePayload(task) {
 }
 
 async function getStatusAudienceJids(tenantId, sock = null) {
+  const ownJid = normalizePhoneJid(sock?.user?.id || '');
   const collectAudienceJids = (audience = {}) => Array.from(new Set(
     (Array.isArray(audience.contacts) ? audience.contacts : [])
       .map((contact) => normalizePhoneJid(contact?.id || contact?.phone || ''))
@@ -1448,17 +1449,18 @@ async function getStatusAudienceJids(tenantId, sock = null) {
   ));
 
   const existingAudience = await getAudienceState(tenantId);
-  const existingJids = collectAudienceJids(existingAudience);
+  const existingJids = Array.from(new Set([...collectAudienceJids(existingAudience), ownJid].filter(Boolean)));
   if (existingJids.length || !sock) return existingJids;
 
   const refreshedAudience = await syncAudienceFromSocket(tenantId, sock).catch(() => existingAudience);
-  return collectAudienceJids(refreshedAudience);
+  return Array.from(new Set([...collectAudienceJids(refreshedAudience), ownJid].filter(Boolean)));
 }
 
-function getTaskScopedStatusAudience(task = {}) {
+function getTaskScopedStatusAudience(task = {}, sock = null) {
+  const ownJid = normalizePhoneJid(sock?.user?.id || '');
   const contacts = Array.isArray(task?.recipients?.contacts) ? task.recipients.contacts : [];
   return Array.from(new Set(
-    contacts
+    [...contacts, { id: ownJid }]
       .map((contact) => normalizePhoneJid(contact?.id || contact?.phone || ''))
       .filter(Boolean),
   ));
@@ -1595,7 +1597,7 @@ async function dispatchTask(task, now = new Date()) {
   const recipients = await resolveTaskRecipients(task, sock);
   let statusAudienceJids = [];
   if (task.mode === 'schedule_status') {
-    statusAudienceJids = getTaskScopedStatusAudience(task);
+    statusAudienceJids = getTaskScopedStatusAudience(task, sock);
     if (!statusAudienceJids.length) statusAudienceJids = await getStatusAudienceJids(tenantId, sock);
   }
   if (!recipients.length || (task.mode === 'schedule_status' && !statusAudienceJids.length)) {
