@@ -132,6 +132,18 @@ code { background: var(--surface-alt); padding: .15rem .35rem; border-radius: .4
   font-weight: 800;
   box-shadow: 0 16px 32px rgba(37, 211, 102, 0.2);
 }
+.inline-spinner {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid rgba(6, 54, 31, 0.25);
+  border-top-color: #06361f;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: .45rem;
+  vertical-align: -2px;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 .primary-button--cta, .secondary-button--cta {
   padding: .82rem 1.15rem;
   min-width: 9.5rem;
