@@ -1340,6 +1340,26 @@ function scrollToConnectionSection() {
   if (connectionCard) connectionCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+function redirectToWhatsAppConnection(message = 'WhatsApp is not connected yet. Please connect it from your dashboard.') {
+  showToast(message);
+  navigate('dashboard');
+  scrollToConnectionSection();
+}
+
+async function ensureWhatsAppConnectedBeforeScheduling() {
+  const currentState = await api.whatsappStatus();
+  if (currentState.status === 'connected') return true;
+  await api.connectWhatsApp();
+  await syncWhatsAppStatus();
+  const maxAttempts = 3;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const retryState = await api.whatsappStatus();
+    if (retryState.status === 'connected') return true;
+    if (attempt < maxAttempts - 1) await new Promise((resolve) => setTimeout(resolve, 900));
+  }
+  return false;
+}
+
 function addTimeField(value = '09:00') {
   taskBuilderState.dailyTimes.push(value);
   renderFrequencyOptions();
@@ -1674,17 +1694,10 @@ async function scheduleTask() {
     taskBuilderState.isScheduling = true;
     ui.scheduleTaskButton.disabled = true;
     ui.scheduleTaskButton.textContent = 'Checking WhatsApp connection…';
-    const connectionState = await api.whatsappStatus();
-    if (connectionState.status !== 'connected') {
-      await api.connectWhatsApp();
-      await syncWhatsAppStatus();
-      const retryState = await api.whatsappStatus();
-      if (retryState.status !== 'connected') {
-        showToast('WhatsApp is not connected yet. Please connect it before scheduling.');
-        navigate('dashboard');
-        scrollToConnectionSection();
-        return;
-      }
+    const isConnected = await ensureWhatsAppConnectedBeforeScheduling();
+    if (!isConnected) {
+      redirectToWhatsAppConnection('WhatsApp is not connected. Please connect it from your dashboard before scheduling.');
+      return;
     }
     ui.scheduleTaskButton.textContent = 'Scheduling…';
     const payload = await api.createTask({
@@ -1711,9 +1724,11 @@ async function scheduleTask() {
     showToast(isAutomated ? 'Automated response saved successfully.' : isStatus ? 'Status post scheduled successfully.' : 'Task scheduled successfully.');
     setTaskTab('task-list');
   } catch (error) {
-    navigate('dashboard');
-    scrollToConnectionSection();
-    showToast(error.message);
+    if (/whatsapp is not connected/i.test(String(error.message || ''))) {
+      redirectToWhatsAppConnection('WhatsApp is not connected. Please connect it from your dashboard before scheduling.');
+    } else {
+      showToast(error.message);
+    }
   } finally {
     taskBuilderState.isScheduling = false;
     ui.scheduleTaskButton.disabled = false;
