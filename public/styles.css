@@ -803,15 +803,30 @@ body:not(.is-authenticated) .auth-only { display: none !important; }
 
 .task-error-text { color: #b91c1c; font-weight: 600; }
 
-.admin-layout { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); gap: 16px; align-items: start; overflow-x: clip; }
+:root { --admin-sidebar-width: 240px; }
+.admin-layout { display: grid; grid-template-columns: minmax(180px, var(--admin-sidebar-width)) 10px minmax(0, 1fr); gap: 0; align-items: start; overflow-x: clip; }
 .admin-sidebar { position: sticky; top: 88px; align-self: start; background: linear-gradient(180deg, var(--surface-alt), var(--surface-soft)); border: 1px solid var(--border); border-radius: 12px; padding: 12px; overflow: auto; min-width: 0; max-width: 100%; }
+.admin-sidebar-grip {
+  position: sticky;
+  top: 88px;
+  align-self: stretch;
+  min-height: 100%;
+  cursor: col-resize;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-alt) 70%, transparent), color-mix(in srgb, var(--surface-soft) 70%, transparent));
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  margin: 0 .35rem;
+  border-radius: .75rem;
+}
 .admin-sidebar.collapsed .admin-nav { display: none; }
 .admin-nav { display: grid; gap: 8px; margin-top: 10px; }
-.admin-main { min-height: 60vh; min-width: 0; overflow-x: clip; }
+.admin-main { min-height: 60vh; min-width: 0; overflow-x: clip; margin-left: .7rem; }
 .admin-panel { min-width: 0; display: grid; gap: 1rem; }
 .admin-panel.hidden { display: none; }
 .admin-table-actions { display:flex; gap:6px; flex-wrap:wrap; }
 .admin-table-shell { width: 100%; overflow-x: auto; border: 1px solid var(--border); border-radius: 1rem; }
+.task-table--admin-users .task-table__actions { flex-wrap: nowrap; }
+.task-table--admin-users .task-table__actions .secondary-button { white-space: nowrap; }
 .task-table--email { min-width: 640px; }
 .task-table__head--email,
 .task-table__row--email {
@@ -821,4 +836,9 @@ body:not(.is-authenticated) .auth-only { display: none !important; }
 html[data-theme='dark'] .admin-sidebar {
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
 }
-@media (max-width: 900px) { .admin-layout { grid-template-columns: 1fr; } .admin-sidebar { position: static; max-width: 100%; } }
+@media (max-width: 900px) {
+  .admin-layout { grid-template-columns: 1fr; gap: 12px; }
+  .admin-sidebar { position: static; max-width: 100%; }
+  .admin-sidebar-grip { display: none; }
+  .admin-main { margin-left: 0; }
+}
