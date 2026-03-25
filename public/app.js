@@ -149,6 +149,9 @@ const ui = {
   adminEmailRecipients: document.getElementById('adminEmailRecipients'),
   adminEmailSubject: document.getElementById('adminEmailSubject'),
   adminEmailMessage: document.getElementById('adminEmailMessage'),
+  adminEmailUserSearch: document.getElementById('adminEmailUserSearch'),
+  adminEmailSelectAll: document.getElementById('adminEmailSelectAll'),
+  adminEmailUsersTable: document.getElementById('adminEmailUsersTable'),
   taskNavButtons: document.querySelectorAll('[data-task-nav]'),
   groupDeliveryModeInputs: document.querySelectorAll('input[name="groupDeliveryMode"]'),
   taskModeInputs: document.querySelectorAll('input[name="taskMode"]'),
@@ -196,7 +199,11 @@ const paymentState = { publicKey: '', currency: 'NGN', creditRate: 1 };
 const companyProfileState = { activeTab: 'business', quill: null, profileId: null, faqCount: 0, productCount: 0 };
 const COMPANY_TABS = ['business', 'faqs', 'products', 'tone'];
 const connectionRecoveryState = { returnContext: null };
-const adminState = { tab: 'users', users: [], tasks: [], selectedUser: null, canEdit: false };
+const adminState = { tab: 'users', users: [], tasks: [], selectedUser: null, canEdit: false, selectedEmailUserIds: new Set() };
+
+function getEntityId(entity = {}) {
+  return String(entity.id || entity._id || '').trim();
+}
 
 function escapeHtml(value = '') {
   return String(value ?? '').replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[char]));
@@ -1802,8 +1809,16 @@ async function loadAdminUsers() {
   if (ui.adminUserFrom?.value) params.set('from', ui.adminUserFrom.value);
   if (ui.adminUserTo?.value) params.set('to', ui.adminUserTo.value);
   const data = await api.adminUsers(params.toString());
-  adminState.users = Array.isArray(data.users) ? data.users : [];
+  const users = Array.isArray(data.users)
+    ? data.users
+    : Array.isArray(data.data?.users)
+      ? data.data.users
+      : [];
+  adminState.users = users.map((user) => ({ ...user, id: getEntityId(user) }));
+  const validSelectedIds = new Set(adminState.users.map((user) => user.id));
+  adminState.selectedEmailUserIds = new Set(Array.from(adminState.selectedEmailUserIds).filter((id) => validSelectedIds.has(id)));
   renderAdminUsers();
+  renderAdminEmailUsers();
 }
 
 async function loadAdminTasks() {
@@ -1819,7 +1834,7 @@ async function loadAdminTasks() {
 function renderAdminUsers() {
   if (!ui.adminUsersTable) return;
   ui.adminUsersTable.innerHTML = buildTaskRowsMarkup(adminState.users.map((user) => ({
-    _id: user.id,
+    _id: getEntityId(user),
     title: user.username,
     type: user.role || 'customer',
     description: user.email,
@@ -1833,6 +1848,52 @@ function renderAdminUsers() {
   })), { selectable: false, emptyMessage: 'No users found.' });
   ui.adminUsersTable.querySelectorAll('[data-task-action="pause"]').forEach((btn) => { btn.textContent = 'Edit'; btn.dataset.taskAction = 'admin-user-edit'; });
   ui.adminUsersTable.querySelectorAll('[data-task-action="delete"]').forEach((btn) => { btn.textContent = 'Delete'; btn.dataset.taskAction = 'admin-user-delete'; btn.disabled = !adminState.canEdit; });
+}
+
+function getFilteredAdminEmailUsers() {
+  const search = String(ui.adminEmailUserSearch?.value || '').trim().toLowerCase();
+  if (!search) return adminState.users;
+  return adminState.users.filter((user) => [user.username, user.email, user.role].filter(Boolean).join(' ').toLowerCase().includes(search));
+}
+
+function syncAdminEmailRecipientsInput() {
+  if (!ui.adminEmailRecipients) return;
+  const selectedEmails = adminState.users
+    .filter((user) => adminState.selectedEmailUserIds.has(user.id))
+    .map((user) => String(user.email || '').trim().toLowerCase())
+    .filter(Boolean);
+  ui.adminEmailRecipients.value = Array.from(new Set(selectedEmails)).join(', ');
+}
+
+function renderAdminEmailUsers() {
+  if (!ui.adminEmailUsersTable) return;
+  const filteredUsers = getFilteredAdminEmailUsers();
+  if (!filteredUsers.length) {
+    ui.adminEmailUsersTable.innerHTML = '<div class="empty-state">No users match your filter.</div>';
+    if (ui.adminEmailSelectAll) ui.adminEmailSelectAll.checked = false;
+    return;
+  }
+  ui.adminEmailUsersTable.innerHTML = `
+    <div class="task-table__head task-table__head--email">
+      <span><input type="checkbox" id="adminEmailSelectAllHead" ${filteredUsers.every((user) => adminState.selectedEmailUserIds.has(user.id)) ? 'checked' : ''} /></span>
+      <span>User</span>
+      <span>Email</span>
+      <span>Role</span>
+      <span>Joined</span>
+    </div>
+    ${filteredUsers.map((user) => `
+      <div class="task-table__row task-table__row--email">
+        <span class="task-table__checkbox task-table__checkbox--cell"><input type="checkbox" data-admin-email-user="${escapeHtml(user.id)}" ${adminState.selectedEmailUserIds.has(user.id) ? 'checked' : ''} /></span>
+        <div class="task-table__cell"><strong>${escapeHtml(user.username || 'Unknown user')}</strong></div>
+        <div class="task-table__cell"><span>${escapeHtml(user.email || '-')}</span></div>
+        <div class="task-table__cell"><span>${escapeHtml(user.role || 'customer')}</span></div>
+        <div class="task-table__cell"><span>${escapeHtml(formatTaskDate(user.createdAt))}</span></div>
+      </div>
+    `).join('')}
+  `;
+  if (ui.adminEmailSelectAll) {
+    ui.adminEmailSelectAll.checked = filteredUsers.every((user) => adminState.selectedEmailUserIds.has(user.id));
+  }
 }
 
 function renderAdminTasks() {
@@ -1861,6 +1922,7 @@ async function loadAdminDashboard() {
 function setAdminTab(tab = 'users') {
   adminState.tab = ['users', 'tasks', 'credits', 'email'].includes(tab) ? tab : 'users';
   document.querySelectorAll('[data-admin-panel]').forEach((panel) => panel.classList.toggle('hidden', panel.dataset.adminPanel !== adminState.tab));
+  if (adminState.tab === 'email') renderAdminEmailUsers();
 }
 
 function resetTaskBuilder() {
@@ -2273,6 +2335,29 @@ document.addEventListener('click', (event) => {
 });
 
 document.addEventListener('change', (event) => {
+  const userCheckbox = event.target.closest('[data-admin-email-user]');
+  if (userCheckbox) {
+    const userId = userCheckbox.dataset.adminEmailUser;
+    if (!userId) return;
+    if (userCheckbox.checked) adminState.selectedEmailUserIds.add(userId);
+    else adminState.selectedEmailUserIds.delete(userId);
+    syncAdminEmailRecipientsInput();
+    renderAdminEmailUsers();
+    return;
+  }
+
+  if (event.target.id === 'adminEmailSelectAllHead' || event.target.id === 'adminEmailSelectAll') {
+    const shouldSelect = Boolean(event.target.checked);
+    getFilteredAdminEmailUsers().forEach((user) => {
+      if (shouldSelect) adminState.selectedEmailUserIds.add(user.id);
+      else adminState.selectedEmailUserIds.delete(user.id);
+    });
+    syncAdminEmailRecipientsInput();
+    renderAdminEmailUsers();
+  }
+});
+
+document.addEventListener('change', (event) => {
   if (event.target.matches('[data-member-role]')) {
     api.updateWorkspaceMemberRole(event.target.dataset.memberRole, event.target.value)
       .then((payload) => { workspaceState.members = Array.isArray(payload.members) ? payload.members : []; renderWorkspaceMembers(); showToast('Workspace role updated.'); })
@@ -2414,6 +2499,7 @@ updateTaskPreview();
 ui.adminUsersRefresh?.addEventListener('click', () => loadAdminUsers().catch((error) => showToast(error.message)));
 ui.adminTasksRefresh?.addEventListener('click', () => loadAdminTasks().catch((error) => showToast(error.message)));
 ui.adminSidebarToggle?.addEventListener('click', () => ui.adminSidebar?.classList.toggle('collapsed'));
+ui.adminEmailUserSearch?.addEventListener('input', () => renderAdminEmailUsers());
 ui.adminCreditFormWrap?.addEventListener('submit', async (event) => {
   event.preventDefault();
   const amount = Number(document.getElementById('adminCreditAmount')?.value || 0);
@@ -2427,7 +2513,12 @@ ui.adminCreditFormWrap?.addEventListener('submit', async (event) => {
 ui.adminEmailForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
   try {
-    const recipients = ui.adminEmailRecipients.value.split(',').map((item) => item.trim()).filter(Boolean);
+    const selectedRecipients = adminState.users
+      .filter((user) => adminState.selectedEmailUserIds.has(user.id))
+      .map((user) => String(user.email || '').trim())
+      .filter(Boolean);
+    const manualRecipients = ui.adminEmailRecipients.value.split(',').map((item) => item.trim()).filter(Boolean);
+    const recipients = Array.from(new Set([...selectedRecipients, ...manualRecipients].map((email) => email.toLowerCase())));
     await api.adminSendEmail({ recipients, subject: ui.adminEmailSubject.value, message: ui.adminEmailMessage.value });
     showToast('Email sent.');
   } catch (error) { showToast(error.message); }
