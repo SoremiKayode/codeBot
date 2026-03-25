@@ -594,11 +594,17 @@ function sanitizeTaskRecipients(recipients = {}) {
 }
 
 function normalizeGroup(group) {
+  const participantIds = Array.isArray(group.participants)
+    ? group.participants
+      .map((participant) => normalizePhoneJid(participant?.id || participant?.jid || participant?.participant || participant?.user || ''))
+      .filter(Boolean)
+    : [];
   return {
     id: String(group.id || ''),
     name: String(group.subject || group.name || group.id || 'Unnamed group'),
-    members: Array.isArray(group.participants) ? group.participants.length : 0,
+    members: participantIds.length || Number(group.members || 0),
     category: group.announce ? 'Announcement' : 'Group',
+    participantIds: Array.from(new Set(participantIds)),
   };
 }
 
@@ -794,6 +800,7 @@ const tenantAudienceGroupSchema = new mongoose.Schema({
   name: { type: String, required: true },
   members: { type: Number, default: 0 },
   category: { type: String, default: 'Group' },
+  participantIds: { type: [String], default: [] },
 }, { timestamps: true });
 tenantAudienceGroupSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 
@@ -2187,7 +2194,9 @@ app.post('/api/whatsapp/connect', authenticateRequest, requireActiveWorkspace, r
 app.get('/api/whatsapp/status', authenticateRequest, requireActiveWorkspace, async (req, res) => {
   const tenantId = String(req.tenant._id);
   const state = connectionStateStore.get(tenantId) || await WhatsAppConnection.findOne({ tenantId }).lean() || buildDefaultConnectionState(tenantId);
-  res.json(state);
+  const sock = socketStore.get(tenantId);
+  const isLiveConnected = state.status === 'connected' && Boolean(sock?.user);
+  res.json({ ...state, status: isLiveConnected ? 'connected' : 'not_connected' });
 });
 
 app.get('/api/whatsapp/audience', authenticateRequest, requireActiveWorkspace, async (req, res) => {
@@ -2272,15 +2281,8 @@ app.post('/api/tasks', authenticateRequest, requireScopedPermission('tasks:write
     if (!hasPortfolio) return res.status(400).json({ error: 'Complete your company portfolio before enabling automated responses.' });
   }
   const connectionState = connectionStateStore.get(scope.scopeId) || await WhatsAppConnection.findOne({ tenantId: scope.scopeId }).lean() || buildDefaultConnectionState(scope.scopeId);
-  if (connectionState.status !== 'connected') {
-    try {
-      if (scope.tenant) await startWhatsAppSession(req.user, scope.tenant);
-    } catch (error) {
-      logger.warn({ scopeId: scope.scopeId, error: error.message }, 'Unable to reconnect WhatsApp before scheduling task');
-    }
-  }
-  const refreshedConnectionState = connectionStateStore.get(scope.scopeId) || await WhatsAppConnection.findOne({ tenantId: scope.scopeId }).lean() || buildDefaultConnectionState(scope.scopeId);
-  if (refreshedConnectionState.status !== 'connected') {
+  const liveSocket = socketStore.get(scope.scopeId);
+  if (connectionState.status !== 'connected' || !liveSocket?.user) {
     return res.status(409).json({ error: 'WhatsApp is not connected. Please reconnect from the dashboard and try again.' });
   }
   const schedule = mode === 'automated_response' ? {} : validateSchedule(req.body.schedule || {}, timezone);
