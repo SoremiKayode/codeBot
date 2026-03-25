@@ -103,6 +103,7 @@ const ui = {
   contactsTable: document.getElementById('contactsTable'),
   groupSearch: document.getElementById('groupSearch'),
   groupRecipientsInput: document.getElementById('groupRecipientsInput'),
+  fetchGroupRecipientsButton: document.getElementById('fetchGroupRecipientsButton'),
   contactSearch: document.getElementById('contactSearch'),
   groupSortButton: document.getElementById('groupSortButton'),
   contactSortButton: document.getElementById('contactSortButton'),
@@ -293,14 +294,15 @@ function getSelectedGroupParticipantIds() {
 }
 
 function syncGroupRecipientInputs() {
-  const autoRecipientIds = taskBuilderState.groupDeliveryMode === 'members' ? getSelectedGroupParticipantIds() : [];
+  const selectedGroupParticipantIds = getSelectedGroupParticipantIds();
+  const autoRecipientIds = taskBuilderState.groupDeliveryMode === 'members' ? selectedGroupParticipantIds : [];
   const currentRecipients = dedupeRecipients(splitRecipientInput(ui.recipientSummaryInput.value));
   const preservedRecipients = currentRecipients.filter((value) => !taskBuilderState.autoGroupMemberRecipients.has(normalizePhoneRecipient(value)));
   const mergedRecipients = dedupeRecipients([...preservedRecipients, ...autoRecipientIds]);
   taskBuilderState.autoGroupMemberRecipients = new Set(autoRecipientIds);
   taskBuilderState.manualRecipients = mergedRecipients;
   ui.recipientSummaryInput.value = mergedRecipients.join(', ');
-  if (ui.groupRecipientsInput) ui.groupRecipientsInput.value = autoRecipientIds.join(', ');
+  if (ui.groupRecipientsInput) ui.groupRecipientsInput.value = selectedGroupParticipantIds.join(', ');
 }
 
 function getSelectedRecipientLabels() {
@@ -2224,6 +2226,26 @@ ui.refreshContactsButton?.addEventListener('click', async () => {
   } finally {
     ui.refreshContactsButton.disabled = false;
     ui.refreshContactsButton.textContent = 'Refresh contacts';
+  }
+});
+ui.fetchGroupRecipientsButton?.addEventListener('click', async () => {
+  if (!taskBuilderState.selectedGroups.size) {
+    showToast('Select at least one group first.');
+    return;
+  }
+  ui.fetchGroupRecipientsButton.disabled = true;
+  ui.fetchGroupRecipientsButton.textContent = 'Fetching…';
+  try {
+    await loadAudience(true);
+    syncGroupRecipientInputs();
+    updateTaskPreview();
+    const recipientCount = splitRecipientInput(ui.groupRecipientsInput?.value || '').length;
+    showToast(recipientCount
+      ? `Loaded ${recipientCount} group member contact${recipientCount === 1 ? '' : 's'}.`
+      : 'No member contacts found yet for selected groups. Refresh WhatsApp audience and try again.');
+  } finally {
+    ui.fetchGroupRecipientsButton.disabled = false;
+    ui.fetchGroupRecipientsButton.textContent = 'Fetch contacts from selected groups';
   }
 });
 
