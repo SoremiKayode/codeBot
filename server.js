@@ -1628,12 +1628,24 @@ async function dispatchTask(task, now = new Date()) {
     return task;
   }
   const tenantId = String(task.tenantId || '');
-  const sock = socketStore.get(tenantId);
-  const billingTarget = tenantId.startsWith('user:') ? await User.findById(task.createdByUserId) : await Tenant.findById(tenantId);
+  const taskOwner = await User.findById(task.createdByUserId);
+  const taskTenant = tenantId.startsWith('user:') ? null : await Tenant.findById(tenantId);
+  let sock = socketStore.get(tenantId);
+  const liveConnectionState = connectionStateStore.get(tenantId) || await WhatsAppConnection.findOne({ tenantId }).lean() || buildDefaultConnectionState(tenantId);
+  if ((!sock || liveConnectionState.status !== 'connected') && taskOwner && taskTenant) {
+    try {
+      await startWhatsAppSession(taskOwner, taskTenant);
+    } catch (error) {
+      logger.warn({ tenantId, taskId: String(task._id), error: error.message }, 'Unable to reconnect WhatsApp before dispatching scheduled task');
+    }
+    sock = socketStore.get(tenantId);
+  }
+  const refreshedConnectionState = connectionStateStore.get(tenantId) || await WhatsAppConnection.findOne({ tenantId }).lean() || buildDefaultConnectionState(tenantId);
+  const billingTarget = tenantId.startsWith('user:') ? taskOwner : taskTenant;
   const billingContext = tenantId.startsWith('user:')
     ? { tenant: null, user: billingTarget }
-    : { tenant: billingTarget, user: await User.findById(task.createdByUserId) };
-  if (!sock) {
+    : { tenant: billingTarget, user: taskOwner };
+  if (!sock || refreshedConnectionState.status !== 'connected') {
     task.lastError = 'WhatsApp is not connected for this workspace.';
     logTaskFailure(task, task.lastError, { tenantId });
     task.nextRunAt = computeNextRunAt(task.schedule, task.timezone, new Date(now.getTime() + 60000));
@@ -2258,7 +2270,7 @@ app.post('/api/tasks', authenticateRequest, requireScopedPermission('tasks:write
   const connectionState = connectionStateStore.get(scope.scopeId) || await WhatsAppConnection.findOne({ tenantId: scope.scopeId }).lean() || buildDefaultConnectionState(scope.scopeId);
   if (connectionState.status !== 'connected') {
     try {
-      await getOrCreateSocket(req.user, scope.scopeId);
+      if (scope.tenant) await startWhatsAppSession(req.user, scope.tenant);
     } catch (error) {
       logger.warn({ scopeId: scope.scopeId, error: error.message }, 'Unable to reconnect WhatsApp before scheduling task');
     }
