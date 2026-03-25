@@ -2431,8 +2431,20 @@ app.post('/api/admin/users/:userId/credit', authenticateRequest, requirePlatform
   if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'Provide a positive credit amount.' });
   const targetUser = await User.findById(req.params.userId);
   if (!targetUser) return res.status(404).json({ error: 'User not found.' });
-  await creditAccountBalance({ user: targetUser, amount, type: 'admin_credit', metadata: { by: String(req.user._id) } });
-  res.json({ user: { ...targetUser.toObject(), role: normalizePlatformRole(targetUser.role), id: String(targetUser._id) } });
+  const activeMembership = await TenantMembership.findOne({ userId: targetUser._id, status: 'active' }).sort({ createdAt: 1 });
+  const activeTenant = activeMembership ? await Tenant.findById(activeMembership.tenantId) : null;
+  await creditAccountBalance({
+    tenant: activeTenant,
+    user: targetUser,
+    amount,
+    type: 'admin_credit',
+    metadata: { by: String(req.user._id), scopeType: activeTenant ? 'workspace' : 'account' },
+  });
+  const refreshedUser = await User.findById(targetUser._id).lean();
+  res.json({
+    user: refreshedUser ? { ...refreshedUser, role: normalizePlatformRole(refreshedUser.role), id: String(refreshedUser._id) } : null,
+    workspace: activeTenant ? { id: String(activeTenant._id), name: activeTenant.name, credits: activeTenant.credits } : null,
+  });
 });
 
 app.get('/api/admin/tasks', authenticateRequest, requirePlatformAdmin, async (req, res) => {
