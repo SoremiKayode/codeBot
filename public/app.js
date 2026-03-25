@@ -104,6 +104,7 @@ const ui = {
   contactSearch: document.getElementById('contactSearch'),
   groupSortButton: document.getElementById('groupSortButton'),
   contactSortButton: document.getElementById('contactSortButton'),
+  refreshContactsButton: document.getElementById('refreshContactsButton'),
   selectAllGroups: document.getElementById('selectAllGroups'),
   selectAllContacts: document.getElementById('selectAllContacts'),
   groupPrevButton: document.getElementById('groupPrevButton'),
@@ -126,6 +127,10 @@ const ui = {
   scheduleSummary: document.getElementById('scheduleSummary'),
   nextRunBadge: document.getElementById('nextRunBadge'),
   scheduleTaskButton: document.getElementById('scheduleTaskButton'),
+  statusContactWaitCard: document.getElementById('statusContactWaitCard'),
+  statusContactWaitText: document.getElementById('statusContactWaitText'),
+  waitAndFetchContactsButton: document.getElementById('waitAndFetchContactsButton'),
+  continueStatusScheduleButton: document.getElementById('continueStatusScheduleButton'),
   taskNavButtons: document.querySelectorAll('[data-task-nav]'),
   groupDeliveryModeInputs: document.querySelectorAll('input[name="groupDeliveryMode"]'),
   taskModeInputs: document.querySelectorAll('input[name="taskMode"]'),
@@ -163,6 +168,8 @@ const taskBuilderState = {
   selectedTaskIds: new Set(),
   taskMode: 'broadcast',
   automationAudience: ['all_incoming'],
+  pendingStatusConfirmation: null,
+  isScheduling: false,
 };
 
 const TASK_DRAFT_STORAGE_KEY = 'wa_task_builder_draft_v1';
@@ -466,8 +473,8 @@ function updateTaskModeUI() {
   audiencePanel?.querySelector('h3')?.replaceChildren(document.createTextNode(isAutomated ? 'Select managed groups for automated replies' : isStatus ? 'Select status viewers (contacts) and optional broadcast recipients' : 'Select broadcast recipients or managed groups'));
   if (ui.scheduleTaskButton) ui.scheduleTaskButton.textContent = isAutomated ? 'Schedule task' : isStatus ? 'Schedule status' : 'Schedule task';
   if (ui.messageNextButton) {
-    ui.messageNextButton.textContent = hideAudienceStep ? 'Go to schedule' : 'Next: audience';
-    ui.messageNextButton.classList.toggle('hidden', isAutomated);
+    ui.messageNextButton.textContent = hideAudienceStep ? 'Next: schedule' : 'Next: audience';
+    ui.messageNextButton.classList.remove('hidden');
   }
   if (ui.previewFrequencyPill) ui.previewFrequencyPill.textContent = isAutomated ? 'Automated response' : isStatus ? 'Scheduled status' : (taskBuilderState.frequency || 'Not scheduled');
   syncAutomationAudienceInputs();
@@ -482,6 +489,23 @@ function updateTaskModeUI() {
     const statusAudienceCount = taskBuilderState.selectedContacts.size + taskBuilderState.manualRecipients.length;
     ui.scheduleSummary.textContent = `This scheduled task will publish to WhatsApp Status for ${statusAudienceCount || 0} selected viewer${statusAudienceCount === 1 ? '' : 's'}.`;
   }
+  updateScheduleActionVisibility();
+}
+
+function hasCompanyPortfolio() {
+  const profileText = companyProfileState.quill?.getText?.().trim() || '';
+  return profileText.length > 0;
+}
+
+function hasAutomationTriggersSelected() {
+  return Array.isArray(taskBuilderState.automationAudience) && taskBuilderState.automationAudience.length > 0;
+}
+
+function updateScheduleActionVisibility() {
+  if (!ui.scheduleTaskButton) return;
+  const titleProvided = sanitizeFormValue(ui.taskTitle?.value || '').length > 0;
+  const automatedReady = titleProvided && hasAutomationTriggersSelected();
+  ui.scheduleTaskButton.classList.toggle('hidden', isAutomatedMode() && !automatedReady);
 }
 
 function renderWorkspaceMembers() {
@@ -926,6 +950,7 @@ function updateTaskPreview() {
   renderMediaQueue();
   ui.scheduleSummary.textContent = buildScheduleDescription();
   saveTaskDraft();
+  updateScheduleActionVisibility();
 }
 
 function renderMediaQueue() {
@@ -1310,6 +1335,11 @@ async function loadAudience(force = false) {
   }
 }
 
+function scrollToConnectionSection() {
+  const connectionCard = document.querySelector('.connection-card');
+  if (connectionCard) connectionCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 function addTimeField(value = '09:00') {
   taskBuilderState.dailyTimes.push(value);
   renderFrequencyOptions();
@@ -1560,6 +1590,7 @@ function buildScheduleConfig() {
 }
 
 async function scheduleTask() {
+  if (taskBuilderState.isScheduling) return;
   syncManualRecipientsFromInput();
   const isAutomated = isAutomatedMode();
   const isStatus = isStatusMode();
@@ -1591,6 +1622,19 @@ async function scheduleTask() {
     setTaskTab('audience');
     return;
   }
+  if (isAutomated && !hasCompanyPortfolio()) {
+    showToast('Complete your company portfolio first so AI can personalize automated replies.');
+    navigate('tasks');
+    setWorkspaceTab('portfolio');
+    setCompanyTab('business');
+    document.getElementById('businessNameEditor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+  if (isAutomated && !sanitizeFormValue(ui.taskTitle.value)) {
+    showToast('Type a task title before scheduling automated response.');
+    setTaskTab('message');
+    return;
+  }
   if (invalidManualRecipients.length) {
     showToast(`These recipients are invalid: ${invalidManualRecipients.join(', ')}`);
     return;
@@ -1604,14 +1648,15 @@ async function scheduleTask() {
     return;
   }
 
-  if (isStatus) {
+  if (isStatus && !taskBuilderState.pendingStatusConfirmation) {
     const initialViewerCount = getStatusAudienceContactIds(manualContacts).length;
-    const waitForMoreContacts = window.confirm(`Your scheduled status is currently set to ${initialViewerCount} contact viewer${initialViewerCount === 1 ? '' : 's'} (including your WhatsApp number). Click OK to wait and fetch more contacts now, or Cancel to schedule immediately.`);
-    if (waitForMoreContacts) {
-      await loadAudience(true);
-      const refreshedViewerCount = getStatusAudienceContactIds(manualContacts).length;
-      showToast(`Fetched latest contacts. Status audience is now ${refreshedViewerCount} viewer${refreshedViewerCount === 1 ? '' : 's'}.`);
+    taskBuilderState.pendingStatusConfirmation = { manualContacts };
+    ui.statusContactWaitCard?.classList.remove('hidden');
+    if (ui.statusContactWaitText) {
+      ui.statusContactWaitText.textContent = `Your status is currently set to ${initialViewerCount} viewer${initialViewerCount === 1 ? '' : 's'} (including your own WhatsApp). Contacts sync from your connected WhatsApp account. Would you like to wait while we fetch more contacts first?`;
     }
+    showToast('Choose whether to fetch more contacts before scheduling status.');
+    return;
   }
 
   const statusAudienceIds = isStatus ? getStatusAudienceContactIds(manualContacts) : [];
@@ -1626,6 +1671,22 @@ async function scheduleTask() {
   const normalizedRecipients = sanitizeTaskRecipients(selectedGroups, contacts);
 
   try {
+    taskBuilderState.isScheduling = true;
+    ui.scheduleTaskButton.disabled = true;
+    ui.scheduleTaskButton.textContent = 'Checking WhatsApp connection…';
+    const connectionState = await api.whatsappStatus();
+    if (connectionState.status !== 'connected') {
+      await api.connectWhatsApp();
+      await syncWhatsAppStatus();
+      const retryState = await api.whatsappStatus();
+      if (retryState.status !== 'connected') {
+        showToast('WhatsApp is not connected yet. Please connect it before scheduling.');
+        navigate('dashboard');
+        scrollToConnectionSection();
+        return;
+      }
+    }
+    ui.scheduleTaskButton.textContent = 'Scheduling…';
     const payload = await api.createTask({
       title,
       type: getTaskTypeLabel(),
@@ -1648,8 +1709,16 @@ async function scheduleTask() {
     localStorage.removeItem(TASK_DRAFT_STORAGE_KEY);
     await loadTasks();
     showToast(isAutomated ? 'Automated response saved successfully.' : isStatus ? 'Status post scheduled successfully.' : 'Task scheduled successfully.');
+    setTaskTab('task-list');
   } catch (error) {
+    navigate('dashboard');
+    scrollToConnectionSection();
     showToast(error.message);
+  } finally {
+    taskBuilderState.isScheduling = false;
+    ui.scheduleTaskButton.disabled = false;
+    ui.scheduleTaskButton.textContent = isStatus ? 'Schedule status' : 'Schedule task';
+    updateScheduleActionVisibility();
   }
 }
 
@@ -1671,6 +1740,8 @@ function resetTaskBuilder() {
   taskBuilderState.manualRecipients = [];
   taskBuilderState.taskMode = 'broadcast';
   taskBuilderState.automationAudience = ['all_incoming'];
+  taskBuilderState.pendingStatusConfirmation = null;
+  ui.statusContactWaitCard?.classList.add('hidden');
   ui.groupDeliveryModeInputs.forEach((input) => { input.checked = input.value === 'group'; });
   ui.taskModeInputs.forEach((input) => { input.checked = input.value === 'broadcast'; });
   syncAutomationAudienceInputs();
@@ -1889,7 +1960,8 @@ ui.frequencySelect.addEventListener('change', () => {
 ui.startDateInput.addEventListener('change', updateTaskPreview);
 ui.startTimeInput.addEventListener('change', updateTaskPreview);
 ui.scheduleTaskButton.addEventListener('click', scheduleTask);
-ui.taskTitle.addEventListener('input', updateTaskPreview);
+  ui.taskTitle.addEventListener('input', updateTaskPreview);
+ui.taskTitle.addEventListener('input', updateScheduleActionVisibility);
 ui.taskSearchInput.addEventListener('input', (event) => {
   taskBuilderState.taskSearch = event.target.value;
   renderTasks(getFilteredTasks());
@@ -1917,6 +1989,17 @@ ui.groupPrevButton.addEventListener('click', () => { taskBuilderState.groupPage 
 ui.groupNextButton.addEventListener('click', () => { taskBuilderState.groupPage += 1; renderTable('groups'); });
 ui.contactPrevButton.addEventListener('click', () => { taskBuilderState.contactPage = Math.max(1, taskBuilderState.contactPage - 1); renderTable('contacts'); });
 ui.contactNextButton.addEventListener('click', () => { taskBuilderState.contactPage += 1; renderTable('contacts'); });
+ui.refreshContactsButton?.addEventListener('click', async () => {
+  ui.refreshContactsButton.disabled = true;
+  ui.refreshContactsButton.textContent = 'Refreshing contacts…';
+  try {
+    await loadAudience(true);
+    showToast(`Contacts refreshed. ${audienceState.contacts.length} contact${audienceState.contacts.length === 1 ? '' : 's'} available.`);
+  } finally {
+    ui.refreshContactsButton.disabled = false;
+    ui.refreshContactsButton.textContent = 'Refresh contacts';
+  }
+});
 
 ui.selectAllGroups.addEventListener('change', () => {
   getFilteredData(audienceState.groups, ui.groupSearch.value, taskBuilderState.groupSortAsc).forEach((item) => ui.selectAllGroups.checked ? taskBuilderState.selectedGroups.add(item.id) : taskBuilderState.selectedGroups.delete(item.id));
@@ -1935,8 +2018,9 @@ ui.groupDeliveryModeInputs.forEach((input) => input.addEventListener('change', (
 ui.taskModeInputs.forEach((input) => input.addEventListener('change', (event) => {
   taskBuilderState.taskMode = ['automated_response', 'schedule_status'].includes(event.target.value) ? event.target.value : 'broadcast';
   updateTaskModeUI();
-  setTaskTab(isAutomatedMode() ? 'schedule' : 'message');
+  setTaskTab('message');
   updateTaskPreview();
+  updateScheduleActionVisibility();
 }));
 ui.automationAudienceInputs.forEach((input) => input.addEventListener('change', (event) => {
   const value = event.target.value || 'all_incoming';
@@ -1952,6 +2036,7 @@ ui.automationAudienceInputs.forEach((input) => input.addEventListener('change', 
   if (!taskBuilderState.automationAudience.length) taskBuilderState.automationAudience = ['all_incoming'];
   syncAutomationAudienceInputs();
   updateTaskPreview();
+  updateScheduleActionVisibility();
 }));
 ui.taskNavButtons?.forEach((button) => button.addEventListener('click', () => navigateTaskWizard(button.dataset.taskNav)));
 
@@ -2045,6 +2130,30 @@ document.addEventListener('input', (event) => {
     ui.selectedAudienceSummary.innerHTML = getCombinedRecipientTokens().map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join('') || '<span class="muted">No audience selected yet.</span>';
     saveTaskDraft();
   }
+});
+
+ui.waitAndFetchContactsButton?.addEventListener('click', async () => {
+  const pending = taskBuilderState.pendingStatusConfirmation;
+  if (!pending) return;
+  ui.waitAndFetchContactsButton.disabled = true;
+  ui.waitAndFetchContactsButton.textContent = 'Fetching…';
+  try {
+    await loadAudience(true);
+    const refreshedViewerCount = getStatusAudienceContactIds(pending.manualContacts).length;
+    ui.statusContactWaitCard?.classList.add('hidden');
+    taskBuilderState.pendingStatusConfirmation = null;
+    showToast(`Fetched latest contacts. Status audience is now ${refreshedViewerCount} viewer${refreshedViewerCount === 1 ? '' : 's'}. Click schedule again to continue.`);
+  } finally {
+    ui.waitAndFetchContactsButton.disabled = false;
+    ui.waitAndFetchContactsButton.textContent = 'Yes, fetch more contacts';
+  }
+});
+
+ui.continueStatusScheduleButton?.addEventListener('click', () => {
+  if (!taskBuilderState.pendingStatusConfirmation) return;
+  ui.statusContactWaitCard?.classList.add('hidden');
+  taskBuilderState.pendingStatusConfirmation = null;
+  showToast('Okay, continuing with current contacts. Click schedule again to proceed.');
 });
 
 document.querySelectorAll('[data-provider]').forEach((button) => button.addEventListener('click', () => handleSocialClick(button.dataset.provider, button)));

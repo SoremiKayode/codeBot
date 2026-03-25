@@ -550,6 +550,10 @@
                       <strong>Contacts</strong>
                       <label class="search-field"><span>Search</span><input id="contactSearch" type="search" placeholder="Search contacts" /></label>
                     </div>
+                    <div class="stack-sm">
+                      <p class="muted">Contacts come from your connected WhatsApp account. Use refresh to fetch the latest contacts before selecting recipients.</p>
+                      <button id="refreshContactsButton" class="secondary-button" type="button">Refresh contacts</button>
+                    </div>
                     <div class="table-actions">
                       <button id="contactSortButton" class="secondary-button" type="button">Sort: A–Z</button>
                       <label class="checkbox-inline"><input id="selectAllContacts" type="checkbox" /> Select all</label>
@@ -577,6 +581,14 @@
                 <div class="schedule-grid">
                   <section class="stack">
                     <div id="automationScheduleNote" class="tip-card premium-tip hidden">Automated responses can be saved immediately from this section. Broadcast messages continue to use the date, time, and frequency options below.</div>
+                    <div id="statusContactWaitCard" class="tip-card hidden">
+                      <strong>Status contact fetch</strong>
+                      <p id="statusContactWaitText" class="muted">We can fetch more contacts before scheduling this status so you can target a larger audience.</p>
+                      <div class="hero-actions">
+                        <button id="waitAndFetchContactsButton" class="secondary-button" type="button">Yes, fetch more contacts</button>
+                        <button id="continueStatusScheduleButton" class="primary-button" type="button">Continue scheduling now</button>
+                      </div>
+                    </div>
                     <label>
                       <span>Manual recipients (optional)</span>
                       <textarea id="recipientSummaryInput" rows="4" placeholder="Add phone numbers separated by commas, e.g. 2348123456789, 2348012345678@s.whatsapp.net"></textarea>
