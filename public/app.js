@@ -208,6 +208,13 @@ function normalizeRecipientToken(value = '', type = 'contact') {
   return type === 'group' ? normalizeGroupRecipient(value) : normalizePhoneRecipient(value);
 }
 
+function getCurrentUserWhatsAppJid() {
+  const fromState = normalizePhoneRecipient(appState.user?.whatsappPhone || '');
+  if (/@s\.whatsapp\.net$/i.test(fromState)) return fromState;
+  const fromUi = normalizePhoneRecipient(ui.whatsappPhone?.textContent || '');
+  return /@s\.whatsapp\.net$/i.test(fromUi) ? fromUi : '';
+}
+
 function splitRecipientInput(value = '') {
   return String(value).split(',').map((item) => normalizeWhitespace(item)).filter(Boolean);
 }
@@ -220,6 +227,25 @@ function dedupeRecipients(values = []) {
     seen.add(key);
     return true;
   });
+}
+
+function getStatusAudienceContactIds(manualContacts = []) {
+  const syncedContactIds = audienceState.contacts
+    .map((item) => normalizePhoneRecipient(item?.id || item?.phone || ''))
+    .filter((value) => /@s\.whatsapp\.net$/i.test(value));
+  const selectedContactIds = getSelectedItems(audienceState.contacts, taskBuilderState.selectedContacts)
+    .map((item) => normalizePhoneRecipient(item?.id || item?.phone || ''))
+    .filter((value) => /@s\.whatsapp\.net$/i.test(value));
+  const manualContactIds = manualContacts
+    .map((item) => normalizePhoneRecipient(item?.id || item?.phone || ''))
+    .filter((value) => /@s\.whatsapp\.net$/i.test(value));
+  const ownWhatsappJid = getCurrentUserWhatsAppJid();
+  return dedupeRecipients([
+    ...syncedContactIds,
+    ...selectedContactIds,
+    ...manualContactIds,
+    ownWhatsappJid,
+  ]).filter((value) => /@s\.whatsapp\.net$/i.test(value));
 }
 
 function syncManualRecipientsFromInput() {
@@ -1300,7 +1326,11 @@ function buildScheduleDescription() {
     return selected.length ? `This auto reply will answer ${selected.join(' and ')}.` : 'Automated response will start as soon as it is saved.';
   }
   if (isStatusMode()) {
-    const viewerCount = taskBuilderState.selectedContacts.size + taskBuilderState.manualRecipients.length;
+    const manualContacts = taskBuilderState.manualRecipients
+      .map((value) => normalizePhoneRecipient(value))
+      .filter((value) => /@s\.whatsapp\.net$/i.test(value))
+      .map((id) => ({ id }));
+    const viewerCount = getStatusAudienceContactIds(manualContacts).length;
     if (taskBuilderState.frequency === 'now') return `Status post will be published to WhatsApp Status immediately after you save it for ${viewerCount} selected viewer${viewerCount === 1 ? '' : 's'}.`;
     return `Status post will follow the selected ${taskBuilderState.frequency || 'schedule'} workflow and publish to WhatsApp Status for ${viewerCount} selected viewer${viewerCount === 1 ? '' : 's'}.`;
   }
@@ -1559,8 +1589,8 @@ async function scheduleTask() {
     setTaskTab('audience');
     return;
   }
-  if (isStatus && !selectedContacts.length && !manualContacts.length) {
-    showToast('Select at least one contact or phone number for status viewers.');
+  if (isStatus && !audienceState.contacts.length && !selectedContacts.length && !manualContacts.length) {
+    showToast('No contacts found yet for status viewers. Connect WhatsApp or fetch contacts first.');
     setTaskTab('audience');
     return;
   }
@@ -1577,10 +1607,25 @@ async function scheduleTask() {
     return;
   }
 
-  const contacts = dedupeRecipients([
-    ...selectedContacts.map((item) => item.id),
-    ...manualContacts.map((item) => item.id),
-  ]).map((id) => selectedContacts.find((item) => item.id === id) || manualContacts.find((item) => item.id === id)).filter(Boolean);
+  if (isStatus) {
+    const initialViewerCount = getStatusAudienceContactIds(manualContacts).length;
+    const waitForMoreContacts = window.confirm(`Your scheduled status is currently set to ${initialViewerCount} contact viewer${initialViewerCount === 1 ? '' : 's'} (including your WhatsApp number). Click OK to wait and fetch more contacts now, or Cancel to schedule immediately.`);
+    if (waitForMoreContacts) {
+      await loadAudience(true);
+      const refreshedViewerCount = getStatusAudienceContactIds(manualContacts).length;
+      showToast(`Fetched latest contacts. Status audience is now ${refreshedViewerCount} viewer${refreshedViewerCount === 1 ? '' : 's'}.`);
+    }
+  }
+
+  const statusAudienceIds = isStatus ? getStatusAudienceContactIds(manualContacts) : [];
+  const contacts = (isStatus
+    ? statusAudienceIds
+    : dedupeRecipients([
+      ...selectedContacts.map((item) => item.id),
+      ...manualContacts.map((item) => item.id),
+    ]))
+    .map((id) => audienceState.contacts.find((item) => item.id === id) || selectedContacts.find((item) => item.id === id) || manualContacts.find((item) => item.id === id) || { id, name: id, phone: `+${id.split('@')[0]}`, segment: 'Status viewer' })
+    .filter(Boolean);
   const normalizedRecipients = sanitizeTaskRecipients(selectedGroups, contacts);
 
   try {
