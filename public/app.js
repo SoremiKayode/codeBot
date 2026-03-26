@@ -558,8 +558,18 @@ function updateTaskModeUI() {
 }
 
 function hasCompanyPortfolio() {
-  const profileText = companyProfileState.quill?.getText?.().trim() || '';
-  return profileText.length > 0;
+  const payload = collectCompanyProfilePayload();
+  const businessText = sanitizeFormValue(payload.businessNameText || '');
+  const businessHtmlText = sanitizeFormValue(String(payload.businessName || '').replace(/<[^>]+>/g, ' '));
+  return Boolean(businessText || businessHtmlText);
+}
+
+function redirectToPortfolioForAutomatedMode() {
+  showToast('Please complete your company portfolio first before scheduling automated responses.');
+  navigate('tasks');
+  setWorkspaceTab('portfolio');
+  setCompanyTab('business');
+  document.getElementById('businessNameEditor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function hasAutomationTriggersSelected() {
@@ -1767,11 +1777,7 @@ async function scheduleTask() {
     return;
   }
   if (isAutomated && !hasCompanyPortfolio()) {
-    showToast('Complete your company portfolio first so AI can personalize automated replies.');
-    navigate('tasks');
-    setWorkspaceTab('portfolio');
-    setCompanyTab('business');
-    document.getElementById('businessNameEditor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    redirectToPortfolioForAutomatedMode();
     return;
   }
   if (isAutomated && !sanitizeFormValue(ui.taskTitle.value)) {
@@ -2092,24 +2098,26 @@ async function handlePaystackPayment(event) {
     const payload = await api.initializePaystackPayment({ amount });
     syncUserFromPayload(payload);
     paymentState.publicKey = payload.publicKey || paymentState.publicKey;
-    const onPaystackSuccess = async (response) => {
-      const reference = response?.reference;
-      if (!reference) {
-        ui.paymentStatusText.textContent = 'Payment succeeded but no transaction reference was returned.';
-        showToast('Payment completed, but verification could not start.');
-        return;
-      }
-      ui.paymentStatusText.textContent = 'Verifying payment...';
-      try {
-        const verified = await api.verifyPaystackPayment({ reference });
-        syncUserFromPayload(verified);
-        updateUserUI();
-        ui.paymentStatusText.textContent = `Payment successful. ${verified.transaction?.credits || formatCreditPreview(amount)} added.`;
-        showToast('Credits added successfully.');
-      } catch (error) {
-        ui.paymentStatusText.textContent = error.message;
-        showToast(error.message);
-      }
+    const onPaystackSuccess = (response) => {
+      (async () => {
+        const reference = response?.reference;
+        if (!reference) {
+          ui.paymentStatusText.textContent = 'Payment succeeded but no transaction reference was returned.';
+          showToast('Payment completed, but verification could not start.');
+          return;
+        }
+        ui.paymentStatusText.textContent = 'Verifying payment...';
+        try {
+          const verified = await api.verifyPaystackPayment({ reference });
+          syncUserFromPayload(verified);
+          updateUserUI();
+          ui.paymentStatusText.textContent = `Payment successful. ${verified.transaction?.credits || formatCreditPreview(amount)} added.`;
+          showToast('Credits added successfully.');
+        } catch (error) {
+          ui.paymentStatusText.textContent = error.message;
+          showToast(error.message);
+        }
+      })();
     };
     const onPaystackClose = () => {
       ui.paymentStatusText.textContent = 'Payment popup closed before completion.';
@@ -2338,6 +2346,9 @@ ui.taskModeInputs.forEach((input) => input.addEventListener('change', (event) =>
   setTaskTab('message');
   updateTaskPreview();
   updateScheduleActionVisibility();
+  if (isAutomatedMode() && !hasCompanyPortfolio()) {
+    redirectToPortfolioForAutomatedMode();
+  }
 }));
 ui.automationAudienceInputs.forEach((input) => input.addEventListener('change', (event) => {
   const value = event.target.value || 'all_incoming';
