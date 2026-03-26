@@ -1814,8 +1814,22 @@ async function dispatchTask(task, now = new Date()) {
     return task;
   }
   const projectedRecipients = task.mode === 'schedule_status' ? statusAudienceJids.length : recipients.length;
-  const projectedCharge = Number(CREDIT_COSTS.sendMessage || 0) * projectedRecipients;
-  await ensureCreditsAvailable({ ...billingContext, amount: projectedCharge, label: `send ${projectedRecipients} WhatsApp message${projectedRecipients === 1 ? '' : 's'}` });
+  const projectedCharge = task.mode === 'schedule_status'
+    ? Number(CREDIT_COSTS.sendMessage || 0)
+    : Number(CREDIT_COSTS.sendMessage || 0) * projectedRecipients;
+  const projectedLabel = task.mode === 'schedule_status'
+    ? 'publish a WhatsApp status update'
+    : `send ${projectedRecipients} WhatsApp message${projectedRecipients === 1 ? '' : 's'}`;
+  try {
+    await ensureCreditsAvailable({ ...billingContext, amount: projectedCharge, label: projectedLabel });
+  } catch (error) {
+    task.lastError = error.message || 'Insufficient credits to send this task.';
+    logTaskFailure(task, task.lastError, { tenantId, projectedRecipients, projectedCharge });
+    task.claimToken = '';
+    task.claimExpiresAt = null;
+    await task.save();
+    throw error;
+  }
   let deliveredCount = 0;
   let failedCount = 0;
   for (const recipient of recipients) {
@@ -1828,7 +1842,7 @@ async function dispatchTask(task, now = new Date()) {
       await chargeForMessageSend({
         ...billingContext,
         amount: task.mode === 'schedule_status'
-          ? Number(CREDIT_COSTS.sendMessage || 0) * statusAudienceJids.length
+          ? Number(CREDIT_COSTS.sendMessage || 0)
           : CREDIT_COSTS.sendMessage,
         type: task.mode === 'automated_response' ? 'auto_reply_send' : task.mode === 'schedule_status' ? 'status_send' : 'scheduled_message_send',
         metadata: { taskId: String(task._id), recipient: task.mode === 'schedule_status' ? 'status@broadcast' : recipient, scopeId: tenantId, statusAudienceCount: task.mode === 'schedule_status' ? statusAudienceJids.length : 0 },
@@ -2393,65 +2407,70 @@ app.post('/api/company-profile', authenticateRequest, async (req, res) => {
 });
 
 app.post('/api/tasks', authenticateRequest, requireScopedPermission('tasks:write'), async (req, res) => {
-  const title = sanitizeTextInput(req.body.title);
-  const type = sanitizeTextInput(req.body.type);
-  const mode = ['automated_response', 'schedule_status'].includes(String(req.body.mode || '')) ? String(req.body.mode) : 'broadcast';
-  const description = sanitizeLongText(req.body.description) || 'Media-only task';
-  const sanitizedMediaQueue = Array.isArray(req.body.mediaQueue) ? req.body.mediaQueue.slice(0, 10).map((item) => ({
-    name: sanitizeTextInput(item?.name || 'attachment'),
-    type: sanitizeTextInput(item?.type || 'document'),
-    dataUrl: String(item?.dataUrl || ''),
-    mimeType: sanitizeTextInput(item?.mimeType || 'application/octet-stream'),
-    size: Number(item?.size || 0),
-    sizeLabel: sanitizeTextInput(item?.sizeLabel || ''),
-    previewText: sanitizeLongText(item?.previewText || ''),
-    source: sanitizeTextInput(item?.source || ''),
-  })).filter((item) => item.dataUrl.startsWith('data:')) : [];
-  if (!title || !type || (!description && !sanitizedMediaQueue.length)) return res.status(400).json({ error: 'Title, type, and either description or media are required.' });
-  const scope = getScopeContext(req);
-  const recipients = req.body.recipients || {};
-  const groupDeliveryMode = recipients.groupDeliveryMode === 'members' ? 'members' : 'group';
-  const normalizedRecipients = sanitizeTaskRecipients(recipients);
-  if (!['automated_response', 'schedule_status'].includes(mode) && !normalizedRecipients.groups.length && !normalizedRecipients.contacts.length) return res.status(400).json({ error: 'At least one valid contact or group recipient is required.' });
-  if (mode === 'schedule_status' && !normalizedRecipients.contacts.length) return res.status(400).json({ error: 'Select at least one contact for status delivery.' });
-  const timezone = validateTimezone(String(req.body.timezone || scope.timezone || DEFAULT_TIMEZONE));
-  const automationAudience = Array.isArray(req.body.automation?.audience)
-    ? req.body.automation.audience.map((item) => String(item || '')).filter((item) => ['all_incoming', 'unknown_numbers', 'all_groups', 'managed_groups'].includes(item))
-    : ['all_incoming', 'unknown_numbers', 'all_groups', 'managed_groups'].includes(String(req.body.automation?.audience || '')) ? [String(req.body.automation.audience)] : ['all_incoming'];
-  if (!automationAudience.length) automationAudience.push('all_incoming');
-  if (automationAudience.includes('all_incoming')) automationAudience.splice(0, automationAudience.length, 'all_incoming');
-  if (mode === 'automated_response' && automationAudience.includes('managed_groups') && !normalizedRecipients.groups.length) return res.status(400).json({ error: 'Select at least one group when using the managed groups automated response option.' });
-  if (mode === 'automated_response') {
-    const profile = await CompanyProfile.findOne({ scopeId: scope.scopeId }).lean();
-    const hasPortfolio = Boolean(String(profile?.businessNameText || '').trim() || String(profile?.businessName || '').trim());
-    if (!hasPortfolio) return res.status(400).json({ error: 'Complete your company portfolio before enabling automated responses.' });
+  try {
+    const title = sanitizeTextInput(req.body.title);
+    const type = sanitizeTextInput(req.body.type);
+    const mode = ['automated_response', 'schedule_status'].includes(String(req.body.mode || '')) ? String(req.body.mode) : 'broadcast';
+    const description = sanitizeLongText(req.body.description) || 'Media-only task';
+    const sanitizedMediaQueue = Array.isArray(req.body.mediaQueue) ? req.body.mediaQueue.slice(0, 10).map((item) => ({
+      name: sanitizeTextInput(item?.name || 'attachment'),
+      type: sanitizeTextInput(item?.type || 'document'),
+      dataUrl: String(item?.dataUrl || ''),
+      mimeType: sanitizeTextInput(item?.mimeType || 'application/octet-stream'),
+      size: Number(item?.size || 0),
+      sizeLabel: sanitizeTextInput(item?.sizeLabel || ''),
+      previewText: sanitizeLongText(item?.previewText || ''),
+      source: sanitizeTextInput(item?.source || ''),
+    })).filter((item) => item.dataUrl.startsWith('data:')) : [];
+    if (!title || !type || (!description && !sanitizedMediaQueue.length)) return res.status(400).json({ error: 'Title, type, and either description or media are required.' });
+    const scope = getScopeContext(req);
+    const recipients = req.body.recipients || {};
+    const groupDeliveryMode = recipients.groupDeliveryMode === 'members' ? 'members' : 'group';
+    const normalizedRecipients = sanitizeTaskRecipients(recipients);
+    if (!['automated_response', 'schedule_status'].includes(mode) && !normalizedRecipients.groups.length && !normalizedRecipients.contacts.length) return res.status(400).json({ error: 'At least one valid contact or group recipient is required.' });
+    if (mode === 'schedule_status' && !normalizedRecipients.contacts.length) return res.status(400).json({ error: 'Select at least one contact for status delivery.' });
+    const timezone = validateTimezone(String(req.body.timezone || scope.timezone || DEFAULT_TIMEZONE));
+    const automationAudience = Array.isArray(req.body.automation?.audience)
+      ? req.body.automation.audience.map((item) => String(item || '')).filter((item) => ['all_incoming', 'unknown_numbers', 'all_groups', 'managed_groups'].includes(item))
+      : ['all_incoming', 'unknown_numbers', 'all_groups', 'managed_groups'].includes(String(req.body.automation?.audience || '')) ? [String(req.body.automation.audience)] : ['all_incoming'];
+    if (!automationAudience.length) automationAudience.push('all_incoming');
+    if (automationAudience.includes('all_incoming')) automationAudience.splice(0, automationAudience.length, 'all_incoming');
+    if (mode === 'automated_response' && automationAudience.includes('managed_groups') && !normalizedRecipients.groups.length) return res.status(400).json({ error: 'Select at least one group when using the managed groups automated response option.' });
+    if (mode === 'automated_response') {
+      const profile = await CompanyProfile.findOne({ scopeId: scope.scopeId }).lean();
+      const hasPortfolio = Boolean(String(profile?.businessNameText || '').trim() || String(profile?.businessName || '').trim());
+      if (!hasPortfolio) return res.status(400).json({ error: 'Complete your company portfolio before enabling automated responses.' });
+    }
+    const connectionState = connectionStateStore.get(scope.scopeId) || await WhatsAppConnection.findOne({ tenantId: scope.scopeId }).lean() || buildDefaultConnectionState(scope.scopeId);
+    const liveSocket = socketStore.get(scope.scopeId);
+    if (connectionState.status !== 'connected' || !liveSocket?.user) {
+      return res.status(409).json({ error: 'WhatsApp is not connected. Please reconnect from the dashboard and try again.' });
+    }
+    const schedule = mode === 'automated_response' ? {} : validateSchedule(req.body.schedule || {}, timezone);
+    const task = await Task.create({
+      tenantId: scope.scopeId,
+      createdByUserId: String(req.user._id),
+      title,
+      type,
+      mode,
+      description,
+      messageHtml: sanitizeRichText(req.body.messageHtml || ''),
+      messageText: sanitizeLongText(req.body.messageText || ''),
+      translatedPreview: sanitizeLongText(req.body.translatedPreview || ''),
+      mediaQueue: sanitizedMediaQueue,
+      recipients: { groups: normalizedRecipients.groups, contacts: normalizedRecipients.contacts, groupDeliveryMode },
+      automation: { audience: automationAudience },
+      schedule,
+      timezone,
+      status: 'active',
+      nextRunAt: mode === 'automated_response' ? null : computeNextRunAt(schedule, timezone),
+    });
+    const finalTask = schedule.frequency === 'now' ? await dispatchTask(task, new Date()) : task;
+    res.status(201).json({ task: finalTask, user: sanitizeUser(req.user, req.membership, req.tenant) });
+  } catch (error) {
+    logger.warn({ error: error.message }, 'Unable to schedule task');
+    res.status(400).json({ error: error.message || 'Unable to schedule task.' });
   }
-  const connectionState = connectionStateStore.get(scope.scopeId) || await WhatsAppConnection.findOne({ tenantId: scope.scopeId }).lean() || buildDefaultConnectionState(scope.scopeId);
-  const liveSocket = socketStore.get(scope.scopeId);
-  if (connectionState.status !== 'connected' || !liveSocket?.user) {
-    return res.status(409).json({ error: 'WhatsApp is not connected. Please reconnect from the dashboard and try again.' });
-  }
-  const schedule = mode === 'automated_response' ? {} : validateSchedule(req.body.schedule || {}, timezone);
-  const task = await Task.create({
-    tenantId: scope.scopeId,
-    createdByUserId: String(req.user._id),
-    title,
-    type,
-    mode,
-    description,
-    messageHtml: sanitizeRichText(req.body.messageHtml || ''),
-    messageText: sanitizeLongText(req.body.messageText || ''),
-    translatedPreview: sanitizeLongText(req.body.translatedPreview || ''),
-    mediaQueue: sanitizedMediaQueue,
-    recipients: { groups: normalizedRecipients.groups, contacts: normalizedRecipients.contacts, groupDeliveryMode },
-    automation: { audience: automationAudience },
-    schedule,
-    timezone,
-    status: 'active',
-    nextRunAt: mode === 'automated_response' ? null : computeNextRunAt(schedule, timezone),
-  });
-  const finalTask = schedule.frequency === 'now' ? await dispatchTask(task, new Date()) : task;
-  res.status(201).json({ task: finalTask, user: sanitizeUser(req.user, req.membership, req.tenant) });
 });
 
 app.post('/api/ai/text', authenticateRequest, requireScopedPermission('tasks:write'), async (req, res) => {
