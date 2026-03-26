@@ -169,88 +169,269 @@
 // app.listen(3000, () => console.log('🚀 API Running on Port 3000'));
 // startBot();
 
-import makeWASocket, { 
-    useMultiFileAuthState, 
-    DisconnectReason, 
-    fetchLatestBaileysVersion 
-} from '@whiskeysockets/baileys';
+// import makeWASocket, { 
+//     useMultiFileAuthState, 
+//     DisconnectReason, 
+//     fetchLatestBaileysVersion 
+// } from '@whiskeysockets/baileys';
+// import { Boom } from '@hapi/boom';
+// import qrcode from 'qrcode-terminal';
+
+// async function startBot() {
+//     // 1. Setup Auth and Version
+//     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
+//     const { version } = await fetchLatestBaileysVersion();
+
+//     // 2. Initialize the Socket
+//     const sock = makeWASocket({
+//         version,
+//         auth: state,
+//         // We handle QR manually to ensure it displays in ESM
+//     });
+
+//     // 3. Connection Handler
+//     sock.ev.on('connection.update', async (update) => {
+//         const { connection, lastDisconnect, qr } = update;
+
+//         // Display QR Code
+//         if (qr) {
+//             console.log('--- SCAN THE QR CODE BELOW ---');
+//             qrcode.generate(qr, { small: true });
+//         }
+
+//         if (connection === 'close') {
+//             const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
+//             const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            
+//             console.log(`Connection closed. Status: ${statusCode}. Reconnecting: ${shouldReconnect}`);
+//             if (shouldReconnect) startBot();
+//         } else if (connection === 'open') {
+//             console.log('✅ Connected successfully to WhatsApp!');
+
+//             // --- FETCH GROUPS ---
+//             const groups = await listAllGroups(sock);
+            
+//             // --- FETCH MEMBERS (Example: first group in the list) ---
+//             const groupIds = Object.keys(groups);
+//             if (groupIds.length > 0) {
+//                 await listGroupMembers(sock, groupIds[0]);
+//             }
+//         }
+//     });
+
+//     // Save session credentials
+//     sock.ev.on('creds.update', saveCreds);
+// }
+
+// // --- LOGIC FUNCTIONS ---
+
+// async function listAllGroups(sock) {
+//     try {
+//         const groups = await sock.groupFetchAllParticipating();
+//         console.log('\n--- JOINED GROUPS ---');
+//         for (const jid in groups) {
+//             console.log(`Group: ${groups[jid].subject} | ID: ${jid}`);
+//         }
+//         return groups;
+//     } catch (err) {
+//         console.error('Error fetching groups:', err);
+//         return {};
+//     }
+// }
+
+// async function listGroupMembers(sock, groupId) {
+//     try {
+//         const metadata = await sock.groupMetadata(groupId);
+//         console.log(`\n--- MEMBERS OF: ${metadata.subject} ---`);
+//         metadata.participants.forEach((p, i) => {
+//             const adminLabel = p.admin ? `(${p.admin})` : '';
+//             console.log(`${i + 1}. ID: ${p.id} ${adminLabel}`);
+//         });
+//     } catch (err) {
+//         console.error(`Error fetching members for ${groupId}:`, err);
+//     }
+// }
+
+// // Start the application
+
+
+// // Fetch All Contacts
+// import * as baileys from '@whiskeysockets/baileys';
+// import { Boom } from '@hapi/boom';
+// import qrcode from 'qrcode-terminal';
+
+// const { 
+//     default: makeWASocket, 
+//     useMultiFileAuthState, 
+//     fetchLatestBaileysVersion, 
+//     DisconnectReason 
+// } = baileys;
+
+// async function startBot() {
+//     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
+//     const { version } = await fetchLatestBaileysVersion();
+
+//     const sock = makeWASocket({
+//         version,
+//         auth: state,
+//         printQRInTerminal: false,
+//     });
+
+//     // --- RELIABLE EXTRACTION LOGIC ---
+
+//     // 1. This fires for your existing chat list
+//     sock.ev.on('chats.set', (data) => {
+//         const { chats } = data;
+//         console.log(`\n--- FOUND ${chats.length} CHATS ---`);
+        
+//         chats.forEach((chat) => {
+//             const jid = chat.id;
+            
+//             // Filter: Only look for individual chats (skip groups)
+//             if (jid.endsWith('@s.whatsapp.net')) {
+//                 const phoneNumber = jid.split('@')[0];
+//                 const name = chat.name || 'No Name';
+//                 console.log(`Name: ${name.padEnd(20)} | Phone: ${phoneNumber}`);
+//             }
+//         });
+//     });
+
+//     // 2. This fires if you have a massive history sync (usually first link)
+//     sock.ev.on('messaging-history.set', (data) => {
+//         if (data.contacts) {
+//             console.log(`\n--- HISTORY SYNC: ${data.contacts.length} CONTACTS ---`);
+//             data.contacts.forEach(c => {
+//                 if (c.id.endsWith('@s.whatsapp.net')) {
+//                     const num = c.id.split('@')[0];
+//                     console.log(`Name: ${(c.name || c.notify || 'Unknown').padEnd(20)} | Phone: ${num}`);
+//                 }
+//             });
+//         }
+//     });
+
+//     // 3. Connection Handler
+//     sock.ev.on('connection.update', async (update) => {
+//         const { connection, lastDisconnect, qr } = update;
+
+//         if (qr) {
+//             console.log('--- SCAN THE QR CODE ---');
+//             qrcode.generate(qr, { small: true });
+//         }
+
+//         if (connection === 'close') {
+//             const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
+//             if (statusCode !== DisconnectReason.loggedOut) startBot();
+//         } else if (connection === 'open') {
+//             console.log('✅ Connected! If nothing prints, try sending a message to yourself or opening a chat on your phone.');
+//         }
+//     });
+
+//     sock.ev.on('creds.update', saveCreds);
+// }
+
+// startBot().catch(err => console.error(err));
+
+
+import * as baileys from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
+import { createObjectCsvWriter } from 'csv-writer';
+import fs from 'fs';
+
+const { 
+    default: makeWASocket, 
+    useMultiFileAuthState, 
+    fetchLatestBaileysVersion, 
+    DisconnectReason 
+} = baileys;
+
+// Global array to store contacts for the status function
+let allSavedContacts = [];
 
 async function startBot() {
-    // 1. Setup Auth and Version
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
     const { version } = await fetchLatestBaileysVersion();
 
-    // 2. Initialize the Socket
     const sock = makeWASocket({
         version,
         auth: state,
-        // We handle QR manually to ensure it displays in ESM
+        printQRInTerminal: false,
     });
 
-    // 3. Connection Handler
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
+    sock.ev.on('messaging-history.set', async (data) => {
+        if (data.contacts) {
+            allSavedContacts = data.contacts
+                .filter(c => c.id.endsWith('@s.whatsapp.net'))
+                .map(c => ({
+                    name: c.name || c.notify || 'Unknown',
+                    phone: c.id.split('@')[0],
+                    jid: c.id
+                }));
 
-        // Display QR Code
-        if (qr) {
-            console.log('--- SCAN THE QR CODE BELOW ---');
-            qrcode.generate(qr, { small: true });
+            await saveToCSV(allSavedContacts);
+            
+            // Once saved, let's create a status
+            await createStatusWithPrivacy(sock, allSavedContacts);
         }
+    });
 
+    sock.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect, qr } = update;
+        if (qr) qrcode.generate(qr, { small: true });
+        if (connection === 'open') console.log('✅ Connected!');
         if (connection === 'close') {
             const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
-            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-            
-            console.log(`Connection closed. Status: ${statusCode}. Reconnecting: ${shouldReconnect}`);
-            if (shouldReconnect) startBot();
-        } else if (connection === 'open') {
-            console.log('✅ Connected successfully to WhatsApp!');
-
-            // --- FETCH GROUPS ---
-            const groups = await listAllGroups(sock);
-            
-            // --- FETCH MEMBERS (Example: first group in the list) ---
-            const groupIds = Object.keys(groups);
-            if (groupIds.length > 0) {
-                await listGroupMembers(sock, groupIds[0]);
-            }
+            if (statusCode !== DisconnectReason.loggedOut) startBot();
         }
     });
 
-    // Save session credentials
     sock.ev.on('creds.update', saveCreds);
 }
 
-// --- LOGIC FUNCTIONS ---
+// --- FUNCTION 1: SAVE TO CSV ---
+async function saveToCSV(contacts) {
+    const csvWriter = createObjectCsvWriter({
+        path: 'contacts.csv',
+        header: [
+            { id: 'name', title: 'NAME' },
+            { id: 'phone', title: 'PHONE' },
+            { id: 'jid', title: 'JID' }
+        ]
+    });
 
-async function listAllGroups(sock) {
     try {
-        const groups = await sock.groupFetchAllParticipating();
-        console.log('\n--- JOINED GROUPS ---');
-        for (const jid in groups) {
-            console.log(`Group: ${groups[jid].subject} | ID: ${jid}`);
+        await csvWriter.writeRecords(contacts);
+        console.log(`\n📄 Successfully saved ${contacts.length} contacts to contacts.csv`);
+    } catch (err) {
+        console.error('Error saving CSV:', err);
+    }
+}
+
+// --- FUNCTION 2: CREATE STATUS WITH PRIVACY ---
+async function createStatusWithPrivacy(sock, contacts) {
+    try {
+        // Extract just the JIDs for the privacy list
+        const participantJids = contacts.map(c => c.jid);
+        
+        // Add your own number to the list so you can see it too
+        const myJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+        if (!participantJids.includes(myJid)) {
+            participantJids.push(myJid);
         }
-        return groups;
-    } catch (err) {
-        console.error('Error fetching groups:', err);
-        return {};
-    }
-}
 
-async function listGroupMembers(sock, groupId) {
-    try {
-        const metadata = await sock.groupMetadata(groupId);
-        console.log(`\n--- MEMBERS OF: ${metadata.subject} ---`);
-        metadata.participants.forEach((p, i) => {
-            const adminLabel = p.admin ? `(${p.admin})` : '';
-            console.log(`${i + 1}. ID: ${p.id} ${adminLabel}`);
+        console.log(`📤 Uploading status to ${participantJids.length} people...`);
+
+        // Posting a Text Status
+        await sock.sendMessage('status@broadcast', { 
+            text: 'Hello from CodeIgnite! This is an automated status update.' 
+        }, { 
+            statusJidList: participantJids 
         });
+
+        console.log('✅ Status uploaded successfully!');
     } catch (err) {
-        console.error(`Error fetching members for ${groupId}:`, err);
+        console.error('Error posting status:', err);
     }
 }
 
-// Start the application
-startBot();
+startBot().catch(err => console.error(err));
