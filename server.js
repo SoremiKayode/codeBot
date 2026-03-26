@@ -549,6 +549,12 @@ function buildDefaultAudienceState() {
 function extractPhoneDigits(value = '') {
   const raw = String(value || '').trim();
   if (!raw) return '';
+  const domainMatch = raw.match(/@([^:\s]+)/);
+  if (domainMatch) {
+    const domain = domainMatch[1].toLowerCase();
+    const allowedDomains = new Set(['s.whatsapp.net', 'c.us']);
+    if (!allowedDomains.has(domain)) return '';
+  }
   const normalizedJid = jidNormalizedUser(raw);
   const decoded = jidDecode(normalizedJid) || jidDecode(raw);
   const candidateUser = String(decoded?.user || normalizedJid.split('@')[0] || raw.split('@')[0] || '');
@@ -610,7 +616,6 @@ function normalizeGroup(group) {
         participant?.id
         || participant?.jid
         || participant?.participant
-        || participant?.lid
         || participant?.user
         || participant?.phone
         || '',
@@ -1573,7 +1578,7 @@ async function resolveTaskRecipients(task, sock) {
               participant?.id
               || participant?.jid
               || participant?.participant
-              || participant?.lid
+              || participant?.user
               || participant?.phone
               || '',
             );
