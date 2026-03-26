@@ -1863,6 +1863,14 @@ async function scheduleTask() {
   }
 }
 
+function setButtonSpinnerState(button, { loading = false, text = '', isError = false } = {}) {
+  if (!button) return;
+  button.disabled = loading;
+  button.classList.toggle('is-error', Boolean(isError));
+  if (loading) button.innerHTML = `<span class="inline-spinner" aria-hidden="true"></span>${escapeHtml(text || 'Working…')}`;
+  else button.textContent = text || button.textContent;
+}
+
 
 async function loadAdminUsers() {
   const params = new URLSearchParams();
@@ -2497,25 +2505,38 @@ document.addEventListener('input', (event) => {
 ui.waitAndFetchContactsButton?.addEventListener('click', async () => {
   const pending = taskBuilderState.pendingStatusConfirmation;
   if (!pending) return;
-  ui.waitAndFetchContactsButton.disabled = true;
-  ui.waitAndFetchContactsButton.textContent = 'Fetching…';
+  setButtonSpinnerState(ui.waitAndFetchContactsButton, { loading: true, text: 'Fetching contacts…' });
   try {
     await loadAudience(true);
     const refreshedViewerCount = getStatusAudienceContactIds(pending.manualContacts).length;
     ui.statusContactWaitCard?.classList.add('hidden');
     taskBuilderState.pendingStatusConfirmation = null;
-    showToast(`Fetched latest contacts. Status audience is now ${refreshedViewerCount} viewer${refreshedViewerCount === 1 ? '' : 's'}. Click schedule again to continue.`);
+    showToast(`Fetched latest contacts. Status audience is now ${refreshedViewerCount} viewer${refreshedViewerCount === 1 ? '' : 's'}.`);
+    await scheduleTask();
+  } catch (error) {
+    setButtonSpinnerState(ui.waitAndFetchContactsButton, { loading: false, text: 'Fetch failed', isError: true });
+    showToast(error.message || 'Unable to fetch more contacts right now.');
+    return;
   } finally {
-    ui.waitAndFetchContactsButton.disabled = false;
-    ui.waitAndFetchContactsButton.textContent = 'Yes, fetch more contacts';
+    setButtonSpinnerState(ui.waitAndFetchContactsButton, { loading: false, text: 'Yes, fetch more contacts' });
   }
 });
 
-ui.continueStatusScheduleButton?.addEventListener('click', () => {
+ui.continueStatusScheduleButton?.addEventListener('click', async () => {
   if (!taskBuilderState.pendingStatusConfirmation) return;
+  setButtonSpinnerState(ui.continueStatusScheduleButton, { loading: true, text: 'Scheduling now…' });
   ui.statusContactWaitCard?.classList.add('hidden');
   taskBuilderState.pendingStatusConfirmation = null;
-  showToast('Okay, continuing with current contacts. Click schedule again to proceed.');
+  showToast('Okay, continuing with current contacts.');
+  try {
+    await scheduleTask();
+  } catch (error) {
+    setButtonSpinnerState(ui.continueStatusScheduleButton, { loading: false, text: 'Retry now', isError: true });
+    showToast(error.message || 'Unable to continue scheduling right now.');
+    return;
+  } finally {
+    setButtonSpinnerState(ui.continueStatusScheduleButton, { loading: false, text: 'Continue scheduling now' });
+  }
 });
 
 document.querySelectorAll('[data-provider]').forEach((button) => button.addEventListener('click', () => handleSocialClick(button.dataset.provider, button)));

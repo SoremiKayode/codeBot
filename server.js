@@ -134,6 +134,7 @@ const huggingFaceClientStore = new Map();
 const autoReplyRateStore = new Map();
 const conversationStore = new Map();
 const unsubscribeStore = new Set();
+const incomingMessageDedupStore = new Map();
 const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000;
 const TASK_CLAIM_WINDOW_MS = 2 * 60 * 1000;
 const OAUTH_STATE_SECRET = process.env.OAUTH_STATE_SECRET || process.env.APP_SECRET || process.env.SESSION_SECRET || 'dev-oauth-state-secret';
@@ -1836,7 +1837,8 @@ async function dispatchTask(task, now = new Date()) {
   }
   let deliveredCount = 0;
   let failedCount = 0;
-  for (const recipient of recipients) {
+  const targetRecipients = task.mode === 'schedule_status' ? ['status@broadcast'] : recipients;
+  for (const recipient of targetRecipients) {
     try {
       if (task.mode === 'schedule_status') {
         await sock.sendMessage('status@broadcast', messagePayload, { broadcast: true, statusJidList: statusAudienceJids });
@@ -2101,6 +2103,13 @@ async function startWhatsAppSession(user, tenant, options = {}) {
     try {
       const msg = messages[0];
       if (!msg?.message || msg.key?.fromMe) return;
+      const messageId = String(msg.key?.id || '').trim();
+      if (messageId) {
+        const dedupKey = `${tenantId}:${messageId}`;
+        const seenAt = Number(incomingMessageDedupStore.get(dedupKey) || 0);
+        if (seenAt && Date.now() - seenAt < 10 * 60 * 1000) return;
+        incomingMessageDedupStore.set(dedupKey, Date.now());
+      }
       const text = getMessageText(msg);
       if (!text || isSpamMessage(text)) return;
       const stopRequested = /^(stop|unsubscribe|cancel)$/i.test(text.trim());
@@ -2150,6 +2159,13 @@ async function startWhatsAppSession(user, tenant, options = {}) {
     } catch (error) {
       logger.error({ tenantId, error: error.message, stack: error.stack }, 'Unable to process incoming WhatsApp message');
       console.error('[messages-upsert-error]', error);
+    } finally {
+      if (incomingMessageDedupStore.size > 5000) {
+        const cutoff = Date.now() - 10 * 60 * 1000;
+        for (const [key, timestamp] of incomingMessageDedupStore.entries()) {
+          if (Number(timestamp) < cutoff) incomingMessageDedupStore.delete(key);
+        }
+      }
     }
   });
   sock.ev.on('connection.update', async (update) => {
