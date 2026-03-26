@@ -38,6 +38,8 @@ const ui = {
   taskList: document.getElementById('taskList'),
   taskListTabSummary: document.getElementById('taskListTabSummary'),
   toast: document.getElementById('toast'),
+  contactSyncModal: document.getElementById('contactSyncModal'),
+  contactSyncModalMessage: document.getElementById('contactSyncModalMessage'),
   startButton: document.getElementById('startButton'),
   createWorkspaceButton: document.getElementById('createWorkspaceButton'),
   dashboardScheduleTaskButton: document.getElementById('dashboardScheduleTaskButton'),
@@ -872,6 +874,14 @@ function renderQrCode(qrValue) {
   });
 }
 
+function setContactSyncModalVisible(visible, message = '') {
+  if (!ui.contactSyncModal) return;
+  ui.contactSyncModal.classList.toggle('hidden', !visible);
+  if (visible && ui.contactSyncModalMessage) {
+    ui.contactSyncModalMessage.textContent = message || 'Fetching your contacts and saving them to Audience. Please wait…';
+  }
+}
+
 async function handleQrRefresh() {
   ui.refreshQrButton.disabled = true;
   ui.refreshQrButton.textContent = 'Refreshing…';
@@ -892,7 +902,12 @@ async function syncWhatsAppStatus() {
     ui.whatsappPhone.textContent = status.phoneNumber || 'Not available';
     ui.whatsappPhone.title = status.phoneNumber || 'Not available';
     if (status.qr) renderQrCode(status.qr);
-    else if (status.status === 'connected') {
+    if (status.status === 'syncing_contacts') {
+      setContactSyncModalVisible(true, status.message);
+      startWhatsAppPolling();
+      return;
+    } else if (status.status === 'connected') {
+      setContactSyncModalVisible(false);
       ui.qrCode.innerHTML = '';
       ui.qrWrapper.classList.remove('empty');
       ui.qrWrapper.classList.add('connected');
@@ -902,11 +917,13 @@ async function syncWhatsAppStatus() {
       await loadAudience(true);
       restorePostConnectionRoute();
     } else {
+      setContactSyncModalVisible(false);
       ui.qrWrapper.classList.remove('connected');
       ui.qrWrapper.classList.add('empty');
       ui.qrHint.textContent = 'QR code will appear here after you start the connection.';
     }
   } catch (error) {
+    setContactSyncModalVisible(false);
     stopPoller();
     showToast(error.message);
   }
