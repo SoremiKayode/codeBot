@@ -724,27 +724,57 @@ async function syncAudienceFromSocket(tenantId, sock) {
 }
 
 async function waitForInitialAudienceSync(tenantId, sock, timeoutMs = 20000) {
-  const current = audienceStore.get(tenantId) || buildDefaultAudienceState();
-  if (current.contacts.length) return current;
   return new Promise((resolve) => {
     let settled = false;
     let timeout;
+    let stabilityTimer;
+    let latestContactCount = (audienceStore.get(tenantId) || buildDefaultAudienceState()).contacts.length;
+    const MIN_SYNC_WAIT_MS = 4000;
+    const STABLE_WINDOW_MS = 2000;
+    const startedAt = Date.now();
+    const scheduleFinalizeIfStable = () => {
+      if (settled) return;
+      if (stabilityTimer) clearTimeout(stabilityTimer);
+      stabilityTimer = setTimeout(() => {
+        if (Date.now() - startedAt >= MIN_SYNC_WAIT_MS) finalize();
+      }, STABLE_WINDOW_MS);
+    };
     const finalize = () => {
       if (settled) return;
       settled = true;
       if (timeout) clearTimeout(timeout);
+      if (stabilityTimer) clearTimeout(stabilityTimer);
       sock.ev.off('messaging-history.set', onHistorySet);
+      sock.ev.off('contacts.upsert', onContactsUpsert);
+      sock.ev.off('contacts.update', onContactsUpdate);
+      sock.ev.off('chats.upsert', onChatsUpsert);
+      sock.ev.off('chats.update', onChatsUpdate);
       resolve(audienceStore.get(tenantId) || buildDefaultAudienceState());
+    };
+    const maybeTrackGrowth = () => {
+      const count = (audienceStore.get(tenantId) || buildDefaultAudienceState()).contacts.length;
+      if (count >= latestContactCount) {
+        latestContactCount = count;
+        scheduleFinalizeIfStable();
+      }
     };
     const onHistorySet = async ({ contacts, chats }) => {
       try {
         await upsertAudienceContacts(tenantId, contacts, chats);
       } finally {
-        const next = audienceStore.get(tenantId) || buildDefaultAudienceState();
-        if (next.contacts.length) finalize();
+        maybeTrackGrowth();
       }
     };
+    const onContactsUpsert = async (contacts) => { await upsertAudienceContacts(tenantId, contacts); maybeTrackGrowth(); };
+    const onContactsUpdate = async (contacts) => { await upsertAudienceContacts(tenantId, contacts); maybeTrackGrowth(); };
+    const onChatsUpsert = async (chats) => { await upsertAudienceContacts(tenantId, [], chats); maybeTrackGrowth(); };
+    const onChatsUpdate = async (chats) => { await upsertAudienceContacts(tenantId, [], chats); maybeTrackGrowth(); };
     sock.ev.on('messaging-history.set', onHistorySet);
+    sock.ev.on('contacts.upsert', onContactsUpsert);
+    sock.ev.on('contacts.update', onContactsUpdate);
+    sock.ev.on('chats.upsert', onChatsUpsert);
+    sock.ev.on('chats.update', onChatsUpdate);
+    scheduleFinalizeIfStable();
     timeout = setTimeout(finalize, timeoutMs);
   });
 }
@@ -2030,7 +2060,7 @@ async function startWhatsAppSession(user, tenant, options = {}) {
   await User.findByIdAndUpdate(user._id, { whatsappStatus: 'connecting' });
   const { version } = await fetchLatestBaileysVersion();
   const { state, saveCreds } = await useMongooseAuthState(tenantId);
-  const sock = makeWASocket({ version, auth: state, logger: pino({ level: 'silent' }), printQRInTerminal: false, syncFullHistory: false, markOnlineOnConnect: false });
+  const sock = makeWASocket({ version, auth: state, logger: pino({ level: 'silent' }), printQRInTerminal: false, syncFullHistory: true, markOnlineOnConnect: false });
   socketStore.set(tenantId, sock);
   sock.ev.on('creds.update', async () => { await saveCreds(); });
   sock.ev.on('messaging-history.set', ({ contacts, chats }) => { upsertAudienceContacts(tenantId, contacts, chats); });
@@ -2105,9 +2135,10 @@ async function startWhatsAppSession(user, tenant, options = {}) {
         const phoneNumber = sock?.user?.id || '';
         await persistConnectionState(tenantId, { status: 'syncing_contacts', qr: '', phoneNumber, message: 'WhatsApp connected. Fetching your contacts and saving them to Audience now…', userId: String(user._id) });
         await syncAudienceFromSocket(tenantId, sock);
-        const syncedAudience = await waitForInitialAudienceSync(tenantId, sock);
+        const syncedAudience = await waitForInitialAudienceSync(tenantId, sock, 35000);
         const contactCount = Array.isArray(syncedAudience.contacts) ? syncedAudience.contacts.length : 0;
         const groupCount = Array.isArray(syncedAudience.groups) ? syncedAudience.groups.length : 0;
+        logger.info({ tenantId, contactCount, groupCount }, 'Initial WhatsApp audience sync completed');
         await User.findByIdAndUpdate(user._id, { whatsappStatus: 'connected', whatsappPhone: phoneNumber });
         await persistConnectionState(tenantId, { status: 'connected', qr: '', phoneNumber, message: `WhatsApp connected successfully. Saved ${contactCount} contact${contactCount === 1 ? '' : 's'} and ${groupCount} group${groupCount === 1 ? '' : 's'} to Audience.`, userId: String(user._id) });
       }
