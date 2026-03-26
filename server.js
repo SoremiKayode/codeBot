@@ -665,15 +665,42 @@ function normalizeContact(contact = {}, chat = {}) {
 
 async function snapshotAudience(tenantId, state) {
   if (!state) return;
-  await Promise.all([
-    TenantAudienceGroup.deleteMany({ tenantId }),
-    TenantAudienceContact.deleteMany({ tenantId }),
-  ]);
-  if (state.groups.length) {
-    await TenantAudienceGroup.insertMany(state.groups.map((group) => ({ tenantId, ...group })), { ordered: false }).catch(() => null);
+  const groups = Array.isArray(state.groups) ? state.groups : [];
+  const contacts = Array.isArray(state.contacts) ? state.contacts : [];
+  if (groups.length) {
+    await TenantAudienceGroup.bulkWrite(groups.map((group) => ({
+      updateOne: {
+        filter: { tenantId, id: String(group.id || '') },
+        update: {
+          $set: {
+            tenantId,
+            id: String(group.id || ''),
+            name: String(group.name || group.id || 'Unnamed group'),
+            members: Number(group.members || 0),
+            category: String(group.category || 'Group'),
+            participantIds: Array.isArray(group.participantIds) ? Array.from(new Set(group.participantIds.map((item) => String(item || '')).filter(Boolean))) : [],
+          },
+        },
+        upsert: true,
+      },
+    })), { ordered: false }).catch(() => null);
   }
-  if (state.contacts.length) {
-    await TenantAudienceContact.insertMany(state.contacts.map((contact) => ({ tenantId, ...contact })), { ordered: false }).catch(() => null);
+  if (contacts.length) {
+    await TenantAudienceContact.bulkWrite(contacts.map((contact) => ({
+      updateOne: {
+        filter: { tenantId, id: String(contact.id || '') },
+        update: {
+          $set: {
+            tenantId,
+            id: String(contact.id || ''),
+            name: String(contact.name || normalizePhoneNumber(contact.id || '') || contact.id || ''),
+            phone: normalizePhoneNumber(contact.phone || contact.id || ''),
+            segment: String(contact.segment || 'Contact'),
+          },
+        },
+        upsert: true,
+      },
+    })), { ordered: false }).catch(() => null);
   }
 }
 
@@ -2141,7 +2168,8 @@ async function startWhatsAppSession(user, tenant, options = {}) {
       if (matchingAutomatedTask) {
         replyPayload = await buildMessagePayload(matchingAutomatedTask);
         replyText = String(matchingAutomatedTask.messageText || matchingAutomatedTask.translatedPreview || matchingAutomatedTask.description || '').trim();
-      } else {
+      }
+      if (!replyPayload) {
         const profile = await getCompanyProfileForScope(scope.scopeId);
         if (!profile) return;
         const reply = await craftAutoReply(profile, text, [...dbHistory, ...inMemoryHistory]);
