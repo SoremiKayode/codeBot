@@ -15,6 +15,8 @@ const {
   BufferJSON,
   proto,
   fetchLatestBaileysVersion,
+  jidDecode,
+  jidNormalizedUser,
 } = await import('@whiskeysockets/baileys');
 const { initAuthCreds } = await import('@whiskeysockets/baileys/lib/Utils/auth-utils.js');
 
@@ -544,18 +546,26 @@ function buildDefaultAudienceState() {
   return { groups: [], contacts: [], lastSyncedAt: null };
 }
 
+function extractPhoneDigits(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const normalizedJid = jidNormalizedUser(raw);
+  const decoded = jidDecode(normalizedJid) || jidDecode(raw);
+  const candidateUser = String(decoded?.user || normalizedJid.split('@')[0] || raw.split('@')[0] || '');
+  const primaryPart = candidateUser.split(':')[0];
+  const digits = primaryPart.replace(/[^\d]/g, '');
+  return digits.length >= 7 ? digits : '';
+}
+
 function normalizePhoneNumber(jid = '') {
-  const raw = String(jid).split('@')[0].replace(/[^\d]/g, '');
-  return raw ? `+${raw}` : '';
+  const digits = extractPhoneDigits(jid);
+  return digits ? `+${digits}` : '';
 }
 
 function normalizePhoneJid(value = '') {
   const trimmed = String(value || '').trim();
   if (!trimmed) return '';
-  const explicitJid = trimmed.match(/(\d{7,})@s\.whatsapp\.net\b/i);
-  if (explicitJid) return `${explicitJid[1]}@s.whatsapp.net`;
-  if (/^\d+@s\.whatsapp\.net$/i.test(trimmed)) return trimmed.toLowerCase();
-  const digits = trimmed.replace(/\D/g, '');
+  const digits = extractPhoneDigits(trimmed);
   return digits.length >= 7 ? `${digits}@s.whatsapp.net` : '';
 }
 
@@ -596,7 +606,15 @@ function sanitizeTaskRecipients(recipients = {}) {
 function normalizeGroup(group) {
   const participantIds = Array.isArray(group.participants)
     ? group.participants
-      .map((participant) => normalizePhoneJid(participant?.id || participant?.jid || participant?.participant || participant?.user || ''))
+      .map((participant) => normalizePhoneJid(
+        participant?.id
+        || participant?.jid
+        || participant?.participant
+        || participant?.lid
+        || participant?.user
+        || participant?.phone
+        || '',
+      ))
       .filter(Boolean)
     : [];
   return {
@@ -1551,7 +1569,14 @@ async function resolveTaskRecipients(task, sock) {
         try {
           const metadata = await sock.groupMetadata(jid);
           for (const participant of metadata.participants || []) {
-            const memberJid = normalizePhoneJid(participant?.id || '');
+            const memberJid = normalizePhoneJid(
+              participant?.id
+              || participant?.jid
+              || participant?.participant
+              || participant?.lid
+              || participant?.phone
+              || '',
+            );
             if (memberJid) recipientIds.add(memberJid);
           }
         } catch (error) {
