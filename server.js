@@ -1069,6 +1069,10 @@ async function useMongooseAuthState(tenantId) {
   };
 }
 
+async function hasSavedWhatsAppCredentials(tenantId) {
+  return Boolean(await AuthState.findOne({ tenantId, key: 'creds' }).lean());
+}
+
 async function authenticateRequest(req, res, next) {
   const authorization = req.headers.authorization || '';
   const cookies = parseCookies(req.headers.cookie || '');
@@ -2066,11 +2070,20 @@ async function findOrCreateSocialUser(provider, profile, mode = 'login') {
 
 async function startWhatsAppSession(user, tenant, options = {}) {
   const tenantId = String(tenant._id);
+  const hasSavedCredentials = await hasSavedWhatsAppCredentials(tenantId);
   if (options.forceNewSession) {
     await clearWhatsAppSessionData(tenantId);
   }
   if (socketStore.has(tenantId)) return connectionStateStore.get(tenantId) || buildDefaultConnectionState(tenantId);
-  await persistConnectionState(tenantId, { status: 'connecting', qr: '', phoneNumber: user.whatsappPhone || '', message: 'Starting WhatsApp connection and waiting for QR code.', userId: String(user._id) });
+  await persistConnectionState(tenantId, {
+    status: 'connecting',
+    qr: '',
+    phoneNumber: user.whatsappPhone || '',
+    message: hasSavedCredentials
+      ? 'Attempting to reconnect using your saved WhatsApp session details. A QR code will only be shown if reconnect fails.'
+      : 'Starting WhatsApp connection and waiting for QR code.',
+    userId: String(user._id),
+  });
   await User.findByIdAndUpdate(user._id, { whatsappStatus: 'connecting' });
   const { version } = await fetchLatestBaileysVersion();
   const { state, saveCreds } = await useMongooseAuthState(tenantId);
@@ -2330,9 +2343,8 @@ app.post('/api/workspaces', authenticateRequest, async (req, res) => {
 app.post('/api/whatsapp/connect', authenticateRequest, requireActiveWorkspace, requirePermission('whatsapp:connect'), async (req, res) => {
   try {
     const tenantId = String(req.tenant._id);
-    const savedState = connectionStateStore.get(tenantId) || await WhatsAppConnection.findOne({ tenantId }).lean();
     const hasLiveSocket = socketStore.has(tenantId);
-    const shouldForceNewSession = !hasLiveSocket && ['connected', 'error', 'logged_out', 'not_connected'].includes(String(savedState?.status || '').toLowerCase());
+    const shouldForceNewSession = !hasLiveSocket && req.body?.forceNewSession === true;
     const state = await startWhatsAppSession(req.user, req.tenant, { forceNewSession: shouldForceNewSession });
     res.json({ ...state, user: sanitizeUser(req.user, req.membership, req.tenant) });
   } catch (error) {
