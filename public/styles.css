@@ -144,6 +144,33 @@ code { background: var(--surface-alt); padding: .15rem .35rem; border-radius: .4
   animation: spin .8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.62);
+  display: grid;
+  place-items: center;
+  z-index: 9999;
+  padding: 1.25rem;
+}
+.modal-card {
+  width: min(26rem, 100%);
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  padding: 1.25rem;
+  box-shadow: var(--shadow);
+}
+.modal-spinner {
+  width: 2.25rem;
+  height: 2.25rem;
+  border: 3px solid color-mix(in srgb, var(--primary) 20%, var(--border));
+  border-top-color: var(--primary);
+  border-radius: 999px;
+  margin: 0 auto;
+  animation: spin .8s linear infinite;
+}
 .primary-button--cta, .secondary-button--cta {
   padding: .82rem 1.15rem;
   min-width: 9.5rem;
