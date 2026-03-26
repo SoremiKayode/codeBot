@@ -1,170 +1,256 @@
-import express from 'express';
-import mongoose from 'mongoose';
-import qrcode from 'qrcode-terminal';
-import cron from 'node-cron';
-import dotenv from 'dotenv';
-import pino from 'pino';
+// import express from 'express';
+// import mongoose from 'mongoose';
+// import qrcode from 'qrcode-terminal';
+// import cron from 'node-cron';
+// import dotenv from 'dotenv';
+// import pino from 'pino';
 
-// 1. Dynamic Imports for Baileys
-const { 
-    default: makeWASocket, 
-    DisconnectReason, 
-    BufferJSON, 
-    proto,
-    fetchLatestBaileysVersion 
-} = await import('@whiskeysockets/baileys');
+// // 1. Dynamic Imports for Baileys
+// const { 
+//     default: makeWASocket, 
+//     DisconnectReason, 
+//     BufferJSON, 
+//     proto,
+//     fetchLatestBaileysVersion 
+// } = await import('@whiskeysockets/baileys');
 
-const { initAuthCreds } = await import('@whiskeysockets/baileys/lib/Utils/auth-utils.js');
+// const { initAuthCreds } = await import('@whiskeysockets/baileys/lib/Utils/auth-utils.js');
 
-dotenv.config();
-const app = express();
-app.use(express.json());
-app.use(express.static('public'));
+// dotenv.config();
+// const app = express();
+// app.use(express.json());
+// app.use(express.static('public'));
 
-// --- Database Configuration ---
-const IS_LOCAL = process.env.USE_LOCAL === 'true'; 
-const MONGO_URI = IS_LOCAL ? 'mongodb://localhost:27017/whatsapp_bot' : process.env.CLOUD_MONGO_URI;
+// // --- Database Configuration ---
+// const IS_LOCAL = process.env.USE_LOCAL === 'true'; 
+// const MONGO_URI = IS_LOCAL ? 'mongodb://localhost:27017/whatsapp_bot' : process.env.CLOUD_MONGO_URI;
 
-await mongoose.connect(MONGO_URI);
-console.log(`✅ MongoDB Connected: ${IS_LOCAL ? 'Local' : 'Cloud'}`);
+// await mongoose.connect(MONGO_URI);
+// console.log(`✅ MongoDB Connected: ${IS_LOCAL ? 'Local' : 'Cloud'}`);
 
-// --- Mongoose Models ---
-const AuthSchema = new mongoose.Schema({ _id: String, data: String }, { collection: 'kayode_session' });
-const AuthModel = mongoose.model('Auth', AuthSchema);
+// // --- Mongoose Models ---
+// const AuthSchema = new mongoose.Schema({ _id: String, data: String }, { collection: 'kayode_session' });
+// const AuthModel = mongoose.model('Auth', AuthSchema);
 
-const TaskSchema = new mongoose.Schema({
-    taskType: { type: String, enum: ['single', 'all_contacts', 'group_members'], required: true },
-    targetId: String,   
-    message: String,
-    mediaUrl: String,   
-    mediaType: { type: String, enum: ['text', 'image', 'video', 'audio'], default: 'text' },
-    day: Number, // 0-6
-    time: String, // HH:mm
-    delay: { type: Number, default: 5000 },
-    status: { type: String, default: 'pending' },
-    lastRun: Date
-});
-const Task = mongoose.model('Task', TaskSchema);
+// const TaskSchema = new mongoose.Schema({
+//     taskType: { type: String, enum: ['single', 'all_contacts', 'group_members'], required: true },
+//     targetId: String,   
+//     message: String,
+//     mediaUrl: String,   
+//     mediaType: { type: String, enum: ['text', 'image', 'video', 'audio'], default: 'text' },
+//     day: Number, // 0-6
+//     time: String, // HH:mm
+//     delay: { type: Number, default: 5000 },
+//     status: { type: String, default: 'pending' },
+//     lastRun: Date
+// });
+// const Task = mongoose.model('Task', TaskSchema);
 
-// --- Mongoose Auth State Provider ---
-async function useMongooseAuthState() {
-    const writeData = async (data, id) => {
-        const json = JSON.stringify(data, BufferJSON.replacer);
-        return AuthModel.replaceOne({ _id: id }, { data: json }, { upsert: true });
-    };
-    const readData = async (id) => {
-        const result = await AuthModel.findById(id);
-        return result ? JSON.parse(result.data, BufferJSON.reviver) : null;
-    };
+// // --- Mongoose Auth State Provider ---
+// async function useMongooseAuthState() {
+//     const writeData = async (data, id) => {
+//         const json = JSON.stringify(data, BufferJSON.replacer);
+//         return AuthModel.replaceOne({ _id: id }, { data: json }, { upsert: true });
+//     };
+//     const readData = async (id) => {
+//         const result = await AuthModel.findById(id);
+//         return result ? JSON.parse(result.data, BufferJSON.reviver) : null;
+//     };
     
-    const creds = await readData('creds') || initAuthCreds();
+//     const creds = await readData('creds') || initAuthCreds();
 
-    return {
-        state: {
-            creds,
-            keys: {
-                get: async (type, ids) => {
-                    const data = {};
-                    await Promise.all(ids.map(async (id) => {
-                        let value = await readData(`${type}-${id}`);
-                        if (type === 'app-state-sync-key' && value) value = proto.Message.AppStateSyncKeyData.fromObject(value);
-                        data[id] = value;
-                    }));
-                    return data;
-                },
-                set: async (data) => {
-                    for (const category in data) {
-                        for (const id in data[category]) {
-                            const value = data[category][id];
-                            const key = `${category}-${id}`;
-                            if (value) await writeData(value, key);
-                            else await AuthModel.deleteOne({ _id: key });
-                        }
-                    }
-                }
-            }
-        },
-        saveCreds: () => writeData(creds, 'creds')
-    };
-}
+//     return {
+//         state: {
+//             creds,
+//             keys: {
+//                 get: async (type, ids) => {
+//                     const data = {};
+//                     await Promise.all(ids.map(async (id) => {
+//                         let value = await readData(`${type}-${id}`);
+//                         if (type === 'app-state-sync-key' && value) value = proto.Message.AppStateSyncKeyData.fromObject(value);
+//                         data[id] = value;
+//                     }));
+//                     return data;
+//                 },
+//                 set: async (data) => {
+//                     for (const category in data) {
+//                         for (const id in data[category]) {
+//                             const value = data[category][id];
+//                             const key = `${category}-${id}`;
+//                             if (value) await writeData(value, key);
+//                             else await AuthModel.deleteOne({ _id: key });
+//                         }
+//                     }
+//                 }
+//             }
+//         },
+//         saveCreds: () => writeData(creds, 'creds')
+//     };
+// }
 
-// --- Smart DB Cleanup ---
-async function flushOldRecords() {
-    console.log('🧹 Running smart database cleanup...');
-    const protectedKeys = /creds|session|pre-key|sender-key|app-state-sync-key/;
-    const result = await AuthModel.deleteMany({ _id: { $not: protectedKeys } });
-    console.log(`🗑️ Removed ${result.deletedCount} unnecessary records.`);
-}
+// // --- Smart DB Cleanup ---
+// async function flushOldRecords() {
+//     console.log('🧹 Running smart database cleanup...');
+//     const protectedKeys = /creds|session|pre-key|sender-key|app-state-sync-key/;
+//     const result = await AuthModel.deleteMany({ _id: { $not: protectedKeys } });
+//     console.log(`🗑️ Removed ${result.deletedCount} unnecessary records.`);
+// }
 
-// --- Bot Core ---
-let sock;
+// // --- Bot Core ---
+// let sock;
+// async function startBot() {
+//     await flushOldRecords();
+//     const { version } = await fetchLatestBaileysVersion();
+//     const { state, saveCreds } = await useMongooseAuthState();
+
+//     sock = makeWASocket({
+//         version,
+//         auth: state,
+//         logger: pino({ level: 'error' }),
+//         printQRInTerminal: false, // QR handled by terminal or frontend later
+//     });
+
+//     sock.ev.on('creds.update', saveCreds);
+
+//     sock.ev.on('connection.update', (update) => {
+//         const { connection, lastDisconnect, qr } = update;
+//         if (qr) qrcode.generate(qr, { small: true });
+//         if (connection === 'open') console.log('✅ WhatsApp Connection Open');
+//         if (connection === 'close') {
+//             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+//             if (shouldReconnect) startBot();
+//         }
+//     });
+// }
+
+// // --- Scheduler & Messaging ---
+// cron.schedule('* * * * *', async () => {
+//     if (!sock) return;
+//     const now = new Date();
+//     const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    
+//     const tasks = await Task.find({ day: now.getDay(), time: currentTime, status: 'pending' });
+
+//     for (const task of tasks) {
+//         let recipients = [];
+//         if (task.taskType === 'single') recipients = [task.targetId];
+//         else if (task.taskType === 'group_members') {
+//             const group = await sock.groupMetadata(task.targetId);
+//             recipients = group.participants.map(p => p.id);
+//         }
+
+//         task.status = 'processing';
+//         await task.save();
+
+//         for (const jid of recipients) {
+//             try {
+//                 const content = { caption: task.message };
+//                 if (task.mediaType === 'text') {
+//                     await sock.sendMessage(jid, { text: task.message });
+//                 } else {
+//                     content[task.mediaType] = { url: task.mediaUrl };
+//                     await sock.sendMessage(jid, content);
+//                 }
+//             } catch (e) { console.error(`Error sending to ${jid}:`, e.message); }
+//             await new Promise(r => setTimeout(r, task.delay));
+//         }
+
+//         task.status = 'completed';
+//         task.lastRun = new Date();
+//         await task.save();
+//     }
+// });
+
+// // --- API Endpoints ---
+// app.get('/api/tasks', async (req, res) => res.json(await Task.find().sort({_id: -1})));
+// app.post('/api/tasks', async (req, res) => res.json(await new Task(req.body).save()));
+// app.delete('/api/tasks/:id', async (req, res) => res.json(await Task.findByIdAndDelete(req.params.id)));
+
+// app.listen(3000, () => console.log('🚀 API Running on Port 3000'));
+// startBot();
+
+import makeWASocket, { 
+    useMultiFileAuthState, 
+    DisconnectReason, 
+    fetchLatestBaileysVersion 
+} from '@whiskeysockets/baileys';
+import { Boom } from '@hapi/boom';
+import qrcode from 'qrcode-terminal';
+
 async function startBot() {
-    await flushOldRecords();
+    // 1. Setup Auth and Version
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info');
     const { version } = await fetchLatestBaileysVersion();
-    const { state, saveCreds } = await useMongooseAuthState();
 
-    sock = makeWASocket({
+    // 2. Initialize the Socket
+    const sock = makeWASocket({
         version,
         auth: state,
-        logger: pino({ level: 'error' }),
-        printQRInTerminal: false, // QR handled by terminal or frontend later
+        // We handle QR manually to ensure it displays in ESM
     });
 
-    sock.ev.on('creds.update', saveCreds);
-
-    sock.ev.on('connection.update', (update) => {
+    // 3. Connection Handler
+    sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
-        if (qr) qrcode.generate(qr, { small: true });
-        if (connection === 'open') console.log('✅ WhatsApp Connection Open');
+
+        // Display QR Code
+        if (qr) {
+            console.log('--- SCAN THE QR CODE BELOW ---');
+            qrcode.generate(qr, { small: true });
+        }
+
         if (connection === 'close') {
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            
+            console.log(`Connection closed. Status: ${statusCode}. Reconnecting: ${shouldReconnect}`);
             if (shouldReconnect) startBot();
+        } else if (connection === 'open') {
+            console.log('✅ Connected successfully to WhatsApp!');
+
+            // --- FETCH GROUPS ---
+            const groups = await listAllGroups(sock);
+            
+            // --- FETCH MEMBERS (Example: first group in the list) ---
+            const groupIds = Object.keys(groups);
+            if (groupIds.length > 0) {
+                await listGroupMembers(sock, groupIds[0]);
+            }
         }
     });
+
+    // Save session credentials
+    sock.ev.on('creds.update', saveCreds);
 }
 
-// --- Scheduler & Messaging ---
-cron.schedule('* * * * *', async () => {
-    if (!sock) return;
-    const now = new Date();
-    const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    
-    const tasks = await Task.find({ day: now.getDay(), time: currentTime, status: 'pending' });
+// --- LOGIC FUNCTIONS ---
 
-    for (const task of tasks) {
-        let recipients = [];
-        if (task.taskType === 'single') recipients = [task.targetId];
-        else if (task.taskType === 'group_members') {
-            const group = await sock.groupMetadata(task.targetId);
-            recipients = group.participants.map(p => p.id);
+async function listAllGroups(sock) {
+    try {
+        const groups = await sock.groupFetchAllParticipating();
+        console.log('\n--- JOINED GROUPS ---');
+        for (const jid in groups) {
+            console.log(`Group: ${groups[jid].subject} | ID: ${jid}`);
         }
-
-        task.status = 'processing';
-        await task.save();
-
-        for (const jid of recipients) {
-            try {
-                const content = { caption: task.message };
-                if (task.mediaType === 'text') {
-                    await sock.sendMessage(jid, { text: task.message });
-                } else {
-                    content[task.mediaType] = { url: task.mediaUrl };
-                    await sock.sendMessage(jid, content);
-                }
-            } catch (e) { console.error(`Error sending to ${jid}:`, e.message); }
-            await new Promise(r => setTimeout(r, task.delay));
-        }
-
-        task.status = 'completed';
-        task.lastRun = new Date();
-        await task.save();
+        return groups;
+    } catch (err) {
+        console.error('Error fetching groups:', err);
+        return {};
     }
-});
+}
 
-// --- API Endpoints ---
-app.get('/api/tasks', async (req, res) => res.json(await Task.find().sort({_id: -1})));
-app.post('/api/tasks', async (req, res) => res.json(await new Task(req.body).save()));
-app.delete('/api/tasks/:id', async (req, res) => res.json(await Task.findByIdAndDelete(req.params.id)));
+async function listGroupMembers(sock, groupId) {
+    try {
+        const metadata = await sock.groupMetadata(groupId);
+        console.log(`\n--- MEMBERS OF: ${metadata.subject} ---`);
+        metadata.participants.forEach((p, i) => {
+            const adminLabel = p.admin ? `(${p.admin})` : '';
+            console.log(`${i + 1}. ID: ${p.id} ${adminLabel}`);
+        });
+    } catch (err) {
+        console.error(`Error fetching members for ${groupId}:`, err);
+    }
+}
 
-app.listen(3000, () => console.log('🚀 API Running on Port 3000'));
+// Start the application
 startBot();
