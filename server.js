@@ -676,11 +676,15 @@ async function snapshotAudience(tenantId, state) {
   }
 }
 
-async function upsertAudienceContacts(tenantId, contacts = []) {
+async function upsertAudienceContacts(tenantId, contacts = [], chats = []) {
   const current = audienceStore.get(tenantId) || buildDefaultAudienceState();
   const nextContacts = new Map(current.contacts.map((contact) => [contact.id, contact]));
   contacts.forEach((contact) => {
     const normalized = normalizeContact(contact, {});
+    if (normalized.id && !normalized.id.endsWith('@g.us')) nextContacts.set(normalized.id, { ...nextContacts.get(normalized.id), ...normalized });
+  });
+  chats.forEach((chat) => {
+    const normalized = normalizeContact({}, chat);
     if (normalized.id && !normalized.id.endsWith('@g.us')) nextContacts.set(normalized.id, { ...nextContacts.get(normalized.id), ...normalized });
   });
   const next = { ...current, contacts: Array.from(nextContacts.values()).sort((a, b) => a.name.localeCompare(b.name)), lastSyncedAt: new Date() };
@@ -717,6 +721,32 @@ async function syncAudienceFromSocket(tenantId, sock) {
     await upsertAudienceContacts(tenantId, contacts);
   }
   return audienceStore.get(tenantId) || buildDefaultAudienceState();
+}
+
+async function waitForInitialAudienceSync(tenantId, sock, timeoutMs = 20000) {
+  const current = audienceStore.get(tenantId) || buildDefaultAudienceState();
+  if (current.contacts.length) return current;
+  return new Promise((resolve) => {
+    let settled = false;
+    let timeout;
+    const finalize = () => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      sock.ev.off('messaging-history.set', onHistorySet);
+      resolve(audienceStore.get(tenantId) || buildDefaultAudienceState());
+    };
+    const onHistorySet = async ({ contacts, chats }) => {
+      try {
+        await upsertAudienceContacts(tenantId, contacts, chats);
+      } finally {
+        const next = audienceStore.get(tenantId) || buildDefaultAudienceState();
+        if (next.contacts.length) finalize();
+      }
+    };
+    sock.ev.on('messaging-history.set', onHistorySet);
+    timeout = setTimeout(finalize, timeoutMs);
+  });
 }
 
 async function getAudienceState(tenantId) {
@@ -2055,9 +2085,13 @@ async function startWhatsAppSession(user, tenant) {
       }
       if (connection === 'open') {
         const phoneNumber = sock?.user?.id || '';
-        await User.findByIdAndUpdate(user._id, { whatsappStatus: 'connected', whatsappPhone: phoneNumber });
+        await persistConnectionState(tenantId, { status: 'syncing_contacts', qr: '', phoneNumber, message: 'WhatsApp connected. Fetching your contacts and saving them to Audience now…', userId: String(user._id) });
         await syncAudienceFromSocket(tenantId, sock);
-        await persistConnectionState(tenantId, { status: 'connected', qr: '', phoneNumber, message: 'WhatsApp connected successfully. Contacts and groups were synced to audience.', userId: String(user._id) });
+        const syncedAudience = await waitForInitialAudienceSync(tenantId, sock);
+        const contactCount = Array.isArray(syncedAudience.contacts) ? syncedAudience.contacts.length : 0;
+        const groupCount = Array.isArray(syncedAudience.groups) ? syncedAudience.groups.length : 0;
+        await User.findByIdAndUpdate(user._id, { whatsappStatus: 'connected', whatsappPhone: phoneNumber });
+        await persistConnectionState(tenantId, { status: 'connected', qr: '', phoneNumber, message: `WhatsApp connected successfully. Saved ${contactCount} contact${contactCount === 1 ? '' : 's'} and ${groupCount} group${groupCount === 1 ? '' : 's'} to Audience.`, userId: String(user._id) });
       }
       if (connection === 'close') {
         const statusCode = lastDisconnect?.error?.output?.statusCode;
