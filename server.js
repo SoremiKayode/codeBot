@@ -763,6 +763,21 @@ async function getAudienceState(tenantId) {
   };
 }
 
+async function clearWhatsAppSessionData(tenantId) {
+  const existingSocket = socketStore.get(tenantId);
+  if (existingSocket?.end) {
+    try {
+      existingSocket.end(new Error('Starting a fresh WhatsApp connection.'));
+    } catch {
+      // Ignore socket termination errors during reset.
+    }
+  }
+  socketStore.delete(tenantId);
+  connectionStateStore.delete(tenantId);
+  await AuthState.deleteMany({ tenantId });
+  await WhatsAppConnection.deleteOne({ tenantId });
+}
+
 const tenantSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true },
   slug: { type: String, required: true, unique: true, trim: true },
@@ -2005,8 +2020,11 @@ async function findOrCreateSocialUser(provider, profile, mode = 'login') {
   return { user, tenant, membership, created };
 }
 
-async function startWhatsAppSession(user, tenant) {
+async function startWhatsAppSession(user, tenant, options = {}) {
   const tenantId = String(tenant._id);
+  if (options.forceNewSession) {
+    await clearWhatsAppSessionData(tenantId);
+  }
   if (socketStore.has(tenantId)) return connectionStateStore.get(tenantId) || buildDefaultConnectionState(tenantId);
   await persistConnectionState(tenantId, { status: 'connecting', qr: '', phoneNumber: user.whatsappPhone || '', message: 'Starting WhatsApp connection and waiting for QR code.', userId: String(user._id) });
   await User.findByIdAndUpdate(user._id, { whatsappStatus: 'connecting' });
@@ -2266,7 +2284,11 @@ app.post('/api/workspaces', authenticateRequest, async (req, res) => {
 
 app.post('/api/whatsapp/connect', authenticateRequest, requireActiveWorkspace, requirePermission('whatsapp:connect'), async (req, res) => {
   try {
-    const state = await startWhatsAppSession(req.user, req.tenant);
+    const tenantId = String(req.tenant._id);
+    const savedState = connectionStateStore.get(tenantId) || await WhatsAppConnection.findOne({ tenantId }).lean();
+    const hasLiveSocket = socketStore.has(tenantId);
+    const shouldForceNewSession = !hasLiveSocket && ['connected', 'error', 'logged_out', 'not_connected'].includes(String(savedState?.status || '').toLowerCase());
+    const state = await startWhatsAppSession(req.user, req.tenant, { forceNewSession: shouldForceNewSession });
     res.json({ ...state, user: sanitizeUser(req.user, req.membership, req.tenant) });
   } catch (error) {
     await persistConnectionState(String(req.tenant._id), { status: 'error', qr: '', message: error.message || 'Unable to start WhatsApp connection.', userId: String(req.user._id) });
@@ -2280,7 +2302,16 @@ app.get('/api/whatsapp/status', authenticateRequest, requireActiveWorkspace, asy
   const state = connectionStateStore.get(tenantId) || await WhatsAppConnection.findOne({ tenantId }).lean() || buildDefaultConnectionState(tenantId);
   const sock = socketStore.get(tenantId);
   const isLiveConnected = state.status === 'connected' && Boolean(sock?.user);
-  res.json({ ...state, status: isLiveConnected ? 'connected' : 'not_connected' });
+  if (state.status === 'connected' && !isLiveConnected) {
+    return res.json({
+      ...state,
+      status: 'not_connected',
+      qr: '',
+      phoneNumber: '',
+      message: 'WhatsApp is no longer connected. Start a new connection to generate another QR code.',
+    });
+  }
+  res.json({ ...state, status: isLiveConnected ? 'connected' : state.status });
 });
 
 app.get('/api/whatsapp/audience', authenticateRequest, requireActiveWorkspace, async (req, res) => {

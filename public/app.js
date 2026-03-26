@@ -882,6 +882,14 @@ function setContactSyncModalVisible(visible, message = '') {
   }
 }
 
+function setConnectionActionLoading(isLoading) {
+  if (!ui.connectWhatsappButton) return;
+  ui.connectWhatsappButton.disabled = isLoading;
+  ui.connectWhatsappButton.innerHTML = isLoading
+    ? '<span class="inline-spinner" aria-hidden="true"></span>Connecting…'
+    : 'Connect WhatsApp';
+}
+
 async function handleQrRefresh() {
   ui.refreshQrButton.disabled = true;
   ui.refreshQrButton.textContent = 'Refreshing…';
@@ -902,12 +910,24 @@ async function syncWhatsAppStatus() {
     ui.whatsappPhone.textContent = status.phoneNumber || 'Not available';
     ui.whatsappPhone.title = status.phoneNumber || 'Not available';
     if (status.qr) renderQrCode(status.qr);
-    if (status.status === 'syncing_contacts') {
+    if (status.status === 'connecting') {
+      setContactSyncModalVisible(true, status.message || 'Starting WhatsApp connection and waiting for QR code.');
+      setConnectionActionLoading(true);
+      startWhatsAppPolling();
+      return;
+    } else if (status.status === 'syncing_contacts') {
       setContactSyncModalVisible(true, status.message);
+      setConnectionActionLoading(false);
+      startWhatsAppPolling();
+      return;
+    } else if (status.status === 'qr_ready') {
+      setContactSyncModalVisible(false);
+      setConnectionActionLoading(false);
       startWhatsAppPolling();
       return;
     } else if (status.status === 'connected') {
       setContactSyncModalVisible(false);
+      setConnectionActionLoading(false);
       ui.qrCode.innerHTML = '';
       ui.qrWrapper.classList.remove('empty');
       ui.qrWrapper.classList.add('connected');
@@ -918,12 +938,15 @@ async function syncWhatsAppStatus() {
       restorePostConnectionRoute();
     } else {
       setContactSyncModalVisible(false);
+      setConnectionActionLoading(false);
       ui.qrWrapper.classList.remove('connected');
       ui.qrWrapper.classList.add('empty');
       ui.qrHint.textContent = 'QR code will appear here after you start the connection.';
+      stopPoller();
     }
   } catch (error) {
     setContactSyncModalVisible(false);
+    setConnectionActionLoading(false);
     stopPoller();
     showToast(error.message);
   }
@@ -2176,6 +2199,8 @@ ui.connectWhatsappButton.addEventListener('click', async () => {
     return;
   }
   try {
+    setConnectionActionLoading(true);
+    setContactSyncModalVisible(true, 'Starting WhatsApp connection and checking your saved session…');
     const data = await api.connectWhatsApp();
     syncUserFromPayload(data);
     ui.whatsappStatusText.textContent = data.message || 'Waiting for QR code.';
@@ -2187,6 +2212,8 @@ ui.connectWhatsappButton.addEventListener('click', async () => {
     await loadAudience(true);
     showToast('WhatsApp connection started.');
   } catch (error) {
+    setConnectionActionLoading(false);
+    setContactSyncModalVisible(false);
     showToast(error.message);
   }
 });
