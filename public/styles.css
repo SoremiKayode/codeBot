@@ -143,6 +143,11 @@ code { background: var(--surface-alt); padding: .15rem .35rem; border-radius: .4
   vertical-align: -2px;
   animation: spin .8s linear infinite;
 }
+
+button.is-error {
+  border-color: rgba(220, 38, 38, 0.6);
+  color: #b91c1c;
+}
 @keyframes spin { to { transform: rotate(360deg); } }
 .modal-overlay {
   position: fixed;
