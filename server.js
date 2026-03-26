@@ -4,7 +4,6 @@ import tls from 'tls';
 import { fileURLToPath } from 'url';
 import express from 'express';
 import mongoose from 'mongoose';
-import cron from 'node-cron';
 import dotenv from 'dotenv';
 import pino from 'pino';
 import { Client } from '@gradio/client';
@@ -137,6 +136,7 @@ const unsubscribeStore = new Set();
 const incomingMessageDedupStore = new Map();
 const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000;
 const TASK_CLAIM_WINDOW_MS = 2 * 60 * 1000;
+const TASK_SCHEDULER_POLL_MS = 3000;
 const OAUTH_STATE_SECRET = process.env.OAUTH_STATE_SECRET || process.env.APP_SECRET || process.env.SESSION_SECRET || 'dev-oauth-state-secret';
 
 const OAUTH_PROVIDERS = {
@@ -1566,17 +1566,43 @@ function buildRunKey(date, frequency, timeValue, timezone) {
   return `${frequency || 'once'}:${today}:${timeValue || '00:00'}:${timezone}`;
 }
 
+function doesScheduleMatchMinute(schedule = {}, frequency = '', timezone = DEFAULT_TIMEZONE, probe = new Date()) {
+  const startDate = String(schedule.startDate || '').trim();
+  const startTime = normalizeTimeValue(schedule.startTime);
+  if (!startDate || !startTime) return false;
+  const { today, currentTime, dayName } = getDatePartsForTimezone(probe, timezone);
+  if (today < startDate) return false;
+  if (frequency === 'once') return today === startDate && currentTime === startTime;
+  if (frequency === 'daily') {
+    const times = Array.isArray(schedule.dailyTimes) ? schedule.dailyTimes.map(normalizeTimeValue).filter(Boolean) : [];
+    return (times.length ? times : [startTime]).includes(currentTime);
+  }
+  if (frequency === 'weekly') {
+    const slots = Array.isArray(schedule.weeklySlots) ? schedule.weeklySlots : [];
+    return slots.some((slot) => normalizeDayName(slot?.day) === dayName && normalizeTimeValue(slot?.time) === currentTime);
+  }
+  if (frequency === 'monthly') {
+    const monthlyDays = Array.isArray(schedule.monthlyDays) ? schedule.monthlyDays.map(Number).filter((value) => Number.isInteger(value) && value >= 1 && value <= 31) : [];
+    const monthlyWeeks = Array.isArray(schedule.monthlyWeeks) ? schedule.monthlyWeeks.map((value) => String(value || '').trim().toLowerCase()) : [];
+    const dayOfMonth = Number(today.split('-')[2]);
+    const weekLabel = getWeekOfMonth(probe, timezone);
+    return monthlyDays.includes(dayOfMonth) || (monthlyWeeks.includes(weekLabel) && currentTime === startTime);
+  }
+  return false;
+}
+
 function computeNextRunAt(schedule = {}, timezone = DEFAULT_TIMEZONE, now = new Date()) {
   const frequency = String(schedule.frequency || '').trim().toLowerCase();
   if (frequency === 'now') return now;
-  const startDate = String(schedule.startDate || '').trim();
-  const startTime = normalizeTimeValue(schedule.startTime);
-  if (!frequency || !startDate || !startTime) return null;
-  const base = new Date(`${startDate}T${startTime}:00.000Z`);
-  if (Number.isNaN(base.getTime())) return null;
-  if (frequency === 'once') return base;
-  if (base > now) return base;
-  return new Date(now.getTime() + 60000);
+  const searchFrom = new Date(Math.floor(now.getTime() / 60000) * 60000);
+  if (!frequency) return null;
+  const maxMinutesToScan = 366 * 24 * 60;
+  for (let offset = 0; offset <= maxMinutesToScan; offset += 1) {
+    const probe = new Date(searchFrom.getTime() + (offset * 60000));
+    if (probe < now) continue;
+    if (doesScheduleMatchMinute(schedule, frequency, timezone, probe)) return probe;
+  }
+  return null;
 }
 
 function validateSchedule(schedule = {}, timezone = DEFAULT_TIMEZONE) {
@@ -1623,6 +1649,10 @@ function shouldRunTaskNow(task, now = new Date()) {
     return { due: true, runKey, frequency, currentTime, timezone };
   }
   if (!startDate || !startTime) return { due: false, reason: 'missing_schedule' };
+  if (task?.nextRunAt) {
+    const nextRunAtDate = new Date(task.nextRunAt);
+    if (!Number.isNaN(nextRunAtDate.getTime()) && nextRunAtDate > now) return { due: false, reason: 'not_due_yet' };
+  }
   const { today, currentTime, dayName } = getDatePartsForTimezone(now, timezone);
   if (today < startDate) return { due: false, reason: 'before_start_date' };
   let due = false;
@@ -1819,7 +1849,7 @@ async function dispatchTask(task, now = new Date()) {
   if (!sock || refreshedConnectionState.status !== 'connected') {
     task.lastError = 'WhatsApp is not connected for this workspace.';
     logTaskFailure(task, task.lastError, { tenantId });
-    task.nextRunAt = computeNextRunAt(task.schedule, task.timezone, new Date(now.getTime() + 60000));
+    task.nextRunAt = computeNextRunAt(task.schedule, task.timezone, new Date(now.getTime() + 1000));
     task.claimToken = '';
     task.claimExpiresAt = null;
     await task.save();
@@ -1908,7 +1938,7 @@ async function dispatchTask(task, now = new Date()) {
     delivered: deliveredCount,
     failed: failedCount,
   };
-  task.nextRunAt = ['once', 'now'].includes(timing.frequency) ? null : computeNextRunAt(task.schedule, task.timezone, new Date(now.getTime() + 60000));
+  task.nextRunAt = ['once', 'now'].includes(timing.frequency) ? null : computeNextRunAt(task.schedule, task.timezone, new Date(now.getTime() + 1000));
   if (['once', 'now'].includes(timing.frequency)) {
     task.status = 'completed';
     task.completedAt = now;
@@ -1925,7 +1955,7 @@ async function processDueTasks() {
   const claimExpiresAt = new Date(now.getTime() + TASK_CLAIM_WINDOW_MS);
   const activeTasks = await Task.find({
     status: 'active',
-    nextRunAt: { $ne: null, $lte: new Date(now.getTime() + 60000) },
+    nextRunAt: { $ne: null, $lte: now },
     $or: [
       { claimExpiresAt: null },
       { claimExpiresAt: { $lte: now } },
@@ -1947,13 +1977,20 @@ async function processDueTasks() {
 }
 
 function startTaskScheduler() {
-  cron.schedule('* * * * *', async () => {
+  let running = false;
+  const runProcessor = async () => {
+    if (running) return;
+    running = true;
     try {
       await processDueTasks();
     } catch (error) {
       logger.error({ error: error.message }, 'Scheduled task processor failed');
+    } finally {
+      running = false;
     }
-  }, { timezone: 'UTC' });
+  };
+  runProcessor();
+  setInterval(runProcessor, TASK_SCHEDULER_POLL_MS);
 }
 
 function buildSocialProviderResponse(provider) {
