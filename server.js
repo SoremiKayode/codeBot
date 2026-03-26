@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import net from 'net';
 import path from 'path';
 import tls from 'tls';
 import { fileURLToPath } from 'url';
@@ -61,8 +62,9 @@ setInterval(() => {
 app.use(express.json({ limit: '20mb' }));
 app.use(express.static(PUBLIC_DIR));
 
-const IS_LOCAL = process.env.USE_LOCAL === 'true';
-const MONGO_URI = IS_LOCAL ? 'mongodb://localhost:27017/whatsapp_bot' : process.env.CLOUD_MONGO_URI;
+const USE_LOCAL = process.env.USE_LOCAL === 'true';
+const LOCAL_MONGO_URI = process.env.LOCAL_MONGO_URI || 'mongodb://localhost:27017/whatsapp_bot';
+const CLOUD_MONGO_URI = process.env.CLOUD_MONGO_URI || 'mongodb+srv://whatsapp_bot:Abayomi1994@@codebot.vlq1yhv.mongodb.net/?appName=codeBot';
 const PORT = Number(process.env.PORT || 3000);
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'wa_session';
 const SMTP_HOST = process.env.SMTP_HOST || 'smtp.zoho.com';
@@ -1035,8 +1037,27 @@ const CompanyProfile = mongoose.model('CompanyProfile', companyProfileSchema);
 const ConversationHistory = mongoose.model('ConversationHistory', conversationHistorySchema);
 
 async function connectDatabase() {
-  if (!MONGO_URI) throw new Error('Missing MongoDB connection string. Set CLOUD_MONGO_URI or USE_LOCAL=true.');
-  await mongoose.connect(MONGO_URI);
+  const hasLocalMongo = await new Promise((resolve) => {
+    const socket = net.createConnection({ host: '127.0.0.1', port: 27017 });
+    const timeout = setTimeout(() => {
+      socket.destroy();
+      resolve(false);
+    }, 800);
+    socket.once('connect', () => {
+      clearTimeout(timeout);
+      socket.end();
+      resolve(true);
+    });
+    socket.once('error', () => {
+      clearTimeout(timeout);
+      socket.destroy();
+      resolve(false);
+    });
+  });
+
+  const mongoUri = hasLocalMongo || USE_LOCAL ? LOCAL_MONGO_URI : CLOUD_MONGO_URI;
+  if (!mongoUri) throw new Error('Missing MongoDB connection string. Set CLOUD_MONGO_URI or LOCAL_MONGO_URI.');
+  await mongoose.connect(mongoUri);
   try {
     const indexes = await WhatsAppConnection.collection.indexes();
     if (indexes.some((index) => index.name === 'userId_1' && index.unique)) await WhatsAppConnection.collection.dropIndex('userId_1');
@@ -1049,7 +1070,7 @@ async function connectDatabase() {
   } catch (error) {
     logger.warn({ error: error.message }, 'Unable to reconcile auth state indexes');
   }
-  logger.info({ mode: IS_LOCAL ? 'local' : 'cloud' }, 'MongoDB connected');
+  logger.info({ mode: hasLocalMongo || USE_LOCAL ? 'local' : 'cloud' }, 'MongoDB connected');
 }
 
 async function persistConnectionState(tenantId, updates) {
