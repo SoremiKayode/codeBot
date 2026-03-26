@@ -1823,6 +1823,11 @@ function logTaskFailure(task, reason, extra = {}) {
 async function dispatchTask(task, now = new Date()) {
   const timing = shouldRunTaskNow(task, now);
   if (!timing.due) {
+    const frequency = String(task?.schedule?.frequency || '').trim().toLowerCase();
+    const isRecurring = ['daily', 'weekly', 'monthly'].includes(frequency);
+    if (isRecurring && ['rule_mismatch', 'already_ran'].includes(timing.reason)) {
+      task.nextRunAt = computeNextRunAt(task.schedule, task.timezone, new Date(now.getTime() + 1000));
+    }
     task.claimToken = '';
     task.claimExpiresAt = null;
     await task.save();
