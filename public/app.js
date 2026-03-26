@@ -1743,6 +1743,11 @@ function buildScheduleConfig() {
   };
 }
 
+function getClientTimezone() {
+  const detected = Intl?.DateTimeFormat?.().resolvedOptions?.().timeZone;
+  return typeof detected === 'string' && detected.trim() ? detected.trim() : '';
+}
+
 async function scheduleTask() {
   if (taskBuilderState.isScheduling) return;
   syncManualRecipientsFromInput();
@@ -1832,10 +1837,12 @@ async function scheduleTask() {
       return;
     }
     ui.scheduleTaskButton.textContent = 'Scheduling…';
+    const clientTimezone = getClientTimezone();
     const payload = await api.createTask({
       title,
       type: getTaskTypeLabel(),
       mode: taskBuilderState.taskMode,
+      ...(clientTimezone ? { timezone: clientTimezone } : {}),
       automation: isAutomated ? { audience: taskBuilderState.automationAudience } : {},
       description: translateTags(messageText || (taskBuilderState.mediaQueue[0]?.previewText || getTaskTypeLabel())).slice(0, 240),
       messageHtml: extractMessageHtml(),
