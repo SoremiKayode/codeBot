@@ -1599,7 +1599,10 @@ function shouldRunTaskNow(task, now = new Date()) {
   const { today, currentTime, dayName } = getDatePartsForTimezone(now, timezone);
   if (today < startDate) return { due: false, reason: 'before_start_date' };
   let due = false;
-  if (frequency === 'once') due = today === startDate && currentTime === startTime;
+  if (frequency === 'once') {
+    // Allow catch-up execution if the processor wakes up after the exact minute.
+    due = today > startDate || (today === startDate && currentTime >= startTime);
+  }
   else if (frequency === 'daily') {
     const times = Array.isArray(schedule.dailyTimes) ? schedule.dailyTimes.map(normalizeTimeValue).filter(Boolean) : [];
     due = (times.length ? times : [startTime]).includes(currentTime);
