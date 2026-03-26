@@ -549,6 +549,12 @@ function buildDefaultAudienceState() {
 function extractPhoneDigits(value = '') {
   const raw = String(value || '').trim();
   if (!raw) return '';
+  const domainMatch = raw.match(/@([^:\s]+)/);
+  if (domainMatch) {
+    const domain = domainMatch[1].toLowerCase();
+    const allowedDomains = new Set(['s.whatsapp.net', 'c.us']);
+    if (!allowedDomains.has(domain)) return '';
+  }
   const normalizedJid = jidNormalizedUser(raw);
   const decoded = jidDecode(normalizedJid) || jidDecode(raw);
   const candidateUser = String(decoded?.user || normalizedJid.split('@')[0] || raw.split('@')[0] || '');
@@ -579,6 +585,27 @@ function normalizeGroupJid(value = '') {
   return digits ? `${digits}@g.us` : '';
 }
 
+function resolveParticipantPhoneJid(participant = {}, contactById = new Map()) {
+  const rawId = String(
+    participant?.id
+    || participant?.jid
+    || participant?.participant
+    || participant?.user
+    || '',
+  ).trim();
+  const direct = normalizePhoneJid(
+    participant?.phoneNumber
+    || participant?.phone
+    || participant?.pn
+    || participant?.participantPn
+    || rawId,
+  );
+  if (direct) return direct;
+  if (!rawId) return '';
+  const linkedContact = contactById.get(rawId);
+  return normalizePhoneJid(linkedContact?.phone || linkedContact?.id || '');
+}
+
 function sanitizeTaskRecipients(recipients = {}) {
   const groups = Array.isArray(recipients.groups) ? recipients.groups : [];
   const contacts = Array.isArray(recipients.contacts) ? recipients.contacts : [];
@@ -603,18 +630,10 @@ function sanitizeTaskRecipients(recipients = {}) {
   };
 }
 
-function normalizeGroup(group) {
+function normalizeGroup(group, contactById = new Map()) {
   const participantIds = Array.isArray(group.participants)
     ? group.participants
-      .map((participant) => normalizePhoneJid(
-        participant?.id
-        || participant?.jid
-        || participant?.participant
-        || participant?.lid
-        || participant?.user
-        || participant?.phone
-        || '',
-      ))
+      .map((participant) => resolveParticipantPhoneJid(participant, contactById))
       .filter(Boolean)
     : [];
   return {
@@ -627,12 +646,18 @@ function normalizeGroup(group) {
 }
 
 function normalizeContact(contact = {}, chat = {}) {
-  const id = String(contact.id || chat.id || '');
+  const rawId = String(contact.id || chat.id || '');
+  const id = normalizePhoneJid(
+    contact.phoneNumber
+    || contact.waid
+    || contact.phone
+    || rawId,
+  ) || rawId;
   const name = String(contact.name || contact.notify || contact.verifiedName || chat.name || chat.notify || normalizePhoneNumber(id) || id);
   return {
     id,
     name,
-    phone: normalizePhoneNumber(contact.phoneNumber || id),
+    phone: normalizePhoneNumber(contact.phoneNumber || contact.waid || contact.phone || id),
     segment: chat.unreadCount ? 'Recent chat' : 'Contact',
   };
 }
@@ -666,9 +691,16 @@ async function upsertAudienceContacts(tenantId, contacts = []) {
 
 async function upsertAudienceGroups(tenantId, groups = []) {
   const current = audienceStore.get(tenantId) || buildDefaultAudienceState();
+  const contactById = new Map(current.contacts.flatMap((contact) => {
+    const normalizedId = String(contact?.id || '').trim();
+    const keys = [normalizedId];
+    const digits = String(contact?.phone || '').replace(/[^\d]/g, '');
+    if (digits) keys.push(`${digits}@s.whatsapp.net`);
+    return keys.filter(Boolean).map((key) => [key, contact]);
+  }));
   const nextGroups = new Map(current.groups.map((group) => [group.id, group]));
   groups.forEach((group) => {
-    const normalized = normalizeGroup(group);
+    const normalized = normalizeGroup(group, contactById);
     if (normalized.id) nextGroups.set(normalized.id, normalized);
   });
   const next = { ...current, groups: Array.from(nextGroups.values()).sort((a, b) => a.name.localeCompare(b.name)), lastSyncedAt: new Date() };
@@ -1569,14 +1601,7 @@ async function resolveTaskRecipients(task, sock) {
         try {
           const metadata = await sock.groupMetadata(jid);
           for (const participant of metadata.participants || []) {
-            const memberJid = normalizePhoneJid(
-              participant?.id
-              || participant?.jid
-              || participant?.participant
-              || participant?.lid
-              || participant?.phone
-              || '',
-            );
+            const memberJid = resolveParticipantPhoneJid(participant);
             if (memberJid) recipientIds.add(memberJid);
           }
         } catch (error) {
