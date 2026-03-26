@@ -1,0 +1,41 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+    types:
+      - closed
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy app on EC2
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy on EC2
+        env:
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_PROJECT_PATH: ${{ secrets.EC2_PROJECT_PATH }}
+          EC2_BRANCH: ${{ secrets.EC2_BRANCH }}
+        run: |
+          DEPLOY_BRANCH="${EC2_BRANCH:-main}"
+          ssh "${EC2_USER}@${EC2_HOST}" \
+            "export PROJECT_PATH='${EC2_PROJECT_PATH}'; export DEPLOY_BRANCH='${DEPLOY_BRANCH}'; bash -s" \
+            < scripts/deploy-on-ec2.sh
