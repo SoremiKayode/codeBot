@@ -2092,36 +2092,38 @@ async function handlePaystackPayment(event) {
     const payload = await api.initializePaystackPayment({ amount });
     syncUserFromPayload(payload);
     paymentState.publicKey = payload.publicKey || paymentState.publicKey;
+    const onPaystackSuccess = async (response) => {
+      const reference = response?.reference;
+      if (!reference) {
+        ui.paymentStatusText.textContent = 'Payment succeeded but no transaction reference was returned.';
+        showToast('Payment completed, but verification could not start.');
+        return;
+      }
+      ui.paymentStatusText.textContent = 'Verifying payment...';
+      try {
+        const verified = await api.verifyPaystackPayment({ reference });
+        syncUserFromPayload(verified);
+        updateUserUI();
+        ui.paymentStatusText.textContent = `Payment successful. ${verified.transaction?.credits || formatCreditPreview(amount)} added.`;
+        showToast('Credits added successfully.');
+      } catch (error) {
+        ui.paymentStatusText.textContent = error.message;
+        showToast(error.message);
+      }
+    };
+    const onPaystackClose = () => {
+      ui.paymentStatusText.textContent = 'Payment popup closed before completion.';
+    };
     const handler = window.PaystackPop.setup({
       key: paymentState.publicKey,
       email: payload.email || appState.user?.email || '',
       amount: Math.round(Number(payload.amount || amount) * 100),
       currency: payload.currency || paymentState.currency || 'NGN',
       ref: payload.reference,
-      callback: function onPaystackSuccess(response) {
-        const reference = response?.reference;
-        if (!reference) {
-          ui.paymentStatusText.textContent = 'Payment succeeded but no transaction reference was returned.';
-          showToast('Payment completed, but verification could not start.');
-          return;
-        }
-        ui.paymentStatusText.textContent = 'Verifying payment...';
-        (async () => {
-          try {
-            const verified = await api.verifyPaystackPayment({ reference });
-            syncUserFromPayload(verified);
-            updateUserUI();
-            ui.paymentStatusText.textContent = `Payment successful. ${verified.transaction?.credits || formatCreditPreview(amount)} added.`;
-            showToast('Credits added successfully.');
-          } catch (error) {
-            ui.paymentStatusText.textContent = error.message;
-            showToast(error.message);
-          }
-        })();
-      },
-      onClose: () => {
-        ui.paymentStatusText.textContent = 'Payment popup closed before completion.';
-      },
+      callback: onPaystackSuccess,
+      onSuccess: onPaystackSuccess,
+      onClose: onPaystackClose,
+      onCancel: onPaystackClose,
     });
     handler.openIframe();
   } catch (error) {
