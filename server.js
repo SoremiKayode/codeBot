@@ -104,6 +104,12 @@ const CREDIT_COSTS = {
   generateText: Number(process.env.CREDIT_COST_GENERATE_TEXT || 2),
   generateImage: Number(process.env.CREDIT_COST_GENERATE_IMAGE || 6),
 };
+const PRICING_USD_TO_NGN = Number(process.env.PRICING_USD_TO_NGN || 1600);
+const MESSAGE_USD_PRICE = Number(process.env.PRICING_MESSAGE_USD || 0.005);
+const STATUS_USD_PRICE = Number(process.env.PRICING_STATUS_USD || MESSAGE_USD_PRICE);
+const OPENAI_TEXT_USD_PER_1K_TOKENS = Number(process.env.PRICING_OPENAI_TEXT_USD_PER_1K_TOKENS || 0.0006);
+const OPENAI_IMAGE_USD_PER_IMAGE = Number(process.env.PRICING_OPENAI_IMAGE_USD_PER_IMAGE || 0.04);
+const OPENAI_PRICING_MODEL_NOTES = process.env.PRICING_OPENAI_MODEL_NOTES || 'AI generation prices are based on OpenAI token/image rates.';
 const APP_PERMISSIONS = {
   OWNER: ['tenant:manage', 'members:manage', 'credits:manage', 'whatsapp:connect', 'tasks:write', 'tasks:read', 'tasks:dispatch'],
   ADMIN: ['members:manage', 'whatsapp:connect', 'tasks:write', 'tasks:read', 'tasks:dispatch'],
@@ -3008,6 +3014,14 @@ app.get('/api/config/public', (req, res) => {
     paystackCurrency: PAYSTACK_CURRENCY,
     paystackCreditRate: PAYSTACK_CREDIT_RATE,
     smtpFrom: SMTP_USER,
+    pricing: {
+      messageUsd: MESSAGE_USD_PRICE,
+      statusUsd: STATUS_USD_PRICE,
+      textUsdPer1KTokens: OPENAI_TEXT_USD_PER_1K_TOKENS,
+      imageUsdPerImage: OPENAI_IMAGE_USD_PER_IMAGE,
+      usdToNgn: PRICING_USD_TO_NGN,
+      modelNotes: OPENAI_PRICING_MODEL_NOTES,
+    },
   });
 });
 
