@@ -397,7 +397,16 @@
                       </div>
                       <button id="openAiTextTabButton" class="secondary-button" type="button">Generate with AI</button>
                     </div>
+                    <div class="quill-enhancements">
+                      <div class="editor-zoom-controls" role="group" aria-label="Editor zoom controls">
+                        <button id="editorZoomOutButton" class="secondary-button compact-button" type="button">A−</button>
+                        <span id="editorZoomLevel" class="pill">100%</span>
+                        <button id="editorZoomInButton" class="secondary-button compact-button" type="button">A+</button>
+                      </div>
+                      <p id="grammarStatusText" class="muted">Grammar suggestions appear here shortly after you type.</p>
+                    </div>
                     <div id="messageEditor" class="quill-host"></div>
+                    <div id="grammarSuggestions" class="grammar-suggestions empty-state">No grammar suggestions yet.</div>
                   </div>
                   <div class="stack-sm">
                     <div class="file-picker-card stack-sm">
@@ -679,6 +688,10 @@
                   </div>
                   <span id="companyProfileStatus" class="pill status-pill">Not saved yet</span>
                 </div>
+                <div id="portfolioRequiredNotice" class="safety-card hidden">
+                  <strong>Portfolio required for automated responses</strong>
+                  <p class="muted">Before you can schedule automated messages, complete this company portfolio and submit it.</p>
+                </div>
                 <p class="muted">Build the information your auto responder should use when customers ask about your business. Save business details, FAQs, products, and your preferred communication style here inside the workspace.</p>
                 <div class="portfolio-tabs" role="tablist" aria-label="Company portfolio steps">
                   <button id="companyTabBusiness" class="task-tab active" type="button" data-company-tab="business">Business</button>
@@ -799,6 +812,11 @@
                 <div class="task-table-shell">
                   <div id="taskList" class="task-table"></div>
                 </div>
+                <div class="pagination-row">
+                  <button id="taskPrevButton" class="secondary-button compact-button" type="button">Previous</button>
+                  <span id="taskPageInfo" class="pill">Page 1 of 1</span>
+                  <button id="taskNextButton" class="secondary-button compact-button" type="button">Next</button>
+                </div>
               </article>
             </section>
           </article>
@@ -832,6 +850,11 @@
               <div class="task-table-shell admin-table-shell">
                 <div id="adminUsersTable" class="task-table"></div>
               </div>
+              <div class="pagination-row">
+                <button id="adminUsersPrevButton" class="secondary-button compact-button" type="button">Previous</button>
+                <span id="adminUsersPageInfo" class="pill">Page 1 of 1</span>
+                <button id="adminUsersNextButton" class="secondary-button compact-button" type="button">Next</button>
+              </div>
             </div>
             <div id="adminTasksPanel" data-admin-panel="tasks" class="admin-panel hidden">
               <div class="hero-actions">
@@ -842,6 +865,11 @@
               </div>
               <div class="task-table-shell admin-table-shell">
                 <div id="adminTasksTable" class="task-table"></div>
+              </div>
+              <div class="pagination-row">
+                <button id="adminTasksPrevButton" class="secondary-button compact-button" type="button">Previous</button>
+                <span id="adminTasksPageInfo" class="pill">Page 1 of 1</span>
+                <button id="adminTasksNextButton" class="secondary-button compact-button" type="button">Next</button>
               </div>
             </div>
             <div id="adminCreditsPanel" data-admin-panel="credits" class="admin-panel hidden">
@@ -863,6 +891,11 @@
                   </div>
                   <div class="task-table-shell admin-table-shell">
                     <div id="adminEmailUsersTable" class="task-table task-table--email"></div>
+                  </div>
+                  <div class="pagination-row">
+                    <button id="adminEmailPrevButton" class="secondary-button compact-button" type="button">Previous</button>
+                    <span id="adminEmailPageInfo" class="pill">Page 1 of 1</span>
+                    <button id="adminEmailNextButton" class="secondary-button compact-button" type="button">Next</button>
                   </div>
                 </div>
                 <label><span>Recipients (comma separated emails)</span><textarea id="adminEmailRecipients" placeholder="Selected users are added here automatically."></textarea></label>

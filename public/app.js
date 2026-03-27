@@ -78,6 +78,11 @@ const ui = {
   taskTitle: document.getElementById('taskTitle'),
   openAiTextTabButton: document.getElementById('openAiTextTabButton'),
   openAiMediaTabButton: document.getElementById('openAiMediaTabButton'),
+  editorZoomInButton: document.getElementById('editorZoomInButton'),
+  editorZoomOutButton: document.getElementById('editorZoomOutButton'),
+  editorZoomLevel: document.getElementById('editorZoomLevel'),
+  grammarStatusText: document.getElementById('grammarStatusText'),
+  grammarSuggestions: document.getElementById('grammarSuggestions'),
   messageNextButton: document.getElementById('messageNextButton'),
   audienceBackButton: document.getElementById('audienceBackButton'),
   audienceNextButton: document.getElementById('audienceNextButton'),
@@ -124,6 +129,9 @@ const ui = {
   pauseSelectedTasksButton: document.getElementById('pauseSelectedTasksButton'),
   deleteSelectedTasksButton: document.getElementById('deleteSelectedTasksButton'),
   taskSelectionSummary: document.getElementById('taskSelectionSummary'),
+  taskPrevButton: document.getElementById('taskPrevButton'),
+  taskNextButton: document.getElementById('taskNextButton'),
+  taskPageInfo: document.getElementById('taskPageInfo'),
   recipientSummaryInput: document.getElementById('recipientSummaryInput'),
   startDateInput: document.getElementById('startDateInput'),
   startTimeInput: document.getElementById('startTimeInput'),
@@ -141,7 +149,13 @@ const ui = {
   adminSidebarGrip: document.getElementById('adminSidebarGrip'),
   adminSidebarToggle: document.getElementById('adminSidebarToggle'),
   adminUsersTable: document.getElementById('adminUsersTable'),
+  adminUsersPrevButton: document.getElementById('adminUsersPrevButton'),
+  adminUsersNextButton: document.getElementById('adminUsersNextButton'),
+  adminUsersPageInfo: document.getElementById('adminUsersPageInfo'),
   adminTasksTable: document.getElementById('adminTasksTable'),
+  adminTasksPrevButton: document.getElementById('adminTasksPrevButton'),
+  adminTasksNextButton: document.getElementById('adminTasksNextButton'),
+  adminTasksPageInfo: document.getElementById('adminTasksPageInfo'),
   adminCreditFormWrap: document.getElementById('adminCreditFormWrap'),
   adminUserSearch: document.getElementById('adminUserSearch'),
   adminUserFrom: document.getElementById('adminUserFrom'),
@@ -158,6 +172,10 @@ const ui = {
   adminEmailUserSearch: document.getElementById('adminEmailUserSearch'),
   adminEmailSelectAll: document.getElementById('adminEmailSelectAll'),
   adminEmailUsersTable: document.getElementById('adminEmailUsersTable'),
+  adminEmailPrevButton: document.getElementById('adminEmailPrevButton'),
+  adminEmailNextButton: document.getElementById('adminEmailNextButton'),
+  adminEmailPageInfo: document.getElementById('adminEmailPageInfo'),
+  portfolioRequiredNotice: document.getElementById('portfolioRequiredNotice'),
   taskNavButtons: document.querySelectorAll('[data-task-nav]'),
   groupDeliveryModeInputs: document.querySelectorAll('input[name="groupDeliveryMode"]'),
   taskModeInputs: document.querySelectorAll('input[name="taskMode"]'),
@@ -190,6 +208,8 @@ const taskBuilderState = {
   groupDeliveryMode: 'group',
   manualRecipients: [],
   tasks: [],
+  taskPage: 1,
+  taskPageSize: 8,
   taskSearch: '',
   taskSortDirection: 'desc',
   selectedTaskIds: new Set(),
@@ -198,6 +218,10 @@ const taskBuilderState = {
   pendingStatusConfirmation: null,
   isScheduling: false,
   autoGroupMemberRecipients: new Set(),
+  editorZoom: 100,
+  grammarMatches: [],
+  grammarCheckTimer: null,
+  grammarCheckController: null,
 };
 
 const TASK_DRAFT_STORAGE_KEY = 'wa_task_builder_draft_v1';
@@ -206,7 +230,18 @@ const paymentState = { publicKey: '', currency: 'NGN', creditRate: 1 };
 const companyProfileState = { activeTab: 'business', quill: null, profileId: null, faqCount: 0, productCount: 0 };
 const COMPANY_TABS = ['business', 'faqs', 'products', 'tone'];
 const connectionRecoveryState = { returnContext: null };
-const adminState = { tab: 'users', users: [], tasks: [], selectedUser: null, canEdit: false, selectedEmailUserIds: new Set() };
+const adminState = {
+  tab: 'users',
+  users: [],
+  tasks: [],
+  selectedUser: null,
+  canEdit: false,
+  selectedEmailUserIds: new Set(),
+  usersPage: 1,
+  tasksPage: 1,
+  emailUsersPage: 1,
+  pageSize: 8,
+};
 const adminResizeState = { isResizing: false, pointerId: null };
 
 function getEntityId(entity = {}) {
@@ -566,6 +601,7 @@ function hasCompanyPortfolio() {
 
 function redirectToPortfolioForAutomatedMode() {
   showToast('Please complete your company portfolio first before scheduling automated responses.');
+  ui.portfolioRequiredNotice?.classList.remove('hidden');
   navigate('tasks');
   setWorkspaceTab('portfolio');
   setCompanyTab('business');
@@ -747,6 +783,7 @@ function hydrateCompanyProfileForm(profile = {}) {
   (Array.isArray(profile.products) && profile.products.length ? profile.products : []).forEach(addProductCard);
   ensureDynamicEmptyState(ui.faqList, 'faq');
   ensureDynamicEmptyState(ui.productList, 'product');
+  ui.portfolioRequiredNotice?.classList.toggle('hidden', hasCompanyPortfolio());
   ui.companyProfileStatus.textContent = profile.updatedAt ? `Saved ${new Date(profile.updatedAt).toLocaleString()}` : 'Not saved yet';
 }
 
@@ -766,6 +803,7 @@ async function submitCompanyProfile(event) {
   try {
     const payload = await api.saveCompanyProfile(collectCompanyProfilePayload());
     hydrateCompanyProfileForm(payload.profile || {});
+    ui.portfolioRequiredNotice?.classList.add('hidden');
     syncUserFromPayload(payload);
     setCompanyTab('tone');
     showToast('Company portfolio saved successfully.');
@@ -1133,6 +1171,22 @@ function getFilteredTasks() {
       : new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
 }
 
+function getVisibleTaskPageItems() {
+  const filtered = getFilteredTasks();
+  return paginateItems(filtered, taskBuilderState.taskPage, taskBuilderState.taskPageSize).pageItems;
+}
+
+function paginateItems(items = [], currentPage = 1, pageSize = 10) {
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const safePage = Math.min(Math.max(1, currentPage), totalPages);
+  const startIndex = (safePage - 1) * pageSize;
+  return {
+    totalPages,
+    safePage,
+    pageItems: items.slice(startIndex, startIndex + pageSize),
+  };
+}
+
 function updateTaskSelectionSummary(visibleTasks = []) {
   const visibleIds = visibleTasks.map((task) => task._id);
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => taskBuilderState.selectedTaskIds.has(id));
@@ -1199,8 +1253,13 @@ function buildTaskRowsMarkup(tasks = [], { selectable = true, emptyMessage = 'No
 }
 
 function renderTasks(tasks = []) {
-  updateTaskSelectionSummary(tasks);
-  ui.taskList.innerHTML = buildTaskRowsMarkup(tasks);
+  const { totalPages, safePage, pageItems } = paginateItems(tasks, taskBuilderState.taskPage, taskBuilderState.taskPageSize);
+  taskBuilderState.taskPage = safePage;
+  updateTaskSelectionSummary(pageItems);
+  ui.taskList.innerHTML = buildTaskRowsMarkup(pageItems);
+  if (ui.taskPageInfo) ui.taskPageInfo.textContent = `Page ${safePage} of ${totalPages}`;
+  if (ui.taskPrevButton) ui.taskPrevButton.disabled = safePage <= 1;
+  if (ui.taskNextButton) ui.taskNextButton.disabled = safePage >= totalPages;
 
   if (ui.taskListTabSummary) {
     const recentTasks = tasks.slice(0, 5);
@@ -1925,6 +1984,8 @@ async function loadAdminUsers() {
       ? data.data.users
       : [];
   adminState.users = users.map((user) => ({ ...user, id: getEntityId(user) }));
+  adminState.usersPage = 1;
+  adminState.emailUsersPage = 1;
   const validSelectedIds = new Set(adminState.users.map((user) => user.id));
   adminState.selectedEmailUserIds = new Set(Array.from(adminState.selectedEmailUserIds).filter((id) => validSelectedIds.has(id)));
   renderAdminUsers();
@@ -1938,12 +1999,15 @@ async function loadAdminTasks() {
   if (ui.adminTaskMode?.value) params.set('mode', ui.adminTaskMode.value);
   const data = await api.adminTasks(params.toString());
   adminState.tasks = Array.isArray(data.tasks) ? data.tasks : [];
+  adminState.tasksPage = 1;
   renderAdminTasks();
 }
 
 function renderAdminUsers() {
   if (!ui.adminUsersTable) return;
-  ui.adminUsersTable.innerHTML = buildTaskRowsMarkup(adminState.users.map((user) => ({
+  const { totalPages, safePage, pageItems } = paginateItems(adminState.users, adminState.usersPage, adminState.pageSize);
+  adminState.usersPage = safePage;
+  const mappedUsers = pageItems.map((user) => ({
     _id: getEntityId(user),
     title: user.username,
     type: user.role || 'customer',
@@ -1955,7 +2019,8 @@ function renderAdminUsers() {
     lastError: `Created ${formatTaskDate(user.createdAt)}`,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
-  })), { selectable: false, emptyMessage: 'No users found.' });
+  }));
+  ui.adminUsersTable.innerHTML = buildTaskRowsMarkup(mappedUsers, { selectable: false, emptyMessage: 'No users found.' });
   ui.adminUsersTable.classList.add('task-table--admin-users');
   ui.adminUsersTable.querySelectorAll('[data-task-action="pause"]').forEach((btn) => { btn.textContent = 'Edit'; btn.dataset.taskAction = 'admin-user-edit'; });
   ui.adminUsersTable.querySelectorAll('[data-task-action="retry"]').forEach((btn) => {
@@ -1964,6 +2029,9 @@ function renderAdminUsers() {
     btn.disabled = !adminState.canEdit;
   });
   ui.adminUsersTable.querySelectorAll('[data-task-action="delete"]').forEach((btn) => { btn.textContent = 'Delete'; btn.dataset.taskAction = 'admin-user-delete'; btn.disabled = !adminState.canEdit; });
+  if (ui.adminUsersPageInfo) ui.adminUsersPageInfo.textContent = `Page ${safePage} of ${totalPages}`;
+  if (ui.adminUsersPrevButton) ui.adminUsersPrevButton.disabled = safePage <= 1;
+  if (ui.adminUsersNextButton) ui.adminUsersNextButton.disabled = safePage >= totalPages;
 }
 
 function getFilteredAdminEmailUsers() {
@@ -1984,9 +2052,12 @@ function syncAdminEmailRecipientsInput() {
 function renderAdminEmailUsers() {
   if (!ui.adminEmailUsersTable) return;
   const filteredUsers = getFilteredAdminEmailUsers();
-  if (!filteredUsers.length) {
+  const { totalPages, safePage, pageItems } = paginateItems(filteredUsers, adminState.emailUsersPage, adminState.pageSize);
+  adminState.emailUsersPage = safePage;
+  if (!pageItems.length) {
     ui.adminEmailUsersTable.innerHTML = '<div class="empty-state">No users match your filter.</div>';
     if (ui.adminEmailSelectAll) ui.adminEmailSelectAll.checked = false;
+    if (ui.adminEmailPageInfo) ui.adminEmailPageInfo.textContent = 'Page 1 of 1';
     return;
   }
   ui.adminEmailUsersTable.innerHTML = `
@@ -1997,7 +2068,7 @@ function renderAdminEmailUsers() {
       <span>Role</span>
       <span>Joined</span>
     </div>
-    ${filteredUsers.map((user) => `
+    ${pageItems.map((user) => `
       <div class="task-table__row task-table__row--email">
         <span class="task-table__checkbox task-table__checkbox--cell"><input type="checkbox" data-admin-email-user="${escapeHtml(user.id)}" ${adminState.selectedEmailUserIds.has(user.id) ? 'checked' : ''} /></span>
         <div class="task-table__cell"><strong>${escapeHtml(user.username || 'Unknown user')}</strong></div>
@@ -2010,13 +2081,21 @@ function renderAdminEmailUsers() {
   if (ui.adminEmailSelectAll) {
     ui.adminEmailSelectAll.checked = filteredUsers.every((user) => adminState.selectedEmailUserIds.has(user.id));
   }
+  if (ui.adminEmailPageInfo) ui.adminEmailPageInfo.textContent = `Page ${safePage} of ${totalPages}`;
+  if (ui.adminEmailPrevButton) ui.adminEmailPrevButton.disabled = safePage <= 1;
+  if (ui.adminEmailNextButton) ui.adminEmailNextButton.disabled = safePage >= totalPages;
 }
 
 function renderAdminTasks() {
   if (!ui.adminTasksTable) return;
-  ui.adminTasksTable.innerHTML = buildTaskRowsMarkup(adminState.tasks, { selectable: false, emptyMessage: 'No tasks found.' });
+  const { totalPages, safePage, pageItems } = paginateItems(adminState.tasks, adminState.tasksPage, adminState.pageSize);
+  adminState.tasksPage = safePage;
+  ui.adminTasksTable.innerHTML = buildTaskRowsMarkup(pageItems, { selectable: false, emptyMessage: 'No tasks found.' });
   ui.adminTasksTable.querySelectorAll('[data-task-action="pause"]').forEach((btn) => { btn.textContent = 'Retry'; btn.dataset.taskAction = 'admin-task-retry'; });
   ui.adminTasksTable.querySelectorAll('[data-task-action="delete"]').forEach((btn) => { btn.textContent = 'Delete'; btn.dataset.taskAction = 'admin-task-delete'; btn.disabled = !adminState.canEdit; });
+  if (ui.adminTasksPageInfo) ui.adminTasksPageInfo.textContent = `Page ${safePage} of ${totalPages}`;
+  if (ui.adminTasksPrevButton) ui.adminTasksPrevButton.disabled = safePage <= 1;
+  if (ui.adminTasksNextButton) ui.adminTasksNextButton.disabled = safePage >= totalPages;
 }
 
 function showAdminCreditForm(user) {
@@ -2059,6 +2138,8 @@ function resetTaskBuilder() {
   taskBuilderState.manualRecipients = [];
   taskBuilderState.taskMode = 'broadcast';
   taskBuilderState.automationAudience = ['all_incoming'];
+  taskBuilderState.taskPage = 1;
+  taskBuilderState.grammarMatches = [];
   taskBuilderState.pendingStatusConfirmation = null;
   taskBuilderState.autoGroupMemberRecipients = new Set();
   ui.statusContactWaitCard?.classList.add('hidden');
@@ -2083,15 +2164,123 @@ function resetTaskBuilder() {
   setTaskTab('message');
   updateTaskModeUI();
   updateTaskPreview();
+  renderGrammarSuggestions();
+  if (ui.grammarStatusText) ui.grammarStatusText.textContent = 'Grammar suggestions appear here shortly after you type.';
+}
+
+function updateEditorZoomDisplay() {
+  if (ui.editorZoomLevel) ui.editorZoomLevel.textContent = `${taskBuilderState.editorZoom}%`;
+}
+
+function applyEditorZoom() {
+  if (!taskBuilderState.quill) return;
+  taskBuilderState.quill.root.style.fontSize = `${taskBuilderState.editorZoom}%`;
+  updateEditorZoomDisplay();
+}
+
+function changeEditorZoom(delta) {
+  taskBuilderState.editorZoom = Math.min(200, Math.max(70, taskBuilderState.editorZoom + delta));
+  applyEditorZoom();
+}
+
+function renderGrammarSuggestions() {
+  if (!ui.grammarSuggestions) return;
+  if (!taskBuilderState.grammarMatches.length) {
+    ui.grammarSuggestions.className = 'grammar-suggestions empty-state';
+    ui.grammarSuggestions.textContent = 'No grammar suggestions yet.';
+    return;
+  }
+  ui.grammarSuggestions.className = 'grammar-suggestions';
+  ui.grammarSuggestions.innerHTML = taskBuilderState.grammarMatches.map((match, index) => `
+    <article class="grammar-suggestion-item">
+      <div class="grammar-suggestion-item__meta">
+        <strong>${escapeHtml(match.message || 'Suggestion')}</strong>
+        <span class="pill">${escapeHtml(match.shortMessage || 'Grammar')}</span>
+      </div>
+      <small class="muted">Current: "${escapeHtml(match.contextText || '')}"</small>
+      <div class="grammar-suggestion-item__actions">
+        ${match.replacements.slice(0, 4).map((replacement) => `<button class="secondary-button compact-button" type="button" data-grammar-apply="${index}" data-grammar-value="${encodeURIComponent(replacement.value || '')}">${escapeHtml(replacement.value || '')}</button>`).join('')}
+      </div>
+    </article>
+  `).join('');
+}
+
+function applyGrammarSuggestion(matchIndex, replacementValue = '') {
+  const match = taskBuilderState.grammarMatches[matchIndex];
+  if (!match || !taskBuilderState.quill) return;
+  const currentText = taskBuilderState.quill.getText() || '';
+  const before = currentText.slice(0, match.offset);
+  const after = currentText.slice(match.offset + match.length);
+  const nextText = `${before}${replacementValue}${after}`;
+  taskBuilderState.quill.setText(nextText);
+  taskBuilderState.grammarMatches = [];
+  renderGrammarSuggestions();
+  if (ui.grammarStatusText) ui.grammarStatusText.textContent = 'Applied correction. Rechecking grammar…';
+  queueGrammarCheck();
+}
+
+async function runGrammarCheck() {
+  if (!taskBuilderState.quill) return;
+  const text = sanitizeTextAreaValue(taskBuilderState.quill.getText() || '').trim();
+  if (!text || text.length < 8) {
+    taskBuilderState.grammarMatches = [];
+    renderGrammarSuggestions();
+    if (ui.grammarStatusText) ui.grammarStatusText.textContent = 'Type a longer message to check grammar.';
+    return;
+  }
+  try {
+    taskBuilderState.grammarCheckController?.abort();
+    taskBuilderState.grammarCheckController = new AbortController();
+    if (ui.grammarStatusText) ui.grammarStatusText.textContent = 'Checking grammar…';
+    const form = new URLSearchParams({ text, language: 'en-US' });
+    const response = await fetch('https://api.languagetool.org/v2/check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: form.toString(),
+      signal: taskBuilderState.grammarCheckController.signal,
+    });
+    if (!response.ok) throw new Error('Grammar service unavailable.');
+    const payload = await response.json();
+    const matches = Array.isArray(payload.matches) ? payload.matches : [];
+    taskBuilderState.grammarMatches = matches.map((match) => ({
+      message: match.message || 'Grammar suggestion',
+      shortMessage: match.shortMessage || '',
+      offset: Number(match.offset || 0),
+      length: Number(match.length || 0),
+      contextText: match.context?.text || text.slice(Number(match.offset || 0), Number(match.offset || 0) + Number(match.length || 0)),
+      replacements: Array.isArray(match.replacements) ? match.replacements : [],
+    })).filter((match) => match.replacements.length);
+    renderGrammarSuggestions();
+    if (ui.grammarStatusText) ui.grammarStatusText.textContent = taskBuilderState.grammarMatches.length
+      ? `${taskBuilderState.grammarMatches.length} grammar suggestion${taskBuilderState.grammarMatches.length === 1 ? '' : 's'} found. Click one to apply.`
+      : 'No grammar issues found.';
+  } catch (error) {
+    if (error.name === 'AbortError') return;
+    taskBuilderState.grammarMatches = [];
+    renderGrammarSuggestions();
+    if (ui.grammarStatusText) ui.grammarStatusText.textContent = 'Grammar suggestions are temporarily unavailable.';
+  }
+}
+
+function queueGrammarCheck() {
+  window.clearTimeout(taskBuilderState.grammarCheckTimer);
+  taskBuilderState.grammarCheckTimer = window.setTimeout(() => {
+    runGrammarCheck();
+  }, 650);
 }
 
 function initQuill() {
   taskBuilderState.quill = new window.Quill('#messageEditor', {
     theme: 'snow',
     placeholder: 'Type or paste the WhatsApp message here...',
-    modules: { toolbar: [['bold', 'italic', 'underline'], [{ list: 'ordered' }, { list: 'bullet' }], ['link', 'clean']] },
+    modules: { toolbar: [['bold', 'italic', 'underline', { size: ['small', false, 'large', 'huge'] }], [{ list: 'ordered' }, { list: 'bullet' }], ['link', 'clean']] },
   });
-  taskBuilderState.quill.on('text-change', updateTaskPreview);
+  taskBuilderState.quill.root.setAttribute('spellcheck', 'true');
+  taskBuilderState.quill.on('text-change', () => {
+    updateTaskPreview();
+    queueGrammarCheck();
+  });
+  applyEditorZoom();
 }
 
 ui.loginForm.addEventListener('submit', async (event) => {
@@ -2281,6 +2470,8 @@ ui.connectWhatsappButton.addEventListener('click', async () => {
 
 ui.openAiTextTabButton.addEventListener('click', () => setTaskTab('ai-text'));
 ui.openAiMediaTabButton.addEventListener('click', () => setTaskTab('ai-media'));
+ui.editorZoomInButton?.addEventListener('click', () => changeEditorZoom(10));
+ui.editorZoomOutButton?.addEventListener('click', () => changeEditorZoom(-10));
 ui.generateMoreMediaButton.addEventListener('click', () => setTaskTab('ai-media'));
 ui.messageNextButton.addEventListener('click', () => setTaskTab(isAutomatedMode() ? 'schedule' : 'audience'));
 ui.audienceBackButton.addEventListener('click', () => setTaskTab('message'));
@@ -2309,21 +2500,25 @@ ui.scheduleTaskButton.addEventListener('click', scheduleTask);
 ui.taskTitle.addEventListener('input', updateScheduleActionVisibility);
 ui.taskSearchInput.addEventListener('input', (event) => {
   taskBuilderState.taskSearch = event.target.value;
+  taskBuilderState.taskPage = 1;
   renderTasks(getFilteredTasks());
 });
 ui.taskSortButton.addEventListener('click', () => {
   taskBuilderState.taskSortDirection = taskBuilderState.taskSortDirection === 'desc' ? 'asc' : 'desc';
   ui.taskSortButton.textContent = `Sort: ${taskBuilderState.taskSortDirection === 'desc' ? 'Newest first' : 'Oldest first'}`;
+  taskBuilderState.taskPage = 1;
   renderTasks(getFilteredTasks());
 });
 ui.selectAllTasks.addEventListener('change', () => {
-  const visibleTasks = getFilteredTasks();
+  const visibleTasks = getVisibleTaskPageItems();
   visibleTasks.forEach((task) => {
     if (ui.selectAllTasks.checked) taskBuilderState.selectedTaskIds.add(task._id);
     else taskBuilderState.selectedTaskIds.delete(task._id);
   });
-  renderTasks(visibleTasks);
+  renderTasks(getFilteredTasks());
 });
+ui.taskPrevButton?.addEventListener('click', () => { taskBuilderState.taskPage = Math.max(1, taskBuilderState.taskPage - 1); renderTasks(getFilteredTasks()); });
+ui.taskNextButton?.addEventListener('click', () => { taskBuilderState.taskPage += 1; renderTasks(getFilteredTasks()); });
 ui.pauseSelectedTasksButton.addEventListener('click', () => applyBulkTaskAction('pause'));
 ui.deleteSelectedTasksButton.addEventListener('click', () => applyBulkTaskAction('delete'));
 ui.groupSearch.addEventListener('input', () => { taskBuilderState.groupPage = 1; renderTable('groups'); });
@@ -2409,6 +2604,12 @@ ui.automationAudienceInputs.forEach((input) => input.addEventListener('change', 
   updateScheduleActionVisibility();
 }));
 ui.taskNavButtons?.forEach((button) => button.addEventListener('click', () => navigateTaskWizard(button.dataset.taskNav)));
+ui.adminUsersPrevButton?.addEventListener('click', () => { adminState.usersPage = Math.max(1, adminState.usersPage - 1); renderAdminUsers(); });
+ui.adminUsersNextButton?.addEventListener('click', () => { adminState.usersPage += 1; renderAdminUsers(); });
+ui.adminTasksPrevButton?.addEventListener('click', () => { adminState.tasksPage = Math.max(1, adminState.tasksPage - 1); renderAdminTasks(); });
+ui.adminTasksNextButton?.addEventListener('click', () => { adminState.tasksPage += 1; renderAdminTasks(); });
+ui.adminEmailPrevButton?.addEventListener('click', () => { adminState.emailUsersPage = Math.max(1, adminState.emailUsersPage - 1); renderAdminEmailUsers(); });
+ui.adminEmailNextButton?.addEventListener('click', () => { adminState.emailUsersPage += 1; renderAdminEmailUsers(); });
 
 document.addEventListener('click', (event) => {
   const workspaceTab = event.target.closest('[data-workspace-tab]');
@@ -2430,7 +2631,14 @@ document.addEventListener('click', (event) => {
   if (taskCheckbox) {
     if (taskCheckbox.checked) taskBuilderState.selectedTaskIds.add(taskCheckbox.dataset.selectTask);
     else taskBuilderState.selectedTaskIds.delete(taskCheckbox.dataset.selectTask);
-    updateTaskSelectionSummary(getFilteredTasks());
+    updateTaskSelectionSummary(getVisibleTaskPageItems());
+  }
+
+  const grammarApplyButton = event.target.closest('[data-grammar-apply]');
+  if (grammarApplyButton) {
+    const matchIndex = Number(grammarApplyButton.dataset.grammarApply);
+    const replacementValue = decodeURIComponent(grammarApplyButton.dataset.grammarValue || '');
+    applyGrammarSuggestion(matchIndex, replacementValue);
   }
 
   const taskActionButton = event.target.closest('[data-task-action]');
@@ -2720,7 +2928,10 @@ ui.adminSidebarGrip?.addEventListener('pointerup', (event) => {
   }
   document.body.style.userSelect = '';
 });
-ui.adminEmailUserSearch?.addEventListener('input', () => renderAdminEmailUsers());
+ui.adminEmailUserSearch?.addEventListener('input', () => {
+  adminState.emailUsersPage = 1;
+  renderAdminEmailUsers();
+});
 ui.adminCreditFormWrap?.addEventListener('submit', async (event) => {
   event.preventDefault();
   const amount = Number(document.getElementById('adminCreditAmount')?.value || 0);
