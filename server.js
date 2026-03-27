@@ -648,7 +648,8 @@ function normalizeGroup(group, contactById = new Map()) {
   };
 }
 
-function normalizeContact(contact = {}, chat = {}) {
+function normalizeContact(contact = {}, chat = {}, options = {}) {
+  const { fromContactList = false } = options;
   const rawId = String(contact.id || chat.id || '');
   const id = normalizePhoneJid(
     contact.phoneNumber
@@ -662,6 +663,7 @@ function normalizeContact(contact = {}, chat = {}) {
     name,
     phone: normalizePhoneNumber(contact.phoneNumber || contact.waid || contact.phone || id),
     segment: chat.unreadCount ? 'Recent chat' : 'Contact',
+    isSavedContact: Boolean(fromContactList),
   };
 }
 
@@ -698,6 +700,7 @@ async function snapshotAudience(tenantId, state) {
             name: String(contact.name || normalizePhoneNumber(contact.id || '') || contact.id || ''),
             phone: normalizePhoneNumber(contact.phone || contact.id || ''),
             segment: String(contact.segment || 'Contact'),
+            isSavedContact: Boolean(contact.isSavedContact),
           },
         },
         upsert: true,
@@ -710,12 +713,18 @@ async function upsertAudienceContacts(tenantId, contacts = [], chats = []) {
   const current = audienceStore.get(tenantId) || buildDefaultAudienceState();
   const nextContacts = new Map(current.contacts.map((contact) => [contact.id, contact]));
   contacts.forEach((contact) => {
-    const normalized = normalizeContact(contact, {});
-    if (normalized.id && !normalized.id.endsWith('@g.us')) nextContacts.set(normalized.id, { ...nextContacts.get(normalized.id), ...normalized });
+    const normalized = normalizeContact(contact, {}, { fromContactList: true });
+    if (normalized.id && !normalized.id.endsWith('@g.us')) {
+      const existing = nextContacts.get(normalized.id) || {};
+      nextContacts.set(normalized.id, { ...existing, ...normalized, isSavedContact: Boolean(existing.isSavedContact || normalized.isSavedContact) });
+    }
   });
   chats.forEach((chat) => {
-    const normalized = normalizeContact({}, chat);
-    if (normalized.id && !normalized.id.endsWith('@g.us')) nextContacts.set(normalized.id, { ...nextContacts.get(normalized.id), ...normalized });
+    const normalized = normalizeContact({}, chat, { fromContactList: false });
+    if (normalized.id && !normalized.id.endsWith('@g.us')) {
+      const existing = nextContacts.get(normalized.id) || {};
+      nextContacts.set(normalized.id, { ...existing, ...normalized, isSavedContact: Boolean(existing.isSavedContact || normalized.isSavedContact) });
+    }
   });
   const next = { ...current, contacts: Array.from(nextContacts.values()).sort((a, b) => a.name.localeCompare(b.name)), lastSyncedAt: new Date() };
   audienceStore.set(tenantId, next);
@@ -965,6 +974,7 @@ const tenantAudienceContactSchema = new mongoose.Schema({
   name: { type: String, required: true },
   phone: { type: String, default: '' },
   segment: { type: String, default: 'Contact' },
+  isSavedContact: { type: Boolean, default: false },
 }, { timestamps: true });
 tenantAudienceContactSchema.index({ tenantId: 1, id: 1 }, { unique: true });
 
@@ -1650,6 +1660,10 @@ function validateSchedule(schedule = {}, timezone = DEFAULT_TIMEZONE) {
   }
   if (!normalized.startDate || !/^\d{4}-\d{2}-\d{2}$/.test(normalized.startDate)) throw new Error('A valid start date is required.');
   if (!normalized.startTime) throw new Error('A valid start time is required.');
+  const { today, currentTime } = getDatePartsForTimezone(new Date(), normalized.timezone);
+  if (normalized.startDate < today || (normalized.startDate === today && normalized.startTime < currentTime)) {
+    throw new Error('Start date and time must not be in the past.');
+  }
   if (normalized.frequency === 'daily' && !normalized.dailyTimes.length) normalized.dailyTimes = [normalized.startTime];
   if (normalized.frequency === 'weekly' && !normalized.weeklySlots.length) throw new Error('Weekly tasks require at least one weekday/time slot.');
   if (normalized.frequency === 'monthly' && !normalized.monthlyWeeks.length && !normalized.monthlyDays.length) throw new Error('Monthly tasks require at least one week or day rule.');
@@ -1787,7 +1801,7 @@ async function isKnownContactForTenant(tenantId, remoteJid) {
   const jid = normalizePhoneJid(remoteJid);
   if (!jid) return false;
   const record = await TenantAudienceContact.findOne({ tenantId, id: jid }).lean();
-  return Boolean(record);
+  return Boolean(record && (record.isSavedContact || String(record.segment || '').toLowerCase() === 'contact'));
 }
 
 async function findMatchingAutomatedResponseTask(tenantId, remoteJid) {
