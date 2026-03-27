@@ -240,10 +240,10 @@ const TASK_DRAFT_STORAGE_KEY = 'wa_task_builder_draft_v1';
 const workspaceState = { members: [] };
 const paymentState = { publicKey: '', currency: 'NGN', creditRate: 1 };
 const pricingState = {
-  messageUsd: 0,
-  statusUsd: 0,
-  textUsdPer1KTokens: 0,
-  imageUsdPerImage: 0,
+  messageUsd: 0.005,
+  statusUsd: 0.005,
+  textUsdPer1KTokens: 0.0006,
+  imageUsdPerImage: 0.04,
   usdToNgn: 1600,
   modelNotes: '',
 };
@@ -470,11 +470,11 @@ function renderPricingSummary() {
   if (!ui.pricingSummaryList) return;
   const rows = [
     {
-      title: 'Message send (regular price)',
+      title: 'Message send (credit-covered while credits remain)',
       value: `${formatUsd(pricingState.messageUsd, 4)} • ${formatNgnFromUsd(pricingState.messageUsd, 2)} per message`,
     },
     {
-      title: 'Status publish (regular price)',
+      title: 'Status publish (credit-covered while credits remain)',
       value: `${formatUsd(pricingState.statusUsd, 4)} • ${formatNgnFromUsd(pricingState.statusUsd, 2)} per status send`,
     },
     {
@@ -494,8 +494,8 @@ function renderPricingSummary() {
   `).join('');
   if (ui.pricingDisclaimer) {
     ui.pricingDisclaimer.textContent = pricingState.modelNotes
-      ? `${pricingState.modelNotes} USD → NGN uses ${Number(pricingState.usdToNgn || 0).toLocaleString('en-NG')} per $1 and may vary with market rates.`
-      : `USD → NGN uses ${Number(pricingState.usdToNgn || 0).toLocaleString('en-NG')} per $1 and may vary with market rates.`;
+      ? `Message sends and status posts are deducted from your credits first (no extra charge while credits remain). ${pricingState.modelNotes} USD → NGN uses ${Number(pricingState.usdToNgn || 0).toLocaleString('en-NG')} per $1 and may vary with market rates.`
+      : `Message sends and status posts are deducted from your credits first (no extra charge while credits remain). USD → NGN uses ${Number(pricingState.usdToNgn || 0).toLocaleString('en-NG')} per $1 and may vary with market rates.`;
   }
 }
 
@@ -2667,9 +2667,10 @@ async function handleConnectAction(mode) {
     return;
   }
   try {
-    const phoneNumber = String(ui.whatsappPairPhone?.value || '').trim();
+    const rawPhoneNumber = String(ui.whatsappPairPhone?.value || '').trim();
+    const phoneNumber = rawPhoneNumber.replace(/^\+/, '').replace(/\s+/g, '');
     if (mode === 'phone_number' && !phoneNumber) {
-      showToast('Enter your WhatsApp phone number with country code for phone-number pairing.');
+      showToast('Enter your WhatsApp phone number digits for phone-number pairing (no + sign).');
       return;
     }
     setConnectionActionLoading(true);
