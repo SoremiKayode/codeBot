@@ -188,7 +188,7 @@ button.is-error {
 .secondary-button--cta {
   background: linear-gradient(135deg, rgba(15, 23, 42, .08), rgba(59,130,246,.14));
   border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
-  color: #ecfeff;
+  color: #0f172a;
 }
 .compact-button { width: auto; }
 .icon-button {
@@ -303,6 +303,18 @@ html[data-theme='dark'] .theme-icon--moon { opacity: 1; transform: translateY(0)
   box-shadow: var(--shadow-soft);
   font-weight: 600;
   line-height: 1.35;
+}
+.what-you-can-do-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .85rem;
+  margin-top: .35rem;
+}
+.what-you-can-do-actions .primary-button,
+.what-you-can-do-actions .secondary-button {
+  width: 100%;
+  min-height: 3.2rem;
+  justify-content: center;
 }
 .home-auth-cta {
   display: grid;
@@ -801,6 +813,7 @@ html[data-theme='dark'] .social-icon--facebook { color: #60a5fa; }
 html[data-theme='dark'] .social-icon--instagram { color: #f472b6; }
 html[data-theme='dark'] .social-icon--youtube { color: #f87171; }
 html[data-theme='dark'] .social-icon--whatsapp { color: #4ade80; }
+html[data-theme='dark'] .secondary-button--cta { color: #ecfeff; }
 .toast {
   position: fixed; right: 1rem; bottom: 1rem; padding: 1rem 1.2rem; border-radius: 1rem; background: var(--accent); color: #fff; box-shadow: var(--shadow); z-index: 50;
 }
