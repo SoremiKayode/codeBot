@@ -454,6 +454,15 @@ function closeMenu() {
   ui.menuToggle?.setAttribute('aria-expanded', 'false');
 }
 
+function scrollAuthSectionIntoView(routeName) {
+  if (!['login', 'signup'].includes(routeName)) return;
+  const authCard = views[routeName]?.querySelector('.auth-card');
+  if (!authCard) return;
+  requestAnimationFrame(() => {
+    authCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+
 function navigate(route) {
   const normalizedRoute = route === 'task-list' ? 'tasks' : route;
   const requestedRoute = ['dashboard', 'tasks', 'task-list', 'admin'].includes(route) && !appState.user ? 'login' : normalizedRoute;
@@ -462,6 +471,7 @@ function navigate(route) {
   setRoute(targetRoute);
   closeMenu();
   Object.entries(views).forEach(([key, view]) => view?.classList.toggle('active', key === targetRoute));
+  scrollAuthSectionIntoView(targetRoute);
   if (targetRoute === 'admin' && appState.user) {
     if (!['admin', 'Administartor'].includes(appState.user.role || 'customer')) {
       showToast('Admin access required.');
