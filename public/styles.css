@@ -363,6 +363,27 @@ html[data-theme='dark'] .theme-icon--moon { opacity: 1; transform: translateY(0)
 .portfolio-tabs { display: flex; flex-wrap: wrap; gap: .75rem; padding: .5rem; background: var(--surface-alt); border-radius: 1rem; }
 .company-panel { display: none; }
 .company-panel.active { display: grid; gap: 1rem; }
+
+/* Add subtle vertical breathing room between major card sections */
+.workspace-panel.active,
+.company-panel.active {
+  margin-bottom: 0.85rem;
+}
+
+.stack > .info-card,
+.stack > .table-card,
+.stack > .tip-card,
+.stack > .task-card,
+.stack > .payment-card {
+  margin-bottom: 0.5rem;
+}
+.stack > .info-card:last-child,
+.stack > .table-card:last-child,
+.stack > .tip-card:last-child,
+.stack > .task-card:last-child,
+.stack > .payment-card:last-child {
+  margin-bottom: 0;
+}
 .dynamic-card-list { display: grid; gap: 1rem; }
 .dynamic-entry-card { display: grid; gap: .85rem; padding: 1rem; border-radius: 1rem; border: 1px solid var(--border); background: linear-gradient(180deg, var(--surface-alt), var(--surface-soft)); box-shadow: var(--shadow-soft); }
 .dynamic-entry-card__header { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
