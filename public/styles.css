@@ -281,6 +281,39 @@ html[data-theme='dark'] .theme-icon--moon { opacity: 1; transform: translateY(0)
   object-fit: cover;
   display: block;
 }
+.what-you-can-do-panel {
+  margin-top: 1.5rem;
+}
+.what-you-can-do-panel h3 {
+  margin: 0;
+}
+.what-you-can-do-grid {
+  display: grid;
+  gap: .85rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.what-you-can-do-card {
+  padding: 1rem;
+  border-radius: 1rem;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--surface-alt), var(--surface-soft));
+  box-shadow: var(--shadow-soft);
+  font-weight: 600;
+  line-height: 1.35;
+}
+.home-auth-cta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .85rem;
+  width: 100%;
+  margin-top: 1rem;
+}
+.home-auth-cta .primary-button,
+.home-auth-cta .secondary-button {
+  width: 100%;
+  min-height: 3.2rem;
+  justify-content: center;
+}
 .hero-copy { padding: 0 2rem 2rem; position: relative; z-index: 1; min-height: 100%; align-content: start; }
 .hero-copy h2 {
   font-family: 'Space Grotesk', 'Inter', sans-serif;
@@ -819,18 +852,18 @@ body:not(.is-authenticated) .auth-only { display: none !important; }
   .hero-copy, .info-card, .auth-card, .table-card, .tip-card, .preview-shell { padding: 1.2rem; }
   .hero-card { min-height: auto; }
   .hero-banner-art {
-    min-height: min(72vh, 32rem);
+    min-height: auto;
     padding: 0;
     margin: 0;
   }
   .hero-image-frame {
     border-radius: 0;
-    min-height: inherit;
+    min-height: auto;
   }
   .hero-image {
-    min-height: inherit;
-    height: min(72vh, 32rem);
-    object-fit: cover;
+    min-height: 0;
+    height: auto;
+    object-fit: contain;
   }
   .hero-copy h2 {
     font-size: clamp(1.15rem, .95rem + 1.15vw, 1.45rem);
@@ -873,6 +906,9 @@ body:not(.is-authenticated) .auth-only { display: none !important; }
 @media (max-width: 640px) {
   .hero-image {
     object-position: center;
+  }
+  .what-you-can-do-grid {
+    grid-template-columns: 1fr;
   }
 }
 

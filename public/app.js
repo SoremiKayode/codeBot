@@ -2451,7 +2451,7 @@ ui.themeToggle.addEventListener('click', async () => {
   showToast(`Theme switched to ${next}.`);
 });
 
-ui.startButton.addEventListener('click', () => navigate(appState.user ? 'dashboard' : 'signup'));
+ui.startButton?.addEventListener('click', () => navigate(appState.user ? 'dashboard' : 'signup'));
 ui.createWorkspaceButton?.addEventListener('click', async () => {
   if (appState.user?.activeTenant) {
     showToast('You already have an active workspace.');
