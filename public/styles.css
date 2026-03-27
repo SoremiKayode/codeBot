@@ -282,7 +282,7 @@ html[data-theme='dark'] .theme-icon--moon { opacity: 1; transform: translateY(0)
   display: block;
 }
 .what-you-can-do-panel {
-  margin-top: 1.5rem;
+  margin-top: 4rem;
   padding: 0 2rem;
 }
 .what-you-can-do-panel--hero {
@@ -332,7 +332,7 @@ html[data-theme='dark'] .theme-icon--moon { opacity: 1; transform: translateY(0)
   min-height: 3.2rem;
   justify-content: center;
 }
-.hero-copy { padding: 0 2rem 2rem; position: relative; z-index: 1; min-height: 100%; align-content: start; }
+.hero-copy { padding: 0 2rem 2rem; margin-top: 2.5rem; position: relative; z-index: 1; min-height: 100%; align-content: start; }
 .hero-copy h2 {
   font-family: 'Space Grotesk', 'Inter', sans-serif;
   font-size: clamp(1.45rem, 1rem + 1.35vw, 2rem);
@@ -891,7 +891,8 @@ body:not(.is-authenticated) .auth-only { display: none !important; }
 
 @media (max-width: 640px) {
   .hero-copy, .info-card, .auth-card, .table-card, .tip-card, .preview-shell { padding: 1.2rem; }
-  .what-you-can-do-panel { padding: 0 1.2rem; }
+  .hero-copy { margin-top: 1.8rem; }
+  .what-you-can-do-panel { padding: 0 1.2rem; margin-top: 2.4rem; }
   .hero-card { min-height: auto; }
   .hero-banner-art {
     min-height: auto;
