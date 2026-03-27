@@ -158,6 +158,9 @@ button.is-error {
   z-index: 9999;
   padding: 1.25rem;
 }
+.modal-overlay--interactive {
+  background: rgba(2, 6, 23, 0.7);
+}
 .modal-card {
   width: min(26rem, 100%);
   text-align: center;
@@ -166,6 +169,29 @@ button.is-error {
   border-radius: 1rem;
   padding: 1.25rem;
   box-shadow: var(--shadow);
+}
+.workspace-name-modal {
+  text-align: left;
+}
+.workspace-name-input-wrap input {
+  border: 1px solid var(--border);
+  border-radius: .85rem;
+  padding: .78rem .9rem;
+  background: var(--surface-solid);
+  color: var(--text);
+}
+.workspace-name-input-wrap input:focus {
+  outline: 2px solid color-mix(in srgb, var(--primary) 45%, transparent);
+  outline-offset: 1px;
+}
+.create-workspace-highlight {
+  animation: workspacePulse 1.4s ease 2;
+  border-radius: 1rem;
+}
+@keyframes workspacePulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 35%, transparent); }
+  70% { box-shadow: 0 0 0 12px color-mix(in srgb, var(--primary) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 0%, transparent); }
 }
 .modal-spinner {
   width: 2.25rem;
@@ -819,6 +845,26 @@ input, textarea, select {
   fill: currentColor;
 }
 .social-icon-row--small { gap: .45rem; }
+.pricing-panel {
+  border: 1px solid color-mix(in srgb, var(--border) 76%, var(--card-glow));
+  border-radius: 1rem;
+  padding: 1rem;
+  background: color-mix(in srgb, var(--surface-soft) 88%, transparent);
+}
+.pricing-list {
+  display: grid;
+  gap: .55rem;
+}
+.pricing-list-item {
+  border: 1px solid var(--border);
+  border-radius: .9rem;
+  padding: .65rem .8rem;
+  background: color-mix(in srgb, var(--surface-solid) 93%, transparent);
+}
+.pricing-list-item strong {
+  display: block;
+  margin-bottom: .15rem;
+}
 .social-icon {
   color: var(--accent);
 }

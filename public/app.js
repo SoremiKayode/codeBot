@@ -40,6 +40,11 @@ const ui = {
   toast: document.getElementById('toast'),
   contactSyncModal: document.getElementById('contactSyncModal'),
   contactSyncModalMessage: document.getElementById('contactSyncModalMessage'),
+  workspaceNameModal: document.getElementById('workspaceNameModal'),
+  workspaceNameInput: document.getElementById('workspaceNameInput'),
+  workspaceNameSubmitButton: document.getElementById('workspaceNameSubmitButton'),
+  workspaceNameCancelButton: document.getElementById('workspaceNameCancelButton'),
+  createWorkspaceSection: document.getElementById('createWorkspaceSection'),
   startButton: document.getElementById('startButton'),
   createWorkspaceButton: document.getElementById('createWorkspaceButton'),
   dashboardScheduleTaskButton: document.getElementById('dashboardScheduleTaskButton'),
@@ -176,6 +181,8 @@ const ui = {
   adminEmailNextButton: document.getElementById('adminEmailNextButton'),
   adminEmailPageInfo: document.getElementById('adminEmailPageInfo'),
   portfolioRequiredNotice: document.getElementById('portfolioRequiredNotice'),
+  pricingSummaryList: document.getElementById('pricingSummaryList'),
+  pricingDisclaimer: document.getElementById('pricingDisclaimer'),
   taskNavButtons: document.querySelectorAll('[data-task-nav]'),
   groupDeliveryModeInputs: document.querySelectorAll('input[name="groupDeliveryMode"]'),
   taskModeInputs: document.querySelectorAll('input[name="taskMode"]'),
@@ -228,6 +235,14 @@ const taskBuilderState = {
 const TASK_DRAFT_STORAGE_KEY = 'wa_task_builder_draft_v1';
 const workspaceState = { members: [] };
 const paymentState = { publicKey: '', currency: 'NGN', creditRate: 1 };
+const pricingState = {
+  messageUsd: 0,
+  statusUsd: 0,
+  textUsdPer1KTokens: 0,
+  imageUsdPerImage: 0,
+  usdToNgn: 1600,
+  modelNotes: '',
+};
 const companyProfileState = { activeTab: 'business', quill: null, profileId: null, faqCount: 0, productCount: 0 };
 const COMPANY_TABS = ['business', 'faqs', 'products', 'tone'];
 const connectionRecoveryState = { returnContext: null };
@@ -437,21 +452,117 @@ function updatePaymentUI() {
     : 'Successful payments will be added to your personal credit balance.';
 }
 
+function formatUsd(value = 0, fractionDigits = 4) {
+  const normalized = Number(value || 0);
+  return `$${normalized.toLocaleString('en-US', { minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits })}`;
+}
+
+function formatNgnFromUsd(value = 0, fractionDigits = 2) {
+  const nariaValue = Number(value || 0) * Number(pricingState.usdToNgn || 0);
+  return `₦${nariaValue.toLocaleString('en-NG', { minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits })}`;
+}
+
+function renderPricingSummary() {
+  if (!ui.pricingSummaryList) return;
+  const rows = [
+    {
+      title: 'Message send (regular price)',
+      value: `${formatUsd(pricingState.messageUsd, 4)} • ${formatNgnFromUsd(pricingState.messageUsd, 2)} per message`,
+    },
+    {
+      title: 'Status publish (regular price)',
+      value: `${formatUsd(pricingState.statusUsd, 4)} • ${formatNgnFromUsd(pricingState.statusUsd, 2)} per status send`,
+    },
+    {
+      title: 'AI text generation (OpenAI token pricing)',
+      value: `${formatUsd(pricingState.textUsdPer1KTokens, 4)} • ${formatNgnFromUsd(pricingState.textUsdPer1KTokens, 2)} per 1,000 tokens`,
+    },
+    {
+      title: 'AI image generation (OpenAI pricing)',
+      value: `${formatUsd(pricingState.imageUsdPerImage, 4)} • ${formatNgnFromUsd(pricingState.imageUsdPerImage, 2)} per generated image`,
+    },
+  ];
+  ui.pricingSummaryList.innerHTML = rows.map((row) => `
+    <article class="pricing-list-item">
+      <strong>${escapeHtml(row.title)}</strong>
+      <span>${escapeHtml(row.value)}</span>
+    </article>
+  `).join('');
+  if (ui.pricingDisclaimer) {
+    ui.pricingDisclaimer.textContent = pricingState.modelNotes
+      ? `${pricingState.modelNotes} USD → NGN uses ${Number(pricingState.usdToNgn || 0).toLocaleString('en-NG')} per $1 and may vary with market rates.`
+      : `USD → NGN uses ${Number(pricingState.usdToNgn || 0).toLocaleString('en-NG')} per $1 and may vary with market rates.`;
+  }
+}
+
 async function loadPublicConfig() {
+  renderPricingSummary();
   try {
     const config = await api.publicConfig();
     paymentState.publicKey = config.paystackPublicKey || '';
     paymentState.currency = config.paystackCurrency || 'NGN';
     paymentState.creditRate = Number(config.paystackCreditRate || 1) || 1;
+    pricingState.messageUsd = Number(config.pricing?.messageUsd || 0);
+    pricingState.statusUsd = Number(config.pricing?.statusUsd || config.pricing?.messageUsd || 0);
+    pricingState.textUsdPer1KTokens = Number(config.pricing?.textUsdPer1KTokens || 0);
+    pricingState.imageUsdPerImage = Number(config.pricing?.imageUsdPerImage || 0);
+    pricingState.usdToNgn = Number(config.pricing?.usdToNgn || pricingState.usdToNgn) || pricingState.usdToNgn;
+    pricingState.modelNotes = String(config.pricing?.modelNotes || '').trim();
     updatePaymentUI();
+    renderPricingSummary();
   } catch (error) {
     console.warn('Unable to load public configuration.', error);
+    renderPricingSummary();
   }
 }
 
 function closeMenu() {
   document.querySelector('.app-header')?.classList.remove('menu-open');
   ui.menuToggle?.setAttribute('aria-expanded', 'false');
+}
+
+function showCreateWorkspaceGuide() {
+  const target = ui.createWorkspaceSection || ui.createWorkspaceButton;
+  if (!target) return;
+  target.classList.add('create-workspace-highlight');
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  setTimeout(() => target.classList.remove('create-workspace-highlight'), 2600);
+}
+
+function closeWorkspaceNameModal() {
+  if (!ui.workspaceNameModal) return;
+  ui.workspaceNameModal.classList.add('hidden');
+}
+
+function openWorkspaceNameModal(defaultName = 'My Workspace') {
+  if (!ui.workspaceNameModal || !ui.workspaceNameInput) return Promise.resolve('');
+  ui.workspaceNameInput.value = defaultName;
+  ui.workspaceNameModal.classList.remove('hidden');
+  requestAnimationFrame(() => ui.workspaceNameInput?.focus());
+  return new Promise((resolve) => {
+    const finish = (value = '') => {
+      cleanup();
+      closeWorkspaceNameModal();
+      resolve(value);
+    };
+    const onCancel = () => finish('');
+    const onSubmit = () => finish(sanitizeFormValue(ui.workspaceNameInput?.value || ''));
+    const onBackdropClick = (event) => { if (event.target === ui.workspaceNameModal) onCancel(); };
+    const onEscape = (event) => { if (event.key === 'Escape') onCancel(); };
+    const onEnter = (event) => { if (event.key === 'Enter') onSubmit(); };
+    const cleanup = () => {
+      ui.workspaceNameCancelButton?.removeEventListener('click', onCancel);
+      ui.workspaceNameSubmitButton?.removeEventListener('click', onSubmit);
+      ui.workspaceNameModal?.removeEventListener('click', onBackdropClick);
+      document.removeEventListener('keydown', onEscape);
+      ui.workspaceNameInput?.removeEventListener('keydown', onEnter);
+    };
+    ui.workspaceNameCancelButton?.addEventListener('click', onCancel);
+    ui.workspaceNameSubmitButton?.addEventListener('click', onSubmit);
+    ui.workspaceNameModal?.addEventListener('click', onBackdropClick);
+    document.addEventListener('keydown', onEscape);
+    ui.workspaceNameInput?.addEventListener('keydown', onEnter);
+  });
 }
 
 function scrollAuthSectionIntoView(routeName) {
@@ -867,7 +978,7 @@ function updateUserUI() {
     ui.createWorkspaceButton.disabled = hasWorkspace;
   }
   if (ui.goToTasksButton) ui.goToTasksButton.disabled = false;
-  if (ui.connectWhatsappButton) ui.connectWhatsappButton.disabled = !hasWorkspace;
+  if (ui.connectWhatsappButton) ui.connectWhatsappButton.disabled = false;
   if (ui.companyProfileForm) Array.from(ui.companyProfileForm.elements || []).forEach((element) => { if (element.id !== 'companyBackButton' && element.id !== 'companyNextButton') element.disabled = !user; });
   document.documentElement.dataset.theme = user?.theme || localStorage.getItem('wa_theme') || 'light';
   document.body.classList.toggle('is-admin', ['admin', 'Administartor'].includes(user?.role || 'customer'));
@@ -2458,7 +2569,7 @@ ui.createWorkspaceButton?.addEventListener('click', async () => {
     return;
   }
   const defaultName = appState.user?.username ? `${appState.user.username}'s Workspace` : 'My Workspace';
-  const workspaceName = sanitizeFormValue(window.prompt('Choose a workspace name.', defaultName) || '');
+  const workspaceName = await openWorkspaceNameModal(defaultName);
   if (!workspaceName) return;
   try {
     const payload = await api.createWorkspace({ workspaceName });
@@ -2495,7 +2606,8 @@ ui.dashboardScheduleTaskButton?.addEventListener('click', () => navigate('tasks'
 ui.refreshQrButton?.addEventListener('click', handleQrRefresh);
 ui.connectWhatsappButton.addEventListener('click', async () => {
   if (!appState.user?.activeTenant) {
-    showToast('Create a workspace before connecting WhatsApp. Personal task scheduling works without one.');
+    showToast('Create a workspace first before connecting WhatsApp.');
+    showCreateWorkspaceGuide();
     return;
   }
   try {

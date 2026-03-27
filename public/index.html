@@ -236,7 +236,7 @@
                 </div>
               </div>
               <p class="muted">Manage your account first, then create a workspace only when you are ready to run WhatsApp automation and invite teammates.</p>
-              <div class="hero-actions">
+              <div id="createWorkspaceSection" class="hero-actions">
                 <button id="createWorkspaceButton" class="primary-button compact-button" type="button">Create workspace</button>
                 <button id="dashboardScheduleTaskButton" class="secondary-button compact-button auth-only" type="button">Schedule task</button>
                 <button id="goToTasksButton" class="secondary-button compact-button" type="button">Open tasks</button>
@@ -981,7 +981,33 @@
           </div>
         </div>
       </section>
+
+      <section class="footer-section stack">
+        <div class="pricing-panel stack-sm">
+          <h3>Pricing transparency</h3>
+          <p class="muted">See what each action costs before you run automation.</p>
+          <div id="pricingSummaryList" class="pricing-list">
+            <p class="muted">Loading pricing details…</p>
+          </div>
+          <p id="pricingDisclaimer" class="muted"></p>
+        </div>
+      </section>
     </footer>
+  </div>
+
+  <div id="workspaceNameModal" class="modal-overlay modal-overlay--interactive hidden" role="dialog" aria-modal="true" aria-labelledby="workspaceNameModalTitle">
+    <div class="modal-card stack workspace-name-modal">
+      <h3 id="workspaceNameModalTitle">Create workspace</h3>
+      <p class="muted">Give your workspace a clear name so your team can identify it easily.</p>
+      <label class="stack-sm workspace-name-input-wrap">
+        <span>Workspace name</span>
+        <input id="workspaceNameInput" type="text" maxlength="80" placeholder="My Workspace" />
+      </label>
+      <div class="hero-actions">
+        <button id="workspaceNameCancelButton" class="secondary-button compact-button" type="button">Cancel</button>
+        <button id="workspaceNameSubmitButton" class="primary-button compact-button" type="button">Create workspace</button>
+      </div>
+    </div>
   </div>
 
   <div id="contactSyncModal" class="modal-overlay hidden" role="status" aria-live="polite" aria-modal="true" aria-label="Contact sync in progress">
