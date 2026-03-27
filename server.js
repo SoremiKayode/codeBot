@@ -709,8 +709,16 @@ async function snapshotAudience(tenantId, state) {
   }
 }
 
+async function getAudienceStateForUpsert(tenantId) {
+  const existing = audienceStore.get(tenantId);
+  if (existing) return existing;
+  const persisted = await getAudienceState(tenantId);
+  audienceStore.set(tenantId, persisted);
+  return persisted;
+}
+
 async function upsertAudienceContacts(tenantId, contacts = [], chats = []) {
-  const current = audienceStore.get(tenantId) || buildDefaultAudienceState();
+  const current = await getAudienceStateForUpsert(tenantId);
   const nextContacts = new Map(current.contacts.map((contact) => [contact.id, contact]));
   contacts.forEach((contact) => {
     const normalized = normalizeContact(contact, {}, { fromContactList: true });
@@ -733,7 +741,7 @@ async function upsertAudienceContacts(tenantId, contacts = [], chats = []) {
 }
 
 async function upsertAudienceGroups(tenantId, groups = []) {
-  const current = audienceStore.get(tenantId) || buildDefaultAudienceState();
+  const current = await getAudienceStateForUpsert(tenantId);
   const contactById = new Map(current.contacts.flatMap((contact) => {
     const normalizedId = String(contact?.id || '').trim();
     const keys = [normalizedId];
