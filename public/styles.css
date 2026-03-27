@@ -532,12 +532,14 @@ input, textarea, select {
 }
 .task-workspace { margin-top: 1rem; }
 .quill-host { min-height: 18rem; background: var(--surface-alt); border-radius: 1rem; overflow: hidden; }
+.message-editor-block { display: grid; gap: .65rem; margin-bottom: .35rem; }
 .quill-host .ql-toolbar { border: 1px solid var(--border); border-bottom: none; background: var(--surface-soft); }
 .quill-host .ql-container { min-height: 12rem; border: 1px solid var(--border); font-family: 'Inter', sans-serif; }
 .quill-enhancements { display: flex; justify-content: space-between; gap: .8rem; align-items: center; margin: .65rem 0; flex-wrap: wrap; }
 .editor-zoom-controls { display: flex; gap: .45rem; align-items: center; }
 .grammar-suggestions { margin-top: .65rem; display: grid; gap: .6rem; }
 .grammar-suggestion-item { border: 1px solid var(--border); border-radius: .8rem; background: var(--surface-soft); padding: .75rem; display: grid; gap: .45rem; }
+.grammar-suggestion-item.active { border-color: #ef4444; box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.35); }
 .grammar-suggestion-item__meta { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 .grammar-suggestion-item__actions { display: flex; gap: .5rem; flex-wrap: wrap; }
 .whatsapp-preview {

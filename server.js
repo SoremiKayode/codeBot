@@ -1692,9 +1692,21 @@ function shouldRunTaskNow(task, now = new Date()) {
     return { due: true, runKey, frequency, currentTime, timezone };
   }
   if (!startDate || !startTime) return { due: false, reason: 'missing_schedule' };
+  let dueByNextRunAt = false;
+  let scheduledRunDate = null;
   if (task?.nextRunAt) {
     const nextRunAtDate = new Date(task.nextRunAt);
-    if (!Number.isNaN(nextRunAtDate.getTime()) && nextRunAtDate > now) return { due: false, reason: 'not_due_yet' };
+    if (!Number.isNaN(nextRunAtDate.getTime())) {
+      if (nextRunAtDate > now) return { due: false, reason: 'not_due_yet' };
+      dueByNextRunAt = true;
+      scheduledRunDate = nextRunAtDate;
+    }
+  }
+  if (dueByNextRunAt && scheduledRunDate) {
+    const { currentTime } = getDatePartsForTimezone(scheduledRunDate, timezone);
+    const runKey = buildRunKey(scheduledRunDate, frequency, currentTime, timezone);
+    if (task.lastRunKey === runKey) return { due: false, reason: 'already_ran', runKey };
+    return { due: true, runKey, frequency, currentTime, timezone };
   }
   const { today, currentTime, dayName } = getDatePartsForTimezone(now, timezone);
   if (today < startDate) return { due: false, reason: 'before_start_date' };

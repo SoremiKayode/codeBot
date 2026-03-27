@@ -220,6 +220,7 @@ const taskBuilderState = {
   autoGroupMemberRecipients: new Set(),
   editorZoom: 100,
   grammarMatches: [],
+  activeGrammarMatchIndex: -1,
   grammarCheckTimer: null,
   grammarCheckController: null,
 };
@@ -561,7 +562,9 @@ function updateTaskModeUI() {
   ui.frequencySelect?.closest('label')?.classList.toggle('hidden', isAutomated);
   updateScheduleInputVisibility();
   ui.frequencyOptions?.classList.toggle('hidden', isAutomated);
-  document.getElementById('messageEditor')?.closest('div')?.classList.toggle('hidden', hideComposer);
+  document.getElementById('messageComposerSection')?.classList.toggle('hidden', hideComposer);
+  document.getElementById('mediaSelectionSection')?.classList.toggle('hidden', hideComposer);
+  document.getElementById('mediaQueueSection')?.classList.toggle('hidden', hideComposer);
   ui.openAiTextTabButton?.classList.toggle('hidden', hideComposer);
   ui.openAiMediaTabButton?.classList.toggle('hidden', hideComposer);
   document.querySelector('[data-task-tab="ai-text"]')?.classList.toggle('hidden', hideComposer);
@@ -2140,6 +2143,7 @@ function resetTaskBuilder() {
   taskBuilderState.automationAudience = ['all_incoming'];
   taskBuilderState.taskPage = 1;
   taskBuilderState.grammarMatches = [];
+  taskBuilderState.activeGrammarMatchIndex = -1;
   taskBuilderState.pendingStatusConfirmation = null;
   taskBuilderState.autoGroupMemberRecipients = new Set();
   ui.statusContactWaitCard?.classList.add('hidden');
@@ -2183,16 +2187,46 @@ function changeEditorZoom(delta) {
   applyEditorZoom();
 }
 
+function clearGrammarHighlights() {
+  if (!taskBuilderState.quill) return;
+  const fullLength = taskBuilderState.quill.getLength();
+  taskBuilderState.quill.formatText(0, fullLength, { background: false, color: false }, 'silent');
+}
+
+function applyGrammarHighlights() {
+  if (!taskBuilderState.quill) return;
+  clearGrammarHighlights();
+  taskBuilderState.grammarMatches.forEach((match, index) => {
+    if (!match.length) return;
+    const isActive = index === taskBuilderState.activeGrammarMatchIndex;
+    taskBuilderState.quill.formatText(match.offset, match.length, {
+      background: isActive ? '#fecaca' : '#fee2e2',
+      color: '#b42318',
+    }, 'silent');
+  });
+}
+
+function focusGrammarSuggestionForCursor(cursorIndex = -1) {
+  if (!Number.isFinite(cursorIndex) || cursorIndex < 0) return;
+  const matchIndex = taskBuilderState.grammarMatches.findIndex((match) => cursorIndex >= match.offset && cursorIndex <= (match.offset + match.length));
+  if (matchIndex === -1) return;
+  taskBuilderState.activeGrammarMatchIndex = matchIndex;
+  renderGrammarSuggestions();
+  if (ui.grammarStatusText) ui.grammarStatusText.textContent = 'Grammar issue selected. Choose a correction below.';
+}
+
 function renderGrammarSuggestions() {
   if (!ui.grammarSuggestions) return;
   if (!taskBuilderState.grammarMatches.length) {
     ui.grammarSuggestions.className = 'grammar-suggestions empty-state';
     ui.grammarSuggestions.textContent = 'No grammar suggestions yet.';
+    clearGrammarHighlights();
     return;
   }
+  applyGrammarHighlights();
   ui.grammarSuggestions.className = 'grammar-suggestions';
   ui.grammarSuggestions.innerHTML = taskBuilderState.grammarMatches.map((match, index) => `
-    <article class="grammar-suggestion-item">
+    <article class="grammar-suggestion-item ${index === taskBuilderState.activeGrammarMatchIndex ? 'active' : ''}" data-grammar-focus="${index}">
       <div class="grammar-suggestion-item__meta">
         <strong>${escapeHtml(match.message || 'Suggestion')}</strong>
         <span class="pill">${escapeHtml(match.shortMessage || 'Grammar')}</span>
@@ -2208,12 +2242,11 @@ function renderGrammarSuggestions() {
 function applyGrammarSuggestion(matchIndex, replacementValue = '') {
   const match = taskBuilderState.grammarMatches[matchIndex];
   if (!match || !taskBuilderState.quill) return;
-  const currentText = taskBuilderState.quill.getText() || '';
-  const before = currentText.slice(0, match.offset);
-  const after = currentText.slice(match.offset + match.length);
-  const nextText = `${before}${replacementValue}${after}`;
-  taskBuilderState.quill.setText(nextText);
+  taskBuilderState.quill.deleteText(match.offset, match.length, 'user');
+  taskBuilderState.quill.insertText(match.offset, replacementValue, 'user');
+  taskBuilderState.quill.setSelection(match.offset + replacementValue.length, 0, 'silent');
   taskBuilderState.grammarMatches = [];
+  taskBuilderState.activeGrammarMatchIndex = -1;
   renderGrammarSuggestions();
   if (ui.grammarStatusText) ui.grammarStatusText.textContent = 'Applied correction. Rechecking grammar…';
   queueGrammarCheck();
@@ -2250,6 +2283,7 @@ async function runGrammarCheck() {
       contextText: match.context?.text || text.slice(Number(match.offset || 0), Number(match.offset || 0) + Number(match.length || 0)),
       replacements: Array.isArray(match.replacements) ? match.replacements : [],
     })).filter((match) => match.replacements.length);
+    taskBuilderState.activeGrammarMatchIndex = taskBuilderState.grammarMatches.length ? 0 : -1;
     renderGrammarSuggestions();
     if (ui.grammarStatusText) ui.grammarStatusText.textContent = taskBuilderState.grammarMatches.length
       ? `${taskBuilderState.grammarMatches.length} grammar suggestion${taskBuilderState.grammarMatches.length === 1 ? '' : 's'} found. Click one to apply.`
@@ -2257,6 +2291,7 @@ async function runGrammarCheck() {
   } catch (error) {
     if (error.name === 'AbortError') return;
     taskBuilderState.grammarMatches = [];
+    taskBuilderState.activeGrammarMatchIndex = -1;
     renderGrammarSuggestions();
     if (ui.grammarStatusText) ui.grammarStatusText.textContent = 'Grammar suggestions are temporarily unavailable.';
   }
@@ -2277,8 +2312,13 @@ function initQuill() {
   });
   taskBuilderState.quill.root.setAttribute('spellcheck', 'true');
   taskBuilderState.quill.on('text-change', () => {
+    taskBuilderState.activeGrammarMatchIndex = -1;
     updateTaskPreview();
     queueGrammarCheck();
+  });
+  taskBuilderState.quill.on('selection-change', (range, _oldRange, source) => {
+    if (source !== 'user' || !range) return;
+    focusGrammarSuggestionForCursor(range.index);
   });
   applyEditorZoom();
 }
@@ -2639,6 +2679,18 @@ document.addEventListener('click', (event) => {
     const matchIndex = Number(grammarApplyButton.dataset.grammarApply);
     const replacementValue = decodeURIComponent(grammarApplyButton.dataset.grammarValue || '');
     applyGrammarSuggestion(matchIndex, replacementValue);
+  }
+
+  const grammarFocusTarget = event.target.closest('[data-grammar-focus]');
+  if (grammarFocusTarget) {
+    const matchIndex = Number(grammarFocusTarget.dataset.grammarFocus);
+    taskBuilderState.activeGrammarMatchIndex = Number.isFinite(matchIndex) ? matchIndex : -1;
+    renderGrammarSuggestions();
+    const match = taskBuilderState.grammarMatches[taskBuilderState.activeGrammarMatchIndex];
+    if (match && taskBuilderState.quill) {
+      taskBuilderState.quill.setSelection(match.offset, Math.max(match.length, 1), 'silent');
+      taskBuilderState.quill.focus();
+    }
   }
 
   const taskActionButton = event.target.closest('[data-task-action]');
