@@ -629,6 +629,17 @@ input, textarea, select {
 .qr-wrapper.connected .qr-code-frame,
 .qr-wrapper.connected .qr-tips { display: none; }
 .qr-wrapper.connected .qr-connected-state { display: block; }
+.qr-wrapper.phone-mode .qr-panel__header,
+.qr-wrapper.phone-mode .qr-code-frame,
+.qr-wrapper.phone-mode .qr-tips,
+.qr-wrapper.phone-mode .qr-connected-state,
+.qr-wrapper.phone-mode #qrHint {
+  display: none;
+}
+#qrWrapper.phone-mode .pairing-code-hint {
+  display: block;
+  text-align: center;
+}
 #qrCode {
   min-height: 320px;
   min-width: 320px;

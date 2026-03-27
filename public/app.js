@@ -1080,12 +1080,25 @@ function setConnectionActionLoading(isLoading) {
 
 function updateConnectionModeUI() {
   const mode = ui.whatsappConnectionMode?.value === 'phone_number' ? 'phone_number' : 'qr';
+  if (ui.qrWrapper) ui.qrWrapper.classList.toggle('phone-mode', mode === 'phone_number');
   if (ui.whatsappPairPhone?.parentElement) ui.whatsappPairPhone.parentElement.classList.toggle('hidden', mode !== 'phone_number');
   if (ui.connectWhatsappButton) ui.connectWhatsappButton.classList.toggle('hidden', mode !== 'qr');
   if (ui.generatePairingCodeButton) ui.generatePairingCodeButton.classList.toggle('hidden', mode !== 'phone_number');
-  if (ui.pairingCodeHint && mode !== 'phone_number') {
+  if (mode === 'phone_number') {
+    if (ui.qrCode) ui.qrCode.innerHTML = '';
+    if (ui.qrWrapper) {
+      ui.qrWrapper.classList.remove('connected');
+      ui.qrWrapper.classList.add('empty');
+    }
+    if (ui.qrHint) ui.qrHint.textContent = 'QR code is disabled in phone-number pairing mode.';
+    if (ui.pairingCodeHint) {
+      ui.pairingCodeHint.classList.remove('hidden');
+      ui.pairingCodeHint.textContent = 'Pairing code will appear here after you click “Generate pairing code”.';
+    }
+  } else if (ui.pairingCodeHint) {
     ui.pairingCodeHint.classList.add('hidden');
     ui.pairingCodeHint.textContent = '';
+    if (ui.qrHint) ui.qrHint.textContent = 'QR code will appear here after you start the connection.';
   }
 }
 
@@ -1108,7 +1121,7 @@ async function syncWhatsAppStatus() {
     ui.whatsappStatusBadge.textContent = status.status || 'idle';
     ui.whatsappPhone.textContent = status.phoneNumber || 'Not available';
     ui.whatsappPhone.title = status.phoneNumber || 'Not available';
-    if (ui.pairingCodeHint && status.status !== 'pairing_code_ready') {
+    if (ui.pairingCodeHint && status.status !== 'pairing_code_ready' && !status.pairingCode) {
       ui.pairingCodeHint.classList.add('hidden');
       ui.pairingCodeHint.textContent = '';
     }
@@ -2669,6 +2682,15 @@ async function handleConnectAction(mode) {
     ui.whatsappStatusBadge.textContent = data.status || 'connecting';
     ui.whatsappPhone.textContent = data.phoneNumber || 'Not available';
     ui.whatsappPhone.title = data.phoneNumber || 'Not available';
+    if (mode === 'phone_number' && ui.pairingCodeHint) {
+      ui.qrCode.innerHTML = '';
+      ui.qrWrapper.classList.remove('connected');
+      ui.qrWrapper.classList.add('empty');
+      ui.pairingCodeHint.classList.remove('hidden');
+      ui.pairingCodeHint.textContent = data.pairingCode
+        ? `Pairing code: ${data.pairingCode}`
+        : 'Generating pairing code… if it does not appear, click Refresh status.';
+    }
     startWhatsAppPolling();
     await syncWhatsAppStatus();
     await loadAudience(true);
