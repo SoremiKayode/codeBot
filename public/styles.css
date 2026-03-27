@@ -188,6 +188,7 @@ button.is-error {
 .secondary-button--cta {
   background: linear-gradient(135deg, rgba(15, 23, 42, .08), rgba(59,130,246,.14));
   border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
+  color: #ecfeff;
 }
 .compact-button { width: auto; }
 .icon-button {
@@ -834,12 +835,20 @@ body:not(.is-authenticated) .auth-only { display: none !important; }
 @media (max-width: 768px) { .hero-actions--portable .primary-button--cta, .hero-actions--portable .secondary-button--cta { width:100%; } }
 
 .hero-actions--portable .primary-button--cta, .hero-actions--portable .secondary-button--cta { min-height: 3.25rem; }
-.cta-button-grid--guest { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.cta-button-grid--guest .compact-button { min-height: 3.15rem; padding: .85rem 1rem; border-radius: 1rem; align-items: center; }
-.sidecard-cta-panel--guest .cta-button-grid { align-items: stretch; }
+.cta-button-grid--guest { grid-template-columns: 1fr; }
+.cta-button-grid--guest .compact-button { min-height: 3.15rem; min-width: 0; width: 100%; padding: .85rem 1rem; border-radius: 1rem; align-items: center; }
+.sidecard-cta-panel--guest .eyebrow { margin-bottom: .45rem; }
+.sidecard-cta-panel--guest .cta-button-grid { align-items: stretch; width: 100%; }
 .task-builder-nav { display: flex; justify-content: flex-end; gap: .75rem; margin-bottom: .9rem; }
-@media (min-width: 1081px) { .sidecard-cta-panel--guest .compact-button { max-height: 3.15rem; } .sidecard-cta-panel--guest { width: fit-content; } .elevated-sidecard { width: fit-content; min-width: 100%; } }
+@media (min-width: 1081px) { .sidecard-cta-panel--guest .compact-button { max-height: 3.15rem; } .sidecard-cta-panel--guest { width: 100%; } .elevated-sidecard { width: 100%; min-width: 100%; } }
 @media (max-width: 768px) { .social-buttons--auth, .cta-button-grid--guest { grid-template-columns: 1fr; } .task-builder-nav { justify-content: stretch; } .task-builder-nav .secondary-button { flex: 1 1 0; } }
+
+@media (max-width: 640px) {
+  .hero-image {
+    object-fit: contain;
+    object-position: center;
+  }
+}
 
 .task-error-text { color: #b91c1c; font-weight: 600; }
 
