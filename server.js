@@ -2238,7 +2238,7 @@ async function startWhatsAppSession(user, tenant, options = {}) {
   const { state, saveCreds } = await useMongooseAuthState(tenantId);
   const sock = makeWASocket({ version, auth: state, logger: pino({ level: 'silent' }), printQRInTerminal: false, syncFullHistory: true, markOnlineOnConnect: false });
   if (connectionMode === 'phone_number' && !sock.authState.creds.registered) {
-    if (!pairingPhoneDigits) throw new Error('Enter a valid phone number with country code for phone-number pairing.');
+    if (!pairingPhoneDigits) throw new Error('Enter a valid phone number (digits only, no + sign) for phone-number pairing.');
     await new Promise((resolve) => setTimeout(resolve, 5000));
     try {
       const code = await sock.requestPairingCode(pairingPhoneDigits);
