@@ -545,6 +545,27 @@ input, textarea, select {
 .password-strength.is-weak { color: #dc2626; }
 .password-strength.is-medium { color: #d97706; }
 .password-strength.is-strong { color: #059669; }
+.connection-actions {
+  display: inline-flex;
+  gap: .55rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.connection-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: .85rem;
+  align-items: end;
+}
+.pairing-code-hint {
+  margin: 0;
+  padding: .85rem 1rem;
+  border-radius: .9rem;
+  border: 1px dashed color-mix(in srgb, var(--primary) 40%, var(--border));
+  background: color-mix(in srgb, var(--surface-alt) 85%, var(--primary) 15%);
+  font-weight: 700;
+  letter-spacing: .04em;
+}
 
 .qr-wrapper {
   min-height: 18rem;

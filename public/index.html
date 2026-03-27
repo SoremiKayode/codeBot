@@ -275,7 +275,23 @@
                   <p class="eyebrow">Step 2</p>
                   <h2>Connect WhatsApp and continue to your workspace</h2>
                 </div>
-                <button id="connectWhatsappButton" class="primary-button compact-button primary-button--cta" type="button">Connect WhatsApp</button>
+                <div class="connection-actions">
+                  <button id="connectWhatsappButton" class="primary-button compact-button primary-button--cta" type="button">Connect WhatsApp</button>
+                  <button id="generatePairingCodeButton" class="secondary-button compact-button hidden" type="button">Generate pairing code</button>
+                </div>
+              </div>
+              <div class="connection-mode-grid">
+                <label for="whatsappConnectionMode">
+                  <span>Connection mode</span>
+                  <select id="whatsappConnectionMode">
+                    <option value="qr">QR code (default)</option>
+                    <option value="phone_number">Phone number (pairing code)</option>
+                  </select>
+                </label>
+                <label for="whatsappPairPhone">
+                  <span>Phone number (with country code)</span>
+                  <input id="whatsappPairPhone" type="tel" placeholder="2348143164036" autocomplete="tel" />
+                </label>
               </div>
               <p class="muted">After login, this is your only stop. Scan the QR code, connect your WhatsApp account, and you will be taken straight to the workspace where you can manage company portfolio, audience, scheduling, payments, teammates, and task monitoring.</p>
               <div class="summary-grid summary-grid--status">
@@ -302,6 +318,7 @@
                     <div id="qrCode"></div>
                   </div>
                   <p id="qrHint" class="muted">QR code will appear here after you start the connection.</p>
+                  <p id="pairingCodeHint" class="pairing-code-hint hidden"></p>
                   <ul class="qr-tips muted">
                     <li>Use WhatsApp on your phone: <strong>Settings → Linked Devices → Link a device</strong>.</li>
                     <li>Hold your phone about 8–12 inches away and increase your screen brightness if needed.</li>

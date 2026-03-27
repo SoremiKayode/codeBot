@@ -50,6 +50,9 @@ const ui = {
   dashboardScheduleTaskButton: document.getElementById('dashboardScheduleTaskButton'),
   goToTasksButton: document.getElementById('goToTasksButton'),
   connectWhatsappButton: document.getElementById('connectWhatsappButton'),
+  generatePairingCodeButton: document.getElementById('generatePairingCodeButton'),
+  whatsappConnectionMode: document.getElementById('whatsappConnectionMode'),
+  whatsappPairPhone: document.getElementById('whatsappPairPhone'),
   companyProfileForm: document.getElementById('companyProfileForm'),
   companyProfileStatus: document.getElementById('companyProfileStatus'),
   companyBackButton: document.getElementById('companyBackButton'),
@@ -77,6 +80,7 @@ const ui = {
   qrWrapper: document.getElementById('qrWrapper'),
   qrCode: document.getElementById('qrCode'),
   qrHint: document.getElementById('qrHint'),
+  pairingCodeHint: document.getElementById('pairingCodeHint'),
   refreshQrButton: document.getElementById('refreshQrButton'),
   loginPasswordStrength: document.getElementById('loginPasswordStrength'),
   signupPasswordStrength: document.getElementById('signupPasswordStrength'),
@@ -979,6 +983,7 @@ function updateUserUI() {
   }
   if (ui.goToTasksButton) ui.goToTasksButton.disabled = false;
   if (ui.connectWhatsappButton) ui.connectWhatsappButton.disabled = false;
+  if (ui.generatePairingCodeButton) ui.generatePairingCodeButton.disabled = false;
   if (ui.companyProfileForm) Array.from(ui.companyProfileForm.elements || []).forEach((element) => { if (element.id !== 'companyBackButton' && element.id !== 'companyNextButton') element.disabled = !user; });
   document.documentElement.dataset.theme = user?.theme || localStorage.getItem('wa_theme') || 'light';
   document.body.classList.toggle('is-admin', ['admin', 'Administartor'].includes(user?.role || 'customer'));
@@ -1055,11 +1060,33 @@ function setContactSyncModalVisible(visible, message = '') {
 }
 
 function setConnectionActionLoading(isLoading) {
-  if (!ui.connectWhatsappButton) return;
-  ui.connectWhatsappButton.disabled = isLoading;
-  ui.connectWhatsappButton.innerHTML = isLoading
-    ? '<span class="inline-spinner" aria-hidden="true"></span>Connecting…'
-    : 'Connect WhatsApp';
+  if (!ui.connectWhatsappButton && !ui.generatePairingCodeButton) return;
+  const mode = ui.whatsappConnectionMode?.value === 'phone_number' ? 'phone_number' : 'qr';
+  if (ui.connectWhatsappButton) ui.connectWhatsappButton.disabled = isLoading;
+  if (ui.generatePairingCodeButton) ui.generatePairingCodeButton.disabled = isLoading;
+  if (ui.whatsappConnectionMode) ui.whatsappConnectionMode.disabled = isLoading;
+  if (ui.whatsappPairPhone) ui.whatsappPairPhone.disabled = isLoading;
+  if (ui.connectWhatsappButton) {
+    ui.connectWhatsappButton.innerHTML = isLoading && mode === 'qr'
+      ? '<span class="inline-spinner" aria-hidden="true"></span>Connecting…'
+      : 'Connect WhatsApp';
+  }
+  if (ui.generatePairingCodeButton) {
+    ui.generatePairingCodeButton.innerHTML = isLoading && mode === 'phone_number'
+      ? '<span class="inline-spinner" aria-hidden="true"></span>Generating…'
+      : 'Generate pairing code';
+  }
+}
+
+function updateConnectionModeUI() {
+  const mode = ui.whatsappConnectionMode?.value === 'phone_number' ? 'phone_number' : 'qr';
+  if (ui.whatsappPairPhone?.parentElement) ui.whatsappPairPhone.parentElement.classList.toggle('hidden', mode !== 'phone_number');
+  if (ui.connectWhatsappButton) ui.connectWhatsappButton.classList.toggle('hidden', mode !== 'qr');
+  if (ui.generatePairingCodeButton) ui.generatePairingCodeButton.classList.toggle('hidden', mode !== 'phone_number');
+  if (ui.pairingCodeHint && mode !== 'phone_number') {
+    ui.pairingCodeHint.classList.add('hidden');
+    ui.pairingCodeHint.textContent = '';
+  }
 }
 
 async function handleQrRefresh() {
@@ -1081,6 +1108,10 @@ async function syncWhatsAppStatus() {
     ui.whatsappStatusBadge.textContent = status.status || 'idle';
     ui.whatsappPhone.textContent = status.phoneNumber || 'Not available';
     ui.whatsappPhone.title = status.phoneNumber || 'Not available';
+    if (ui.pairingCodeHint && status.status !== 'pairing_code_ready') {
+      ui.pairingCodeHint.classList.add('hidden');
+      ui.pairingCodeHint.textContent = '';
+    }
     if (status.qr) renderQrCode(status.qr);
     if (status.status === 'connecting') {
       setContactSyncModalVisible(true, status.message || 'Starting WhatsApp connection and waiting for QR code.');
@@ -1095,6 +1126,17 @@ async function syncWhatsAppStatus() {
     } else if (status.status === 'qr_ready') {
       setContactSyncModalVisible(false);
       setConnectionActionLoading(false);
+      startWhatsAppPolling();
+      return;
+    } else if (status.status === 'pairing_code_ready') {
+      setContactSyncModalVisible(false);
+      setConnectionActionLoading(false);
+      ui.qrCode.innerHTML = '';
+      ui.qrWrapper.classList.add('empty');
+      if (ui.pairingCodeHint) {
+        ui.pairingCodeHint.classList.remove('hidden');
+        ui.pairingCodeHint.textContent = status.pairingCode ? `Pairing code: ${status.pairingCode}` : 'Pairing code is ready in WhatsApp status.';
+      }
       startWhatsAppPolling();
       return;
     } else if (status.status === 'connected') {
@@ -2604,16 +2646,24 @@ ui.workspaceMemberForm?.addEventListener('submit', async (event) => {
 ui.goToTasksButton.addEventListener('click', () => navigate('tasks'));
 ui.dashboardScheduleTaskButton?.addEventListener('click', () => navigate('tasks'));
 ui.refreshQrButton?.addEventListener('click', handleQrRefresh);
-ui.connectWhatsappButton.addEventListener('click', async () => {
+ui.whatsappConnectionMode?.addEventListener('change', updateConnectionModeUI);
+async function handleConnectAction(mode) {
   if (!appState.user?.activeTenant) {
     showToast('Create a workspace first before connecting WhatsApp.');
     showCreateWorkspaceGuide();
     return;
   }
   try {
+    const phoneNumber = String(ui.whatsappPairPhone?.value || '').trim();
+    if (mode === 'phone_number' && !phoneNumber) {
+      showToast('Enter your WhatsApp phone number with country code for phone-number pairing.');
+      return;
+    }
     setConnectionActionLoading(true);
-    setContactSyncModalVisible(true, 'Starting WhatsApp connection and checking your saved session…');
-    const data = await api.connectWhatsApp();
+    setContactSyncModalVisible(true, mode === 'phone_number'
+      ? 'Starting WhatsApp connection and preparing your pairing code…'
+      : 'Starting WhatsApp connection and checking your saved session…');
+    const data = await api.connectWhatsApp({ mode, phoneNumber });
     syncUserFromPayload(data);
     ui.whatsappStatusText.textContent = data.message || 'Waiting for QR code.';
     ui.whatsappStatusBadge.textContent = data.status || 'connecting';
@@ -2622,13 +2672,16 @@ ui.connectWhatsappButton.addEventListener('click', async () => {
     startWhatsAppPolling();
     await syncWhatsAppStatus();
     await loadAudience(true);
-    showToast('WhatsApp connection started.');
+    showToast(mode === 'phone_number' ? 'Phone-number connection started.' : 'WhatsApp connection started.');
   } catch (error) {
     setConnectionActionLoading(false);
     setContactSyncModalVisible(false);
     showToast(error.message);
   }
-});
+}
+ui.connectWhatsappButton.addEventListener('click', async () => handleConnectAction('qr'));
+ui.generatePairingCodeButton?.addEventListener('click', async () => handleConnectAction('phone_number'));
+updateConnectionModeUI();
 
 ui.openAiTextTabButton.addEventListener('click', () => setTaskTab('ai-text'));
 ui.openAiMediaTabButton.addEventListener('click', () => setTaskTab('ai-media'));

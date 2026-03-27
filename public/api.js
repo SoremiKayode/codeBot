@@ -35,7 +35,7 @@ export const api = {
   listWorkspaceMembers: () => request('/api/workspaces/members'),
   addWorkspaceMember: (payload) => request('/api/workspaces/members', { method: 'POST', body: JSON.stringify(payload) }),
   updateWorkspaceMemberRole: (membershipId, role) => request(`/api/workspaces/members/${membershipId}`, { method: 'PATCH', body: JSON.stringify({ role }) }),
-  connectWhatsApp: () => request('/api/whatsapp/connect', { method: 'POST' }),
+  connectWhatsApp: (payload = {}) => request('/api/whatsapp/connect', { method: 'POST', body: JSON.stringify(payload) }),
   getCompanyProfile: () => request('/api/company-profile'),
   saveCompanyProfile: (payload) => request('/api/company-profile', { method: 'POST', body: JSON.stringify(payload) }),
   whatsappStatus: () => request('/api/whatsapp/status'),

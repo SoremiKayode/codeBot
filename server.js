@@ -538,10 +538,16 @@ function buildDefaultConnectionState(tenantId) {
     tenantId,
     status: 'idle',
     qr: '',
+    pairingCode: '',
+    connectionMode: 'qr',
     lastUpdatedAt: new Date(),
     phoneNumber: '',
     message: 'Connect your WhatsApp account to start automation.',
   };
+}
+
+function normalizeConnectionMode(value = '') {
+  return String(value || '').trim().toLowerCase() === 'phone_number' ? 'phone_number' : 'qr';
 }
 
 function setConnectionState(tenantId, updates) {
@@ -918,6 +924,8 @@ const whatsappConnectionSchema = new mongoose.Schema({
   userId: { type: String, required: true },
   status: { type: String, default: 'idle' },
   qr: { type: String, default: '' },
+  pairingCode: { type: String, default: '' },
+  connectionMode: { type: String, default: 'qr' },
   phoneNumber: { type: String, default: '' },
   message: { type: String, default: '' },
   lastUpdatedAt: { type: Date, default: Date.now },
@@ -2205,6 +2213,8 @@ async function findOrCreateSocialUser(provider, profile, mode = 'login') {
 
 async function startWhatsAppSession(user, tenant, options = {}) {
   const tenantId = String(tenant._id);
+  const connectionMode = normalizeConnectionMode(options.connectionMode);
+  const pairingPhoneDigits = connectionMode === 'phone_number' ? extractPhoneDigits(options.phoneNumber || '') : '';
   const hasSavedCredentials = await hasSavedWhatsAppCredentials(tenantId);
   if (options.forceNewSession) {
     await clearWhatsAppSessionData(tenantId);
@@ -2213,16 +2223,37 @@ async function startWhatsAppSession(user, tenant, options = {}) {
   await persistConnectionState(tenantId, {
     status: 'connecting',
     qr: '',
+    pairingCode: '',
+    connectionMode,
     phoneNumber: user.whatsappPhone || '',
     message: hasSavedCredentials
-      ? 'Attempting to reconnect using your saved WhatsApp session details. A QR code will only be shown if reconnect fails.'
-      : 'Starting WhatsApp connection and waiting for QR code.',
+      ? 'Attempting to reconnect using your saved WhatsApp session details. A new pairing step will only be shown if reconnect fails.'
+      : (connectionMode === 'phone_number'
+        ? 'Starting WhatsApp connection and preparing your phone-number pairing code.'
+        : 'Starting WhatsApp connection and waiting for QR code.'),
     userId: String(user._id),
   });
   await User.findByIdAndUpdate(user._id, { whatsappStatus: 'connecting' });
   const { version } = await fetchLatestBaileysVersion();
   const { state, saveCreds } = await useMongooseAuthState(tenantId);
   const sock = makeWASocket({ version, auth: state, logger: pino({ level: 'silent' }), printQRInTerminal: false, syncFullHistory: true, markOnlineOnConnect: false });
+  if (connectionMode === 'phone_number' && !sock.authState.creds.registered) {
+    if (!pairingPhoneDigits) throw new Error('Enter a valid phone number with country code for phone-number pairing.');
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    try {
+      const code = await sock.requestPairingCode(pairingPhoneDigits);
+      await persistConnectionState(tenantId, {
+        status: 'pairing_code_ready',
+        connectionMode,
+        qr: '',
+        pairingCode: code,
+        message: 'Use WhatsApp > Linked Devices > Link with phone number instead, then enter this pairing code.',
+        userId: String(user._id),
+      });
+    } catch (error) {
+      throw new Error(error?.message || 'Failed to generate WhatsApp pairing code.');
+    }
+  }
   socketStore.set(tenantId, sock);
   sock.ev.on('creds.update', async () => { await saveCreds(); });
   sock.ev.on('messaging-history.set', ({ contacts, chats }) => { upsertAudienceContacts(tenantId, contacts, chats); });
@@ -2306,18 +2337,20 @@ async function startWhatsAppSession(user, tenant, options = {}) {
     try {
       const { connection, lastDisconnect, qr } = update;
       if (qr) {
-        await persistConnectionState(tenantId, { status: 'qr_ready', qr, message: 'Scan this QR code with WhatsApp on your phone.', userId: String(user._id) });
+        if (connectionMode === 'qr') {
+          await persistConnectionState(tenantId, { status: 'qr_ready', qr, pairingCode: '', connectionMode, message: 'Scan this QR code with WhatsApp on your phone.', userId: String(user._id) });
+        }
       }
       if (connection === 'open') {
         const phoneNumber = sock?.user?.id || '';
-        await persistConnectionState(tenantId, { status: 'syncing_contacts', qr: '', phoneNumber, message: 'WhatsApp connected. Fetching your contacts and saving them to Audience now…', userId: String(user._id) });
+        await persistConnectionState(tenantId, { status: 'syncing_contacts', qr: '', pairingCode: '', connectionMode, phoneNumber, message: 'WhatsApp connected. Fetching your contacts and saving them to Audience now…', userId: String(user._id) });
         await syncAudienceFromSocket(tenantId, sock);
         const syncedAudience = await waitForInitialAudienceSync(tenantId, sock, 35000);
         const contactCount = Array.isArray(syncedAudience.contacts) ? syncedAudience.contacts.length : 0;
         const groupCount = Array.isArray(syncedAudience.groups) ? syncedAudience.groups.length : 0;
         logger.info({ tenantId, contactCount, groupCount }, 'Initial WhatsApp audience sync completed');
         await User.findByIdAndUpdate(user._id, { whatsappStatus: 'connected', whatsappPhone: phoneNumber });
-        await persistConnectionState(tenantId, { status: 'connected', qr: '', phoneNumber, message: `WhatsApp connected successfully. Saved ${contactCount} contact${contactCount === 1 ? '' : 's'} and ${groupCount} group${groupCount === 1 ? '' : 's'} to Audience.`, userId: String(user._id) });
+        await persistConnectionState(tenantId, { status: 'connected', qr: '', pairingCode: '', connectionMode, phoneNumber, message: `WhatsApp connected successfully. Saved ${contactCount} contact${contactCount === 1 ? '' : 's'} and ${groupCount} group${groupCount === 1 ? '' : 's'} to Audience.`, userId: String(user._id) });
       }
       if (connection === 'close') {
         const statusCode = lastDisconnect?.error?.output?.statusCode;
@@ -2330,13 +2363,15 @@ async function startWhatsAppSession(user, tenant, options = {}) {
         if (loggedOut) {
           await AuthState.deleteMany({ tenantId });
           await User.findByIdAndUpdate(user._id, { whatsappStatus: 'not_connected', whatsappPhone: '' });
-          await persistConnectionState(tenantId, { status: 'logged_out', qr: '', phoneNumber: '', message: 'WhatsApp session logged out. Start a new connection to generate another QR code.', userId: String(user._id) });
+          await persistConnectionState(tenantId, { status: 'logged_out', qr: '', pairingCode: '', connectionMode, phoneNumber: '', message: 'WhatsApp session logged out. Start a new connection to generate another QR code.', userId: String(user._id) });
           return;
         }
         await User.findByIdAndUpdate(user._id, { whatsappStatus: 'connecting' });
         await persistConnectionState(tenantId, {
           status: 'connecting',
           qr: '',
+          pairingCode: '',
+          connectionMode,
           phoneNumber: user.whatsappPhone || '',
           message: restartRequired
             ? 'WhatsApp requested a socket restart. Reconnecting with the saved credentials.'
@@ -2345,11 +2380,13 @@ async function startWhatsAppSession(user, tenant, options = {}) {
         });
         sendWhatsAppReconnectEmail({ user, tenant, reason: disconnectReason }).catch(() => null);
         setTimeout(() => {
-          startWhatsAppSession(user, tenant).catch(async (error) => {
+          startWhatsAppSession(user, tenant, { connectionMode }).catch(async (error) => {
             logger.error({ tenantId, statusCode, error: error.message, stack: error.stack }, 'Unable to restart WhatsApp session');
             await persistConnectionState(tenantId, {
               status: 'error',
               qr: '',
+              pairingCode: '',
+              connectionMode,
               phoneNumber: user.whatsappPhone || '',
               message: 'Automatic reconnect failed. Please reconnect WhatsApp from your dashboard.',
               userId: String(user._id),
@@ -2360,7 +2397,7 @@ async function startWhatsAppSession(user, tenant, options = {}) {
       }
     } catch (error) {
       logger.error({ tenantId, error: error.message, stack: error.stack }, 'Unhandled WhatsApp handshake error');
-      await persistConnectionState(tenantId, { status: 'error', qr: '', phoneNumber: user.whatsappPhone || '', message: 'WhatsApp handshake failed. Please reconnect from dashboard.', userId: String(user._id) });
+      await persistConnectionState(tenantId, { status: 'error', qr: '', pairingCode: '', connectionMode, phoneNumber: user.whatsappPhone || '', message: 'WhatsApp handshake failed. Please reconnect from dashboard.', userId: String(user._id) });
       sendWhatsAppReconnectEmail({ user, tenant, reason: error.message || 'Unhandled WhatsApp handshake error.' }).catch(() => null);
     }
   });
@@ -2494,11 +2531,19 @@ app.post('/api/whatsapp/connect', authenticateRequest, requireActiveWorkspace, r
   try {
     const tenantId = String(req.tenant._id);
     const hasLiveSocket = socketStore.has(tenantId);
-    const shouldForceNewSession = !hasLiveSocket && req.body?.forceNewSession === true;
-    const state = await startWhatsAppSession(req.user, req.tenant, { forceNewSession: shouldForceNewSession });
+    const connectionMode = normalizeConnectionMode(req.body?.mode);
+    const shouldForceNewSession = !hasLiveSocket && (req.body?.forceNewSession === true || connectionMode === 'phone_number');
+    const state = await startWhatsAppSession(req.user, req.tenant, { forceNewSession: shouldForceNewSession, connectionMode, phoneNumber: req.body?.phoneNumber || '' });
     res.json({ ...state, user: sanitizeUser(req.user, req.membership, req.tenant) });
   } catch (error) {
-    await persistConnectionState(String(req.tenant._id), { status: 'error', qr: '', message: error.message || 'Unable to start WhatsApp connection.', userId: String(req.user._id) });
+    await persistConnectionState(String(req.tenant._id), {
+      status: 'error',
+      qr: '',
+      pairingCode: '',
+      connectionMode: normalizeConnectionMode(req.body?.mode),
+      message: error.message || 'Unable to start WhatsApp connection.',
+      userId: String(req.user._id),
+    });
     sendWhatsAppReconnectEmail({ user: req.user, tenant: req.tenant, reason: error.message || 'Unable to start WhatsApp connection.' }).catch(() => null);
     res.status(500).json({ error: error.message || 'Unable to start WhatsApp connection.' });
   }
@@ -2514,6 +2559,7 @@ app.get('/api/whatsapp/status', authenticateRequest, requireActiveWorkspace, asy
       ...state,
       status: 'not_connected',
       qr: '',
+      pairingCode: '',
       phoneNumber: '',
       message: 'WhatsApp is no longer connected. Start a new connection to generate another QR code.',
     });
