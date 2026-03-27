@@ -1748,6 +1748,30 @@ function getClientTimezone() {
   return typeof detected === 'string' && detected.trim() ? detected.trim() : '';
 }
 
+function getSelectedStartDateTime() {
+  const startDate = String(ui.startDateInput?.value || '').trim();
+  const startTime = String(ui.startTimeInput?.value || '').trim();
+  if (!startDate || !startTime) return null;
+  const parsed = new Date(`${startDate}T${startTime}`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+}
+
+function syncScheduleInputMinimums() {
+  if (!ui.startDateInput || !ui.startTimeInput) return;
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  ui.startDateInput.min = today;
+  ui.startTimeInput.min = ui.startDateInput.value === today ? currentTime : '';
+}
+
+function ensureSelectedStartDateTimeIsFuture() {
+  const selectedStart = getSelectedStartDateTime();
+  if (!selectedStart) return false;
+  return selectedStart.getTime() >= Date.now();
+}
+
 async function scheduleTask() {
   if (taskBuilderState.isScheduling) return;
   syncManualRecipientsFromInput();
@@ -1800,6 +1824,10 @@ async function scheduleTask() {
   }
   if (!isAutomated && !isImmediateSchedule() && (!ui.startDateInput.value || !ui.startTimeInput.value)) {
     showToast('Complete the scheduling inputs first.');
+    return;
+  }
+  if (!isAutomated && !isImmediateSchedule() && !ensureSelectedStartDateTimeIsFuture()) {
+    showToast('Start date and time must be now or in the future.');
     return;
   }
 
@@ -2266,9 +2294,16 @@ ui.mediaFileInput.addEventListener('change', (event) => handleFileUpload(event.t
 ui.frequencySelect.addEventListener('change', () => {
   renderFrequencyOptions();
   updateScheduleInputVisibility();
+  syncScheduleInputMinimums();
 });
-ui.startDateInput.addEventListener('change', updateTaskPreview);
-ui.startTimeInput.addEventListener('change', updateTaskPreview);
+ui.startDateInput.addEventListener('change', () => {
+  syncScheduleInputMinimums();
+  updateTaskPreview();
+});
+ui.startTimeInput.addEventListener('change', () => {
+  syncScheduleInputMinimums();
+  updateTaskPreview();
+});
 ui.scheduleTaskButton.addEventListener('click', scheduleTask);
   ui.taskTitle.addEventListener('input', updateTaskPreview);
 ui.taskTitle.addEventListener('input', updateScheduleActionVisibility);
@@ -2628,6 +2663,7 @@ restoreTaskDraft();
 renderAudienceTables();
 renderFrequencyOptions();
 updateTaskModeUI();
+syncScheduleInputMinimums();
 updateTaskPreview();
 
 (async () => {
