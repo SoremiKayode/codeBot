@@ -494,6 +494,13 @@
               <div class="task-panel-grid">
                 <div class="stack">
                   <label>
+                    <span>AI provider</span>
+                    <select id="aiTextProvider">
+                      <option value="huggingface" selected>Hugging Face (works with free startup credits)</option>
+                      <option value="openai">OpenAI (requires paid credits)</option>
+                    </select>
+                  </label>
+                  <label>
                     <span>Prompt for AI text generation</span>
                     <textarea id="aiTextPrompt" rows="6" placeholder="Write a friendly WhatsApp message for our VIP customers about this week's promo. Mention it expires on {last_friday} at {current_time}."></textarea>
                   </label>
@@ -505,7 +512,7 @@
                 </div>
                 <aside class="tip-card stack-sm premium-tip">
                   <strong>Model notes</strong>
-                  <p class="muted">Text generation uses your configured Hugging Face Space on the server. Keep prompts concise and include tone, audience, and CTA requirements.</p>
+                  <p class="muted">OpenAI is more reliable but cannot be used on free 150 startup credits. Hugging Face can use free credits, but output quality may vary more.</p>
                 </aside>
               </div>
             </div>
@@ -513,6 +520,13 @@
             <div class="task-panel" data-task-panel="ai-media">
               <div class="task-panel-grid">
                 <div class="stack">
+                  <label>
+                    <span>AI provider</span>
+                    <select id="aiImageProvider">
+                      <option value="huggingface" selected>Hugging Face (works with free startup credits)</option>
+                      <option value="openai">OpenAI (requires paid credits, best image quality)</option>
+                    </select>
+                  </label>
                   <label>
                     <span>Prompt for AI image generation</span>
                     <textarea id="aiImagePrompt" rows="6" placeholder="Create a premium product promo banner with a modern WhatsApp-friendly square layout and bold green accents."></textarea>
@@ -527,7 +541,7 @@
                 </div>
                 <aside class="tip-card stack-sm premium-tip">
                   <strong>Media workflow</strong>
-                  <p class="muted">Generate, review, regenerate if needed, then approve to push the image back to the message tab queue using your configured Hugging Face image Space.</p>
+                  <p class="muted">OpenAI uses the best configured image model on this server and charges by OpenAI token/image usage with a service fee. Hugging Face can use free credits but is less reliable.</p>
                 </aside>
               </div>
             </div>
@@ -946,14 +960,14 @@
             </article>
             <article class="pricing-list-item">
               <strong>AI text generation (OpenAI token pricing)</strong>
-              <span>$0.0006 • ₦0.96 per 1,000 tokens</span>
+              <span>$0.0006 • ₦0.96 per 1,000 tokens (+20% service fee)</span>
             </article>
             <article class="pricing-list-item">
               <strong>AI image generation (OpenAI pricing)</strong>
-              <span>$0.0400 • ₦64.00 per generated image</span>
+              <span>$0.0400 • ₦64.00 per generated image (+20% service fee)</span>
             </article>
           </div>
-          <p id="pricingDisclaimer" class="muted">Message sends and status posts are deducted from your credits; no extra charge applies while your credit balance is above zero.</p>
+          <p id="pricingDisclaimer" class="muted">Message sends and status posts are deducted from your credits; no extra charge applies while your credit balance is above zero. Hugging Face can use free startup credits but is less reliable than OpenAI.</p>
         </div>
       </section>
 
