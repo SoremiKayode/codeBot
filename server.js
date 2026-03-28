@@ -97,6 +97,11 @@ const HUGGINGFACE_IMAGE_WIDTH = Number(process.env.HUGGINGFACE_IMAGE_WIDTH || 38
 const HUGGINGFACE_IMAGE_HEIGHT = Number(process.env.HUGGINGFACE_IMAGE_HEIGHT || 384);
 const HUGGINGFACE_IMAGE_GUIDANCE_SCALE = Number(process.env.HUGGINGFACE_IMAGE_GUIDANCE_SCALE || 0);
 const HUGGINGFACE_IMAGE_STEPS = Number(process.env.HUGGINGFACE_IMAGE_STEPS || 2);
+const OPENAI_API_KEY = process.env.OPENAI_KEY || '';
+const OPENAI_TEXT_MODEL = process.env.OPENAI_TEXT_MODEL || 'gpt-4.1-mini';
+const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';
+const OPENAI_IMAGE_SIZE = process.env.OPENAI_IMAGE_SIZE || '1024x1024';
+const OPENAI_SERVICE_FEE_MULTIPLIER = Number(process.env.OPENAI_SERVICE_FEE_MULTIPLIER || 1.2);
 const CREDIT_COSTS = {
   whatsappConnect: Number(process.env.CREDIT_COST_WHATSAPP_CONNECT || 0),
   createTask: Number(process.env.CREDIT_COST_CREATE_TASK || 0),
@@ -110,6 +115,7 @@ const STATUS_USD_PRICE = Number(process.env.PRICING_STATUS_USD || MESSAGE_USD_PR
 const OPENAI_TEXT_USD_PER_1K_TOKENS = Number(process.env.PRICING_OPENAI_TEXT_USD_PER_1K_TOKENS || 0.0006);
 const OPENAI_IMAGE_USD_PER_IMAGE = Number(process.env.PRICING_OPENAI_IMAGE_USD_PER_IMAGE || 0.04);
 const OPENAI_PRICING_MODEL_NOTES = process.env.PRICING_OPENAI_MODEL_NOTES || 'AI generation prices are based on OpenAI token/image rates.';
+const HUGGINGFACE_RELIABILITY_NOTICE = 'Hugging Face generation is available on free startup credits, but results are usually less reliable than OpenAI.';
 const APP_PERMISSIONS = {
   OWNER: ['tenant:manage', 'members:manage', 'credits:manage', 'whatsapp:connect', 'tasks:write', 'tasks:read', 'tasks:dispatch'],
   ADMIN: ['members:manage', 'whatsapp:connect', 'tasks:write', 'tasks:read', 'tasks:dispatch'],
@@ -1580,6 +1586,113 @@ async function callHuggingFaceImage(prompt) {
   throw lastError || new Error('No image was returned by the Hugging Face Space.');
 }
 
+function sanitizeAiProvider(provider = '') {
+  return String(provider || '').trim().toLowerCase() === 'openai' ? 'openai' : 'huggingface';
+}
+
+function calculateOpenAiTokenUsd(usage = {}) {
+  const promptTokens = Number(usage.prompt_tokens ?? usage.input_tokens ?? 0);
+  const completionTokens = Number(usage.completion_tokens ?? usage.output_tokens ?? 0);
+  const totalTokens = Math.max(0, promptTokens + completionTokens);
+  const baseUsd = (totalTokens / 1000) * OPENAI_TEXT_USD_PER_1K_TOKENS;
+  return { promptTokens, completionTokens, totalTokens, baseUsd };
+}
+
+function convertUsdToCredits(usdAmount = 0) {
+  return Number((Math.max(0, Number(usdAmount || 0)) * PRICING_USD_TO_NGN).toFixed(4));
+}
+
+function applyOpenAiServiceFee(usdAmount = 0) {
+  return Number((Math.max(0, Number(usdAmount || 0)) * OPENAI_SERVICE_FEE_MULTIPLIER).toFixed(8));
+}
+
+async function callOpenAiText(prompt) {
+  if (!OPENAI_API_KEY) throw new Error('OpenAI is not configured on this server.');
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: OPENAI_TEXT_MODEL,
+      messages: [
+        { role: 'system', content: HUGGINGFACE_TEXT_SYSTEM_PROMPT },
+        { role: 'user', content: prompt },
+      ],
+      max_tokens: HUGGINGFACE_TEXT_MAX_TOKENS,
+      temperature: HUGGINGFACE_TEXT_TEMPERATURE,
+      top_p: HUGGINGFACE_TEXT_TOP_P,
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload?.error?.message || 'OpenAI text generation failed.');
+  const text = String(payload?.choices?.[0]?.message?.content || '').trim();
+  if (!text) throw new Error('OpenAI did not return text output.');
+  const usage = calculateOpenAiTokenUsd(payload?.usage || {});
+  return { text, usage, model: payload?.model || OPENAI_TEXT_MODEL };
+}
+
+function extractOpenAiImageBase64(payload = {}) {
+  const queue = [payload];
+  while (queue.length) {
+    const node = queue.shift();
+    if (!node) continue;
+    if (Array.isArray(node)) {
+      queue.push(...node);
+      continue;
+    }
+    if (typeof node !== 'object') continue;
+    if (typeof node.b64_json === 'string' && node.b64_json) return node.b64_json;
+    if (typeof node.image_base64 === 'string' && node.image_base64) return node.image_base64;
+    if (typeof node.result === 'string' && node.result.length > 1500 && /^[A-Za-z0-9+/=]+$/.test(node.result)) return node.result;
+    queue.push(...Object.values(node));
+  }
+  return '';
+}
+
+async function callOpenAiImage(prompt) {
+  if (!OPENAI_API_KEY) throw new Error('OpenAI is not configured on this server.');
+  const response = await fetch('https://api.openai.com/v1/images/generations', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: OPENAI_IMAGE_MODEL,
+      prompt,
+      size: OPENAI_IMAGE_SIZE,
+      response_format: 'b64_json',
+    }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload?.error?.message || 'OpenAI image generation failed.');
+  const base64 = extractOpenAiImageBase64(payload?.data || payload);
+  if (!base64) throw new Error('OpenAI did not return image output.');
+  return {
+    dataUrl: `data:image/png;base64,${base64}`,
+    usage: calculateOpenAiTokenUsd(payload?.usage || {}),
+    model: payload?.model || OPENAI_IMAGE_MODEL,
+  };
+}
+
+async function hasPaidTopUpForScope(scope, user) {
+  if (scope?.tenant?._id) {
+    const paid = await CreditLedger.exists({ tenantId: String(scope.tenant._id), type: 'payment_topup', delta: { $gt: 0 } });
+    return Boolean(paid);
+  }
+  const paid = await PaymentTransaction.exists({ userId: String(user._id), tenantId: null, status: 'success' });
+  return Boolean(paid);
+}
+
+async function ensureOpenAiAllowedForScope(scope, user) {
+  const hasPaidTopUp = await hasPaidTopUpForScope(scope, user);
+  if (!hasPaidTopUp) {
+    throw new Error('You cannot use OpenAI while on the free 150 startup credits. Please top up your credits first.');
+  }
+}
+
 function normalizeTimeValue(value = '') {
   return /^\d{2}:\d{2}$/.test(String(value || '').trim()) ? String(value).trim() : '';
 }
@@ -2686,13 +2799,62 @@ app.post('/api/ai/text', authenticateRequest, requireScopedPermission('tasks:wri
     const prompt = String(req.body.prompt || '').trim();
     if (!prompt) return res.status(400).json({ error: 'Prompt is required.' });
     const scope = getScopeContext(req);
+    const provider = sanitizeAiProvider(req.body.provider);
+    if (provider === 'openai') {
+      await ensureOpenAiAllowedForScope(scope, req.user);
+      const generated = await callOpenAiText(prompt);
+      const withFeeUsd = applyOpenAiServiceFee(generated.usage.baseUsd);
+      const creditCost = convertUsdToCredits(withFeeUsd);
+      await ensureCreditsAvailable({ tenant: scope.tenant, user: req.user, amount: creditCost, label: 'generate AI text with OpenAI' });
+      await debitCredits({
+        tenant: scope.tenant,
+        user: req.user,
+        amount: creditCost,
+        type: 'ai_text_openai',
+        metadata: {
+          provider,
+          model: generated.model,
+          promptLength: prompt.length,
+          scopeId: scope.scopeId,
+          promptTokens: generated.usage.promptTokens,
+          completionTokens: generated.usage.completionTokens,
+          totalTokens: generated.usage.totalTokens,
+          baseUsd: generated.usage.baseUsd,
+          withServiceFeeUsd: withFeeUsd,
+          serviceFeeMultiplier: OPENAI_SERVICE_FEE_MULTIPLIER,
+          creditCost,
+        },
+      });
+      return res.json({
+        text: generated.text,
+        provider,
+        model: generated.model,
+        tokenUsage: generated.usage,
+        creditCost,
+        user: sanitizeUser(req.user, req.membership, req.tenant),
+      });
+    }
     await ensureCreditsAvailable({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.generateText, label: 'generate AI text' });
     const text = await callHuggingFaceText(prompt);
-    await debitCredits({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.generateText, type: 'ai_text', metadata: { promptLength: prompt.length, scopeId: scope.scopeId } });
-    res.json({ text, model: 'hugging-face-space', user: sanitizeUser(req.user, req.membership, req.tenant) });
+    await debitCredits({
+      tenant: scope.tenant,
+      user: req.user,
+      amount: CREDIT_COSTS.generateText,
+      type: 'ai_text_huggingface',
+      metadata: { provider, promptLength: prompt.length, scopeId: scope.scopeId, reliability: 'lower_than_openai' },
+    });
+    res.json({
+      text,
+      provider,
+      model: 'hugging-face-space',
+      reliabilityNotice: HUGGINGFACE_RELIABILITY_NOTICE,
+      creditCost: CREDIT_COSTS.generateText,
+      user: sanitizeUser(req.user, req.membership, req.tenant),
+    });
   } catch (error) {
     logger.warn({ error: error.message }, 'AI text generation unavailable');
-    res.status(502).json({ error: 'We are unable to generate text right now. Please try again shortly.' });
+    if (error.message?.includes('free 150 startup credits')) return res.status(403).json({ error: error.message });
+    res.status(502).json({ error: error.message || 'We are unable to generate text right now. Please try again shortly.' });
   }
 });
 
@@ -2701,13 +2863,67 @@ app.post('/api/ai/image', authenticateRequest, requireScopedPermission('tasks:wr
     const prompt = String(req.body.prompt || '').trim();
     if (!prompt) return res.status(400).json({ error: 'Prompt is required.' });
     const scope = getScopeContext(req);
+    const provider = sanitizeAiProvider(req.body.provider);
+    if (provider === 'openai') {
+      await ensureOpenAiAllowedForScope(scope, req.user);
+      const generated = await callOpenAiImage(prompt);
+      const usage = generated.usage?.totalTokens
+        ? generated.usage
+        : { promptTokens: 0, completionTokens: 0, totalTokens: 0, baseUsd: OPENAI_IMAGE_USD_PER_IMAGE };
+      const baseUsd = usage.totalTokens ? usage.baseUsd : OPENAI_IMAGE_USD_PER_IMAGE;
+      const withFeeUsd = applyOpenAiServiceFee(baseUsd);
+      const creditCost = convertUsdToCredits(withFeeUsd);
+      await ensureCreditsAvailable({ tenant: scope.tenant, user: req.user, amount: creditCost, label: 'generate AI image with OpenAI' });
+      await debitCredits({
+        tenant: scope.tenant,
+        user: req.user,
+        amount: creditCost,
+        type: 'ai_image_openai',
+        metadata: {
+          provider,
+          model: generated.model,
+          promptLength: prompt.length,
+          scopeId: scope.scopeId,
+          promptTokens: usage.promptTokens,
+          completionTokens: usage.completionTokens,
+          totalTokens: usage.totalTokens,
+          baseUsd,
+          withServiceFeeUsd: withFeeUsd,
+          serviceFeeMultiplier: OPENAI_SERVICE_FEE_MULTIPLIER,
+          creditCost,
+          pricingMode: usage.totalTokens ? 'token_usage' : 'flat_image_rate_fallback',
+        },
+      });
+      return res.json({
+        imageUrl: generated.dataUrl,
+        provider,
+        model: generated.model,
+        tokenUsage: usage,
+        creditCost,
+        user: sanitizeUser(req.user, req.membership, req.tenant),
+      });
+    }
     await ensureCreditsAvailable({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.generateImage, label: 'generate AI image' });
     const imageUrl = await callHuggingFaceImage(prompt);
-    await debitCredits({ tenant: scope.tenant, user: req.user, amount: CREDIT_COSTS.generateImage, type: 'ai_image', metadata: { promptLength: prompt.length, scopeId: scope.scopeId } });
-    res.json({ imageUrl, user: sanitizeUser(req.user, req.membership, req.tenant) });
+    await debitCredits({
+      tenant: scope.tenant,
+      user: req.user,
+      amount: CREDIT_COSTS.generateImage,
+      type: 'ai_image_huggingface',
+      metadata: { provider, promptLength: prompt.length, scopeId: scope.scopeId, reliability: 'lower_than_openai' },
+    });
+    res.json({
+      imageUrl,
+      provider,
+      model: 'hugging-face-space',
+      reliabilityNotice: HUGGINGFACE_RELIABILITY_NOTICE,
+      creditCost: CREDIT_COSTS.generateImage,
+      user: sanitizeUser(req.user, req.membership, req.tenant),
+    });
   } catch (error) {
     logger.warn({ error: error.message }, 'AI image generation unavailable');
-    res.status(502).json({ error: 'We are unable to generate an image right now. Please try again shortly.' });
+    if (error.message?.includes('free 150 startup credits')) return res.status(403).json({ error: error.message });
+    res.status(502).json({ error: error.message || 'We are unable to generate an image right now. Please try again shortly.' });
   }
 });
 
@@ -3067,6 +3283,9 @@ app.get('/api/config/public', (req, res) => {
       imageUsdPerImage: OPENAI_IMAGE_USD_PER_IMAGE,
       usdToNgn: PRICING_USD_TO_NGN,
       modelNotes: OPENAI_PRICING_MODEL_NOTES,
+      openAiServiceFeeMultiplier: OPENAI_SERVICE_FEE_MULTIPLIER,
+      huggingfaceReliabilityNotice: HUGGINGFACE_RELIABILITY_NOTICE,
+      openAiImageModel: OPENAI_IMAGE_MODEL,
     },
   });
 });
@@ -3081,7 +3300,7 @@ app.get('/api/config/required-credentials', (req, res) => {
     },
     payments: ['PAYSTACK_PUBLIC_KEY', 'PAYSTACK_SECRET_KEY', 'PAYSTACK_CURRENCY (optional)', 'PAYSTACK_CREDIT_RATE (optional)'],
     email: ['SMTP_PORT', 'SMTP_PASSWORD', 'SMTP_HOST (optional)', 'SMTP_USER (optional)', 'SMTP_FROM_NAME (optional)'],
-    optional: ['PORT', 'DEFAULT_SIGNUP_CREDITS', 'HUGGINGFACE_TEXT_SPACE_ID', 'HUGGINGFACE_IMAGE_SPACE_ID', 'HUGGINGFACE_TEXT_SYSTEM_PROMPT'],
+    optional: ['PORT', 'DEFAULT_SIGNUP_CREDITS', 'HUGGINGFACE_TEXT_SPACE_ID', 'HUGGINGFACE_IMAGE_SPACE_ID', 'HUGGINGFACE_TEXT_SYSTEM_PROMPT', 'OPENAI_KEY', 'OPENAI_TEXT_MODEL', 'OPENAI_IMAGE_MODEL'],
   });
 });
 

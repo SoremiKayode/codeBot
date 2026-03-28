@@ -108,9 +108,11 @@ const ui = {
   selectedAudienceSummary: document.getElementById('selectedAudienceSummary'),
   previewFrequencyPill: document.getElementById('previewFrequencyPill'),
   aiTextPrompt: document.getElementById('aiTextPrompt'),
+  aiTextProvider: document.getElementById('aiTextProvider'),
   aiTextStatus: document.getElementById('aiTextStatus'),
   generateTextButton: document.getElementById('generateTextButton'),
   aiImagePrompt: document.getElementById('aiImagePrompt'),
+  aiImageProvider: document.getElementById('aiImageProvider'),
   aiImageStatus: document.getElementById('aiImageStatus'),
   generateImageButton: document.getElementById('generateImageButton'),
   regenerateImageButton: document.getElementById('regenerateImageButton'),
@@ -246,6 +248,8 @@ const pricingState = {
   imageUsdPerImage: 0.04,
   usdToNgn: 1600,
   modelNotes: '',
+  openAiServiceFeeMultiplier: 1.2,
+  huggingfaceReliabilityNotice: '',
 };
 const companyProfileState = { activeTab: 'business', quill: null, profileId: null, faqCount: 0, productCount: 0 };
 const COMPANY_TABS = ['business', 'faqs', 'products', 'tone'];
@@ -479,11 +483,11 @@ function renderPricingSummary() {
     },
     {
       title: 'AI text generation (OpenAI token pricing)',
-      value: `${formatUsd(pricingState.textUsdPer1KTokens, 4)} • ${formatNgnFromUsd(pricingState.textUsdPer1KTokens, 2)} per 1,000 tokens`,
+      value: `${formatUsd(pricingState.textUsdPer1KTokens, 4)} • ${formatNgnFromUsd(pricingState.textUsdPer1KTokens, 2)} per 1,000 tokens (+${Math.round((pricingState.openAiServiceFeeMultiplier - 1) * 100)}% service fee)`,
     },
     {
       title: 'AI image generation (OpenAI pricing)',
-      value: `${formatUsd(pricingState.imageUsdPerImage, 4)} • ${formatNgnFromUsd(pricingState.imageUsdPerImage, 2)} per generated image`,
+      value: `${formatUsd(pricingState.imageUsdPerImage, 4)} • ${formatNgnFromUsd(pricingState.imageUsdPerImage, 2)} per generated image (+${Math.round((pricingState.openAiServiceFeeMultiplier - 1) * 100)}% service fee)`,
     },
   ];
   ui.pricingSummaryList.innerHTML = rows.map((row) => `
@@ -494,8 +498,8 @@ function renderPricingSummary() {
   `).join('');
   if (ui.pricingDisclaimer) {
     ui.pricingDisclaimer.textContent = pricingState.modelNotes
-      ? `Message sends and status posts are deducted from your credits first (no extra charge while credits remain). ${pricingState.modelNotes} USD → NGN uses ${Number(pricingState.usdToNgn || 0).toLocaleString('en-NG')} per $1 and may vary with market rates.`
-      : `Message sends and status posts are deducted from your credits first (no extra charge while credits remain). USD → NGN uses ${Number(pricingState.usdToNgn || 0).toLocaleString('en-NG')} per $1 and may vary with market rates.`;
+      ? `Message sends and status posts are deducted from your credits first (no extra charge while credits remain). ${pricingState.modelNotes} ${pricingState.huggingfaceReliabilityNotice || ''} USD → NGN uses ${Number(pricingState.usdToNgn || 0).toLocaleString('en-NG')} per $1 and may vary with market rates.`
+      : `Message sends and status posts are deducted from your credits first (no extra charge while credits remain). ${pricingState.huggingfaceReliabilityNotice || ''} USD → NGN uses ${Number(pricingState.usdToNgn || 0).toLocaleString('en-NG')} per $1 and may vary with market rates.`;
   }
 }
 
@@ -512,6 +516,8 @@ async function loadPublicConfig() {
     pricingState.imageUsdPerImage = Number(config.pricing?.imageUsdPerImage || 0);
     pricingState.usdToNgn = Number(config.pricing?.usdToNgn || pricingState.usdToNgn) || pricingState.usdToNgn;
     pricingState.modelNotes = String(config.pricing?.modelNotes || '').trim();
+    pricingState.openAiServiceFeeMultiplier = Number(config.pricing?.openAiServiceFeeMultiplier || pricingState.openAiServiceFeeMultiplier);
+    pricingState.huggingfaceReliabilityNotice = String(config.pricing?.huggingfaceReliabilityNotice || '').trim();
     updatePaymentUI();
     renderPricingSummary();
   } catch (error) {
@@ -1828,34 +1834,38 @@ function renderFrequencyOptions() {
 
 async function handleTextGeneration() {
   const prompt = ui.aiTextPrompt.value.trim();
+  const provider = ui.aiTextProvider?.value === 'openai' ? 'openai' : 'huggingface';
   if (!prompt) {
     showToast('Enter a prompt for AI text generation.');
     return;
   }
   ui.aiTextStatus.textContent = 'Generating text...';
   try {
-    const data = await api.generateText({ prompt });
+    const data = await api.generateText({ prompt, provider });
     syncUserFromPayload(data);
     ui.aiTextStatus.textContent = data.text;
     taskBuilderState.quill.root.innerHTML = `<p>${escapeHtml(data.text).replace(/\n/g, '<br>')}</p>`;
     setTaskTab('message');
     updateTaskPreview();
-    showToast('AI message inserted into the editor.');
+    if (data.provider === 'huggingface' && data.reliabilityNotice) showToast(`${data.reliabilityNotice} AI message inserted into the editor.`);
+    else if (data.provider === 'openai' && data.tokenUsage?.totalTokens) showToast(`AI message inserted. OpenAI used ${data.tokenUsage.totalTokens} tokens and deducted ${Number(data.creditCost || 0).toFixed(2)} credits (includes service fee).`);
+    else showToast('AI message inserted into the editor.');
   } catch (error) {
-    ui.aiTextStatus.textContent = 'We are unable to generate text right now. Please try again shortly.';
+    ui.aiTextStatus.textContent = error.message || 'We are unable to generate text right now. Please try again shortly.';
     showToast(error.message);
   }
 }
 
 async function handleImageGeneration() {
   const prompt = ui.aiImagePrompt.value.trim();
+  const provider = ui.aiImageProvider?.value === 'openai' ? 'openai' : 'huggingface';
   if (!prompt) {
     showToast('Enter a prompt for AI image generation.');
     return;
   }
   ui.aiImageStatus.textContent = 'Generating image...';
   try {
-    const data = await api.generateImage({ prompt });
+    const data = await api.generateImage({ prompt, provider });
     syncUserFromPayload(data);
     taskBuilderState.pendingImage = {
       name: data.fileName || `AI generated image ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
@@ -1868,12 +1878,14 @@ async function handleImageGeneration() {
     ui.aiImageStatus.innerHTML = `<article class="media-card"><img src="${data.imageUrl}" alt="AI generated" /></article>`;
     ui.regenerateImageButton.classList.remove('hidden');
     ui.approveImageButton.classList.remove('hidden');
-    showToast('AI image generated. Approve it to add to the queue.');
+    if (data.provider === 'huggingface' && data.reliabilityNotice) showToast(`${data.reliabilityNotice} AI image generated. Approve it to add to the queue.`);
+    else if (data.provider === 'openai') showToast(`OpenAI image generated. ${Number(data.creditCost || 0).toFixed(2)} credits deducted (includes service fee). Approve it to add to the queue.`);
+    else showToast('AI image generated. Approve it to add to the queue.');
   } catch (error) {
     taskBuilderState.pendingImage = null;
     ui.regenerateImageButton.classList.add('hidden');
     ui.approveImageButton.classList.add('hidden');
-    ui.aiImageStatus.textContent = 'We are unable to generate an image right now. Please try again shortly.';
+    ui.aiImageStatus.textContent = error.message || 'We are unable to generate an image right now. Please try again shortly.';
     showToast(error.message);
   }
 }
