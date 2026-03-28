@@ -1211,7 +1211,11 @@ async function handleAuthSuccess(payload, successMessage) {
 
 function setTaskTab(tabName) {
   const orderedTabs = getTaskWizardTabs();
-  const fallbackTab = orderedTabs.includes(tabName) ? tabName : orderedTabs[0];
+  const availableTabs = Array.from(document.querySelectorAll('[data-task-tab]'))
+    .filter((button) => !button.classList.contains('hidden'))
+    .map((button) => button.dataset.taskTab)
+    .filter(Boolean);
+  const fallbackTab = availableTabs.includes(tabName) ? tabName : orderedTabs[0];
   taskBuilderState.activeTab = fallbackTab;
   document.querySelectorAll('[data-task-tab]').forEach((button) => button.classList.toggle('active', button.dataset.taskTab === fallbackTab));
   document.querySelectorAll('[data-task-panel]').forEach((panel) => panel.classList.toggle('active', panel.dataset.taskPanel === fallbackTab));

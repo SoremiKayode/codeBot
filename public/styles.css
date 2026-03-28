@@ -877,6 +877,10 @@ input, textarea, select {
   fill: currentColor;
 }
 .social-icon-row--small { gap: .45rem; }
+.share-block .social-icon-row {
+  justify-content: flex-start;
+  align-items: center;
+}
 .pricing-panel {
   border: 1px solid color-mix(in srgb, var(--border) 76%, var(--card-glow));
   border-radius: 1rem;
