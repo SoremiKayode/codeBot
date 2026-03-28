@@ -59,7 +59,9 @@ const ui = {
   companyNextButton: document.getElementById('companyNextButton'),
   companySubmitButton: document.getElementById('companySubmitButton'),
   addFaqButton: document.getElementById('addFaqButton'),
+  addFaqButtonBottom: document.getElementById('addFaqButtonBottom'),
   addProductButton: document.getElementById('addProductButton'),
+  addProductButtonBottom: document.getElementById('addProductButtonBottom'),
   faqList: document.getElementById('faqList'),
   productList: document.getElementById('productList'),
   toneStyleInput: document.getElementById('toneStyleInput'),
@@ -3104,7 +3106,9 @@ document.querySelectorAll('[data-share]').forEach((link) => link.addEventListene
 ui.companyBackButton?.addEventListener('click', () => setCompanyTab(COMPANY_TABS[Math.max(0, COMPANY_TABS.indexOf(companyProfileState.activeTab) - 1)]));
 ui.companyNextButton?.addEventListener('click', () => setCompanyTab(COMPANY_TABS[Math.min(COMPANY_TABS.length - 1, COMPANY_TABS.indexOf(companyProfileState.activeTab) + 1)]));
 ui.addFaqButton?.addEventListener('click', () => addFaqCard());
+ui.addFaqButtonBottom?.addEventListener('click', () => addFaqCard());
 ui.addProductButton?.addEventListener('click', () => addProductCard());
+ui.addProductButtonBottom?.addEventListener('click', () => addProductCard());
 ui.companyProfileForm?.addEventListener('submit', submitCompanyProfile);
 
 document.addEventListener('click', (event) => {
