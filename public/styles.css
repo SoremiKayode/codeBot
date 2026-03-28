@@ -877,8 +877,24 @@ input, textarea, select {
   fill: currentColor;
 }
 .social-icon-row--small { gap: .45rem; }
+.share-block {
+  align-content: start;
+  justify-items: start;
+}
+.share-block > .muted {
+  margin: 0;
+}
 .share-block .social-icon-row {
+  display: flex;
   justify-content: flex-start;
+  align-items: flex-start;
+  gap: .55rem;
+  margin-top: .15rem;
+  width: auto;
+  flex-wrap: wrap;
+}
+.share-block .social-icon-row a {
+  margin: 0;
   align-items: center;
 }
 .pricing-panel {
