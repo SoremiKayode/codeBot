@@ -1,2 +1,6 @@
 node_modules/
 .env
+auth_info/
+server2.js
+test.js
+contacts.csv

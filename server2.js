@@ -331,23 +331,165 @@
 
 // startBot().catch(err => console.error(err));
 
+// PHONE CONNECTION AND FETCHING CONTACT
+
+// import * as baileys from '@whiskeysockets/baileys';
+// import { Boom } from '@hapi/boom';
+// import qrcode from 'qrcode-terminal';
+// import { createObjectCsvWriter } from 'csv-writer';
+// import readline from 'readline';
+
+// const { 
+//     default: makeWASocket, 
+//     useMultiFileAuthState, 
+//     fetchLatestBaileysVersion, 
+//     DisconnectReason,
+//     delay 
+// } = baileys;
+
+// const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+// const question = (text) => new Promise((resolve) => rl.question(text, resolve));
+
+// let allSavedContacts = [];
+
+// async function startBot() {
+//     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
+//     const { version } = await fetchLatestBaileysVersion();
+
+//     // Configuration with safer logger access
+//     const sock = makeWASocket({
+//         version,
+//         auth: state,
+//         printQRInTerminal: false,
+//         browser: ["Ubuntu", "Chrome", "20.0.04"], 
+//     });
+
+//     // --- PAIRING CODE LOGIC ---
+//     if (!sock.authState.creds.registered) {
+//         // Ask for number immediately
+//         const phoneNumber = await question('Please enter your phone number (e.g., 2348143164036): ');
+        
+//         console.log("Waiting for connection to stabilize...");
+//         // Wait 5 seconds to avoid the 428 "Precondition Required" error
+//         await delay(5000);
+
+//         try {
+//             const code = await sock.requestPairingCode(phoneNumber);
+//             console.log(`\n----------------------------`);
+//             console.log(`🔗 YOUR PAIRING CODE: ${code}`);
+//             console.log(`----------------------------\n`);
+//             console.log('Steps: WhatsApp > Linked Devices > Link with phone number instead.\n');
+//         } catch (err) {
+//             console.error("❌ Failed to generate pairing code. Error:", err.message);
+//             console.log("Try deleting the 'auth_info' folder and restarting.");
+//         }
+//     }
+
+//     // --- EVENT LISTENERS ---
+//     sock.ev.on('creds.update', saveCreds);
+
+//     sock.ev.on('connection.update', async (update) => {
+//         const { connection, lastDisconnect, qr } = update;
+
+//         if (qr && !sock.authState.creds.registered) {
+//             qrcode.generate(qr, { small: true });
+//         }
+
+//         if (connection === 'open') {
+//             console.log('✅ Connected successfully!');
+//             rl.close();
+//         }
+
+//         if (connection === 'close') {
+//             const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
+//             if (statusCode !== DisconnectReason.loggedOut) {
+//                 console.log("🔄 Reconnecting...");
+//                 startBot();
+//             } else {
+//                 console.log("🚫 Logged out. Delete 'auth_info' folder to pair again.");
+//             }
+//         }
+//     });
+
+//     sock.ev.on('messaging-history.set', async (data) => {
+//         if (data.contacts) {
+//             allSavedContacts = data.contacts
+//                 .filter(c => c.id.endsWith('@s.whatsapp.net'))
+//                 .map(c => ({
+//                     name: c.name || c.notify || 'Unknown',
+//                     phone: c.id.split('@')[0],
+//                     jid: c.id
+//                 }));
+
+//             await saveToCSV(allSavedContacts);
+//             await createStatusWithPrivacy(sock, allSavedContacts);
+//         }
+//     });
+// }
+// // --- HELPER FUNCTIONS ---
+
+// async function saveToCSV(contacts) {
+//     const csvWriter = createObjectCsvWriter({
+//         path: 'contacts.csv',
+//         header: [
+//             { id: 'name', title: 'NAME' },
+//             { id: 'phone', title: 'PHONE' },
+//             { id: 'jid', title: 'JID' }
+//         ]
+//     });
+
+//     try {
+//         await csvWriter.writeRecords(contacts);
+//         console.log(`📄 Saved ${contacts.length} contacts to CSV.`);
+//     } catch (err) {
+//         console.error('CSV Error:', err);
+//     }
+// }
+
+// async function createStatusWithPrivacy(sock, contacts) {
+//     try {
+//         const participantJids = contacts.map(c => c.jid);
+//         const myJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+//         if (!participantJids.includes(myJid)) participantJids.push(myJid);
+
+//         await sock.sendMessage('status@broadcast', { 
+//             text: 'Hello from CodeIgnite! This is an automated status update.' 
+//         }, { 
+//             statusJidList: participantJids 
+//         });
+
+//         console.log('✅ Status uploaded successfully!');
+//     } catch (err) {
+//         console.log('Status upload failed (may be due to privacy settings).');
+//     }
+// }
+
+// // Start the process
+// startBot().catch(err => console.error("Critical Error:", err));
+
 
 import * as baileys from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
-import qrcode from 'qrcode-terminal';
-import { createObjectCsvWriter } from 'csv-writer';
+import readline from 'readline';
 import fs from 'fs';
+import path from 'path';
 
-const { 
-    default: makeWASocket, 
-    useMultiFileAuthState, 
-    fetchLatestBaileysVersion, 
-    DisconnectReason 
+const {
+    default: makeWASocket,
+    useMultiFileAuthState,
+    fetchLatestBaileysVersion,
+    DisconnectReason,
+    delay
 } = baileys;
 
-// Global array to store contacts for the status function
-let allSavedContacts = [];
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+const question = (text) => new Promise((resolve) => rl.question(text, resolve));
 
+let allContacts = [];
+
+// =============================
+// 🚀 START BOT
+// =============================
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
     const { version } = await fetchLatestBaileysVersion();
@@ -356,82 +498,153 @@ async function startBot() {
         version,
         auth: state,
         printQRInTerminal: false,
+        browser: ["Ubuntu", "Chrome", "1.0"],
+        syncFullHistory: true // 🔥 important
     });
 
-    sock.ev.on('messaging-history.set', async (data) => {
-        if (data.contacts) {
-            allSavedContacts = data.contacts
+    // =============================
+    // 🔗 PHONE NUMBER PAIRING
+    // =============================
+    if (!sock.authState.creds.registered) {
+        const phoneNumber = await question('Enter phone number (234XXXXXXXXXX): ');
+
+        console.log("⏳ Preparing pairing...");
+        await delay(5000);
+
+        try {
+            const code = await sock.requestPairingCode(phoneNumber);
+            console.log(`\n🔑 PAIRING CODE: ${code}\n`);
+            console.log('👉 WhatsApp > Linked Devices > Link with phone number\n');
+        } catch (err) {
+            console.error("❌ Pairing failed:", err.message);
+        }
+    }
+
+    sock.ev.on('creds.update', saveCreds);
+
+    // =============================
+    // 🔥 FETCH USERS FROM CHATS (RELIABLE)
+    // =============================
+    sock.ev.on('messaging-history.set', (data) => {
+        if (data.chats && data.chats.length > 0) {
+
+            allContacts = data.chats
                 .filter(c => c.id.endsWith('@s.whatsapp.net'))
                 .map(c => ({
-                    name: c.name || c.notify || 'Unknown',
-                    phone: c.id.split('@')[0],
+                    name: c.name || 'Unknown',
                     jid: c.id
                 }));
 
-            await saveToCSV(allSavedContacts);
-            
-            // Once saved, let's create a status
-            await createStatusWithPrivacy(sock, allSavedContacts);
+            console.log("\n📞 USERS (FROM CHATS):");
+            allContacts.forEach((c, i) => {
+                console.log(`${i + 1}. ${c.name} - ${c.jid}`);
+            });
+
+            console.log(`\n✅ Total Users: ${allContacts.length}`);
         }
     });
 
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr } = update;
-        if (qr) qrcode.generate(qr, { small: true });
-        if (connection === 'open') console.log('✅ Connected!');
+    // =============================
+    // CONNECTION
+    // =============================
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect } = update;
+
+        if (connection === 'open') {
+            console.log('✅ Connected successfully!');
+            rl.close();
+
+            console.log("⏳ Waiting for chat sync...");
+
+            // 🔥 WAIT UNTIL USERS ARE AVAILABLE
+            let attempts = 0;
+
+            while (allContacts.length === 0 && attempts < 10) {
+                await delay(3000);
+                attempts++;
+                console.log(`⏳ Waiting... (${attempts}) Users: ${allContacts.length}`);
+            }
+
+            if (allContacts.length === 0) {
+                console.log("❌ No users found. Cannot send status.");
+                return;
+            }
+
+            console.log(`✅ Users ready: ${allContacts.length}`);
+
+            await sendStatus(sock);
+        }
+
         if (connection === 'close') {
             const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
-            if (statusCode !== DisconnectReason.loggedOut) startBot();
+
+            if (statusCode !== DisconnectReason.loggedOut) {
+                console.log("🔄 Reconnecting...");
+                startBot();
+            } else {
+                console.log("🚫 Logged out. Delete auth_info to reconnect.");
+            }
         }
     });
-
-    sock.ev.on('creds.update', saveCreds);
 }
 
-// --- FUNCTION 1: SAVE TO CSV ---
-async function saveToCSV(contacts) {
-    const csvWriter = createObjectCsvWriter({
-        path: 'contacts.csv',
-        header: [
-            { id: 'name', title: 'NAME' },
-            { id: 'phone', title: 'PHONE' },
-            { id: 'jid', title: 'JID' }
-        ]
-    });
-
+// =============================
+// 📤 SEND STATUS
+// =============================
+async function sendStatus(sock) {
     try {
-        await csvWriter.writeRecords(contacts);
-        console.log(`\n📄 Successfully saved ${contacts.length} contacts to contacts.csv`);
-    } catch (err) {
-        console.error('Error saving CSV:', err);
-    }
-}
+        let participantJids = allContacts.map(c => c.jid);
 
-// --- FUNCTION 2: CREATE STATUS WITH PRIVACY ---
-async function createStatusWithPrivacy(sock, contacts) {
-    try {
-        // Extract just the JIDs for the privacy list
-        const participantJids = contacts.map(c => c.jid);
-        
-        // Add your own number to the list so you can see it too
-        const myJid = sock.user.id.split(':')[0] + '@s.whatsapp.net';
+        // ✅ INCLUDE YOURSELF
+        const myJid = sock.user.id.includes(':')
+            ? sock.user.id.split(':')[0] + '@s.whatsapp.net'
+            : sock.user.id;
+
         if (!participantJids.includes(myJid)) {
             participantJids.push(myJid);
         }
 
-        console.log(`📤 Uploading status to ${participantJids.length} people...`);
+        console.log(`📡 Sending status to ${participantJids.length} users`);
 
-        // Posting a Text Status
-        await sock.sendMessage('status@broadcast', { 
-            text: 'Hello from CodeIgnite! This is an automated status update.' 
-        }, { 
-            statusJidList: participantJids 
-        });
+        // =============================
+        // FILE PATH
+        // =============================
+        const filePath = path.join(process.cwd(), 'public', 'assets', 'hero.png');
+
+        if (!fs.existsSync(filePath)) {
+            console.error("❌ File not found:", filePath);
+            return;
+        }
+
+        let message;
+
+        if (filePath.endsWith('.mp4')) {
+            message = {
+                video: fs.readFileSync(filePath),
+                caption: '🚀 CodeIgnite Automation Status'
+            };
+        } else {
+            message = {
+                image: fs.readFileSync(filePath),
+                caption: '🚀 CodeIgnite Automation Status'
+            };
+        }
+
+        // 🔥 FINAL DELAY (IMPORTANT)
+        await delay(5000);
+
+        await sock.sendMessage(
+            'status@broadcast',
+            message,
+            { statusJidList: participantJids }
+        );
 
         console.log('✅ Status uploaded successfully!');
+
     } catch (err) {
-        console.error('Error posting status:', err);
+        console.error("❌ Status failed:", err.message);
     }
 }
 
-startBot().catch(err => console.error(err));
+// =============================
+startBot().catch(err => console.error("Critical Error:", err));
