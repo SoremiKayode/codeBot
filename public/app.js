@@ -868,6 +868,10 @@ function addProductCard(values = {}) {
 }
 
 function initCompanyProfileEditor() {
+  if (typeof window.Quill !== 'function') {
+    console.warn('Quill failed to load. Continuing without company profile editor support.');
+    return;
+  }
   companyProfileState.quill = new window.Quill('#businessNameEditor', {
     theme: 'snow',
     placeholder: 'Write your business name, what you sell, where you operate, and the short company introduction the responder should know.',
@@ -2499,6 +2503,10 @@ function queueGrammarCheck() {
 }
 
 function initQuill() {
+  if (typeof window.Quill !== 'function') {
+    console.warn('Quill failed to load. Continuing without rich text editor support.');
+    return;
+  }
   taskBuilderState.quill = new window.Quill('#messageEditor', {
     theme: 'snow',
     placeholder: 'Type or paste the WhatsApp message here...',
