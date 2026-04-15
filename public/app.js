@@ -1047,7 +1047,8 @@ function updatePasswordStrength(input, output) {
   if (input.value) output.classList.add(className);
 }
 
-async function refreshUser() {
+async function refreshUser(options = {}) {
+  const { clearAuthOnError = true } = options;
   try {
     const data = await api.me();
     setUser(data.user);
@@ -1055,7 +1056,7 @@ async function refreshUser() {
     updateUserUI();
     return data.user;
   } catch {
-    setToken('');
+    if (clearAuthOnError) setToken('');
     setUser(null);
     updateUserUI();
     stopPoller();
@@ -1640,8 +1641,13 @@ async function handleOAuthRedirectState() {
 
   const existingToken = localStorage.getItem('wa_token');
   if (existingToken) setToken(existingToken);
-  const user = await refreshUser();
+  let user = await refreshUser({ clearAuthOnError: false });
   if (!user) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    user = await refreshUser({ clearAuthOnError: false });
+  }
+  if (!user) {
+    setToken('');
     showToast('Authentication succeeded, but we could not restore your session. Please try logging in again.');
     return false;
   }
