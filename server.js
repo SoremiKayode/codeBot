@@ -29,6 +29,8 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const app = express();
 const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 const requestCounts = new Map();
+const MAX_REQUEST_BODY_MB = Number(process.env.MAX_REQUEST_BODY_MB || 40);
+const MAX_REQUEST_BODY_LIMIT = `${MAX_REQUEST_BODY_MB}mb`;
 
 app.disable('x-powered-by');
 app.use((req, res, next) => {
@@ -59,7 +61,8 @@ setInterval(() => {
   }
 }, 60000).unref();
 
-app.use(express.json({ limit: '20mb' }));
+app.use(express.json({ limit: MAX_REQUEST_BODY_LIMIT }));
+app.use(express.urlencoded({ extended: true, limit: MAX_REQUEST_BODY_LIMIT }));
 app.use(express.static(PUBLIC_DIR));
 
 const USE_LOCAL = process.env.USE_LOCAL === 'true';
@@ -3268,6 +3271,15 @@ app.post('/api/enquiries', async (req, res) => {
     logger.warn({ error: error.message }, 'Unable to send enquiry email');
     res.status(500).json({ error: error.message || 'Unable to send your enquiry right now.' });
   }
+});
+
+app.use((error, req, res, next) => {
+  if (error?.type === 'entity.too.large') {
+    return res.status(413).json({
+      error: `Upload is too large. Keep each request under ${MAX_REQUEST_BODY_MB}MB or upload fewer files at once.`,
+    });
+  }
+  return next(error);
 });
 
 app.get('/api/config/public', (req, res) => {
