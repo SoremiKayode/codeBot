@@ -178,7 +178,7 @@
             <label>
               <span>Password</span>
               <div class="password-field">
-                <input id="loginPassword" name="password" type="password" placeholder="••••••••" required />
+                <input id="loginPassword" name="password" type="password" placeholder="At least 8 characters" minlength="8" required />
                 <button class="password-toggle" type="button" data-password-toggle="loginPassword">Show</button>
               </div>
               <small id="loginPasswordStrength" class="password-strength muted">Enter your password to see strength feedback.</small>
@@ -211,7 +211,7 @@
             <label>
               <span>Password</span>
               <div class="password-field">
-                <input id="signupPassword" name="password" type="password" placeholder="Minimum 6 characters" required />
+                <input id="signupPassword" name="password" type="password" placeholder="Minimum 8 characters" minlength="8" required />
                 <button class="password-toggle" type="button" data-password-toggle="signupPassword">Show</button>
               </div>
               <small id="signupPasswordStrength" class="password-strength muted">Use at least 8 characters with upper, lower, number, and symbol for a strong password.</small>
