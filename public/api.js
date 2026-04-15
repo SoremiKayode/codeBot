@@ -18,6 +18,9 @@ async function request(path, options = {}) {
   const response = await fetch(path, { ...options, headers, credentials: 'same-origin' });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 413) {
+      throw new Error(data.error || 'Upload is too large. Reduce the file size or upload fewer files at once.');
+    }
     throw new Error(data.error || 'Request failed.');
   }
   return data;

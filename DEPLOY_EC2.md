@@ -60,6 +60,7 @@ Create `/etc/nginx/sites-available/whatsapp-automation`:
 server {
     listen 80;
     server_name your-domain.com;
+    client_max_body_size 40M;
 
     location / {
         proxy_pass http://127.0.0.1:3000;
@@ -73,6 +74,8 @@ server {
     }
 }
 ```
+
+`client_max_body_size` should be equal to or higher than your app upload limit (`MAX_REQUEST_BODY_MB` in `.env`, default `40`).
 
 Enable site:
 ```bash
