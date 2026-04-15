@@ -872,11 +872,16 @@ function initCompanyProfileEditor() {
     console.warn('Quill failed to load. Continuing without company profile editor support.');
     return;
   }
-  companyProfileState.quill = new window.Quill('#businessNameEditor', {
-    theme: 'snow',
-    placeholder: 'Write your business name, what you sell, where you operate, and the short company introduction the responder should know.',
-    modules: { toolbar: [['bold', 'italic'], [{ list: 'bullet' }], ['clean']] },
-  });
+  try {
+    companyProfileState.quill = new window.Quill('#businessNameEditor', {
+      theme: 'snow',
+      placeholder: 'Write your business name, what you sell, where you operate, and the short company introduction the responder should know.',
+      modules: { toolbar: [['bold', 'italic'], [{ list: 'bullet' }], ['clean']] },
+    });
+  } catch (error) {
+    console.warn('Quill initialization failed for company profile editor. Continuing without it.', error);
+    companyProfileState.quill = null;
+  }
 }
 
 function setCompanyTab(tabName) {
@@ -2507,22 +2512,27 @@ function initQuill() {
     console.warn('Quill failed to load. Continuing without rich text editor support.');
     return;
   }
-  taskBuilderState.quill = new window.Quill('#messageEditor', {
-    theme: 'snow',
-    placeholder: 'Type or paste the WhatsApp message here...',
-    modules: { toolbar: [['bold', 'italic', 'underline', { size: ['small', false, 'large', 'huge'] }], [{ list: 'ordered' }, { list: 'bullet' }], ['link', 'clean']] },
-  });
-  taskBuilderState.quill.root.setAttribute('spellcheck', 'true');
-  taskBuilderState.quill.on('text-change', () => {
-    taskBuilderState.activeGrammarMatchIndex = -1;
-    updateTaskPreview();
-    queueGrammarCheck();
-  });
-  taskBuilderState.quill.on('selection-change', (range, _oldRange, source) => {
-    if (source !== 'user' || !range) return;
-    focusGrammarSuggestionForCursor(range.index);
-  });
-  applyEditorZoom();
+  try {
+    taskBuilderState.quill = new window.Quill('#messageEditor', {
+      theme: 'snow',
+      placeholder: 'Type or paste the WhatsApp message here...',
+      modules: { toolbar: [['bold', 'italic', 'underline', { size: ['small', false, 'large', 'huge'] }], [{ list: 'ordered' }, { list: 'bullet' }], ['link', 'clean']] },
+    });
+    taskBuilderState.quill.root.setAttribute('spellcheck', 'true');
+    taskBuilderState.quill.on('text-change', () => {
+      taskBuilderState.activeGrammarMatchIndex = -1;
+      updateTaskPreview();
+      queueGrammarCheck();
+    });
+    taskBuilderState.quill.on('selection-change', (range, _oldRange, source) => {
+      if (source !== 'user' || !range) return;
+      focusGrammarSuggestionForCursor(range.index);
+    });
+    applyEditorZoom();
+  } catch (error) {
+    console.warn('Quill initialization failed for message editor. Continuing without it.', error);
+    taskBuilderState.quill = null;
+  }
 }
 
 ui.loginForm.addEventListener('submit', async (event) => {
