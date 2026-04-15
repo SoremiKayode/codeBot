@@ -70,6 +70,9 @@ const LOCAL_MONGO_URI = process.env.LOCAL_MONGO_URI || 'mongodb://localhost:2701
 const CLOUD_MONGO_URI = process.env.CLOUD_MONGO_URI || 'mongodb+srv://whatsapp_bot:Abayomi1994@@codebot.vlq1yhv.mongodb.net/?appName=codeBot';
 const PORT = Number(process.env.PORT || 3000);
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'wa_session';
+const SESSION_COOKIE_SAME_SITE = process.env.SESSION_COOKIE_SAME_SITE || 'Lax';
+const SESSION_COOKIE_DOMAIN = process.env.SESSION_COOKIE_DOMAIN || '';
+const SESSION_COOKIE_SECURE = process.env.SESSION_COOKIE_SECURE === 'true';
 const SMTP_HOST = process.env.SMTP_HOST || 'smtp.zoho.com';
 const SMTP_PORT = Number(process.env.SMTP_PORT || 465);
 const SMTP_PASSWORD = process.env.SMTP_PASSWORD || '';
@@ -181,7 +184,13 @@ function parseCookies(header = '') {
   return String(header || '').split(';').reduce((cookies, part) => {
     const [rawKey, ...rawValue] = part.trim().split('=');
     if (!rawKey) return cookies;
-    cookies[decodeURIComponent(rawKey)] = decodeURIComponent(rawValue.join('='));
+    try {
+      const key = decodeURIComponent(rawKey);
+      const value = decodeURIComponent(rawValue.join('='));
+      cookies[key] = value;
+    } catch {
+      cookies[rawKey] = rawValue.join('=');
+    }
     return cookies;
   }, {});
 }
@@ -414,25 +423,29 @@ async function verifyPaystackTransaction(reference) {
 }
 
 function buildSessionCookie(token) {
-  const secure = process.env.NODE_ENV === 'production';
+  const normalizedSameSite = ['Lax', 'Strict', 'None'].includes(SESSION_COOKIE_SAME_SITE) ? SESSION_COOKIE_SAME_SITE : 'Lax';
+  const secure = SESSION_COOKIE_SECURE || process.env.NODE_ENV === 'production' || normalizedSameSite === 'None';
   return [
     `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`,
     'Path=/',
     'HttpOnly',
-    'SameSite=Lax',
+    `SameSite=${normalizedSameSite}`,
     `Max-Age=${Math.floor(SESSION_COOKIE_MAX_AGE_MS / 1000)}`,
+    ...(SESSION_COOKIE_DOMAIN ? [`Domain=${SESSION_COOKIE_DOMAIN}`] : []),
     ...(secure ? ['Secure'] : []),
   ].join('; ');
 }
 
 function clearSessionCookie() {
-  const secure = process.env.NODE_ENV === 'production';
+  const normalizedSameSite = ['Lax', 'Strict', 'None'].includes(SESSION_COOKIE_SAME_SITE) ? SESSION_COOKIE_SAME_SITE : 'Lax';
+  const secure = SESSION_COOKIE_SECURE || process.env.NODE_ENV === 'production' || normalizedSameSite === 'None';
   return [
     `${SESSION_COOKIE_NAME}=`,
     'Path=/',
     'HttpOnly',
-    'SameSite=Lax',
+    `SameSite=${normalizedSameSite}`,
     'Max-Age=0',
+    ...(SESSION_COOKIE_DOMAIN ? [`Domain=${SESSION_COOKIE_DOMAIN}`] : []),
     ...(secure ? ['Secure'] : []),
   ].join('; ');
 }
