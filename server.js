@@ -145,6 +145,7 @@ function isCreditEditor(role = '') {
 
 const connectionStateStore = new Map();
 const socketStore = new Map();
+const reconnectStateStore = new Map();
 const audienceStore = new Map();
 const huggingFaceClientStore = new Map();
 const autoReplyRateStore = new Map();
@@ -2329,6 +2330,11 @@ async function findOrCreateSocialUser(provider, profile, mode = 'login') {
 
 async function startWhatsAppSession(user, tenant, options = {}) {
   const tenantId = String(tenant._id);
+  const pendingReconnect = reconnectStateStore.get(tenantId);
+  if (pendingReconnect?.timer) {
+    clearTimeout(pendingReconnect.timer);
+    reconnectStateStore.delete(tenantId);
+  }
   const connectionMode = normalizeConnectionMode(options.connectionMode);
   const pairingPhoneDigits = connectionMode === 'phone_number' ? extractPhoneDigits(options.phoneNumber || '') : '';
   const hasSavedCredentials = await hasSavedWhatsAppCredentials(tenantId);
@@ -2458,6 +2464,7 @@ async function startWhatsAppSession(user, tenant, options = {}) {
         }
       }
       if (connection === 'open') {
+        reconnectStateStore.delete(tenantId);
         const phoneNumber = sock?.user?.id || '';
         await persistConnectionState(tenantId, { status: 'syncing_contacts', qr: '', pairingCode: '', connectionMode, phoneNumber, message: 'WhatsApp connected. Fetching your contacts and saving them to Audience now…', userId: String(user._id) });
         await syncAudienceFromSocket(tenantId, sock);
@@ -2477,9 +2484,31 @@ async function startWhatsAppSession(user, tenant, options = {}) {
         console.error('[whatsapp-connection-close]', { tenantId, statusCode, error: disconnectReason });
         socketStore.delete(tenantId);
         if (loggedOut) {
+          const reconnectState = reconnectStateStore.get(tenantId);
+          if (reconnectState?.timer) clearTimeout(reconnectState.timer);
+          reconnectStateStore.delete(tenantId);
           await AuthState.deleteMany({ tenantId });
           await User.findByIdAndUpdate(user._id, { whatsappStatus: 'not_connected', whatsappPhone: '' });
           await persistConnectionState(tenantId, { status: 'logged_out', qr: '', pairingCode: '', connectionMode, phoneNumber: '', message: 'WhatsApp session logged out. Start a new connection to generate another QR code.', userId: String(user._id) });
+          return;
+        }
+        const previousReconnect = reconnectStateStore.get(tenantId);
+        const attempts = Number(previousReconnect?.attempts || 0) + 1;
+        const isConnectionTerminated = statusCode === 428 || /connection terminated/i.test(disconnectReason);
+        if (isConnectionTerminated && attempts >= 4) {
+          if (previousReconnect?.timer) clearTimeout(previousReconnect.timer);
+          reconnectStateStore.delete(tenantId);
+          await clearWhatsAppSessionData(tenantId);
+          await User.findByIdAndUpdate(user._id, { whatsappStatus: 'not_connected', whatsappPhone: '' });
+          await persistConnectionState(tenantId, {
+            status: 'logged_out',
+            qr: '',
+            pairingCode: '',
+            connectionMode,
+            phoneNumber: '',
+            message: 'Saved WhatsApp credentials became invalid after repeated reconnect attempts. Please reconnect and scan a fresh QR code.',
+            userId: String(user._id),
+          });
           return;
         }
         await User.findByIdAndUpdate(user._id, { whatsappStatus: 'connecting' });
@@ -2495,7 +2524,11 @@ async function startWhatsAppSession(user, tenant, options = {}) {
           userId: String(user._id),
         });
         sendWhatsAppReconnectEmail({ user, tenant, reason: disconnectReason }).catch(() => null);
-        setTimeout(() => {
+        const reconnectDelayMs = restartRequired
+          ? 0
+          : Math.min(30_000, 1_000 * (2 ** Math.min(attempts, 5)));
+        if (previousReconnect?.timer) clearTimeout(previousReconnect.timer);
+        const timer = setTimeout(() => {
           startWhatsAppSession(user, tenant, { connectionMode }).catch(async (error) => {
             logger.error({ tenantId, statusCode, error: error.message, stack: error.stack }, 'Unable to restart WhatsApp session');
             await persistConnectionState(tenantId, {
@@ -2509,7 +2542,8 @@ async function startWhatsAppSession(user, tenant, options = {}) {
             });
             sendWhatsAppReconnectEmail({ user, tenant, reason: error.message || 'Automatic reconnect failed.' }).catch(() => null);
           });
-        }, restartRequired ? 0 : 1_000);
+        }, reconnectDelayMs);
+        reconnectStateStore.set(tenantId, { attempts, timer });
       }
     } catch (error) {
       logger.error({ tenantId, error: error.message, stack: error.stack }, 'Unhandled WhatsApp handshake error');
