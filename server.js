@@ -1418,7 +1418,7 @@ function sanitizeRichText(value = '') {
   return String(value || '').replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '').replace(/on\w+=/gi, '').trim();
 }
 
-function validateSignupPayload(payload) {
+function validateSignupPayload(payload = {}) {
   const username = sanitizeTextInput(payload.username);
   const email = sanitizeTextInput(payload.email).toLowerCase();
   const password = String(payload.password || '');
@@ -2569,14 +2569,20 @@ app.post('/api/auth/signup', async (req, res) => {
 });
 
 app.post('/api/auth/login', async (req, res) => {
-  const email = sanitizeTextInput(req.body.email).toLowerCase();
-  const password = String(req.body.password || '');
-  const user = await User.findOne({ email });
-  if (!user || !verifyPassword(password, user.passwordHash)) return res.status(401).json({ error: 'Invalid email or password.' });
-  const { membership, tenant } = await resolveActiveWorkspaceContext(user);
-  const session = await issueSession(user, tenant, membership, 'password');
-  res.setHeader('Set-Cookie', buildSessionCookie(session.token));
-  res.json(session);
+  try {
+    const body = req.body || {};
+    const email = sanitizeTextInput(body.email).toLowerCase();
+    const password = String(body.password || '');
+    if (!email || !password) return res.status(400).json({ error: 'Email and password are required.' });
+    const user = await User.findOne({ email });
+    if (!user || !verifyPassword(password, user.passwordHash)) return res.status(401).json({ error: 'Invalid email or password.' });
+    const { membership, tenant } = await resolveActiveWorkspaceContext(user);
+    const session = await issueSession(user, tenant, membership, 'password');
+    res.setHeader('Set-Cookie', buildSessionCookie(session.token));
+    return res.json(session);
+  } catch (error) {
+    return res.status(400).json({ error: error.message || 'Unable to log in.' });
+  }
 });
 
 app.post('/api/auth/logout', authenticateRequest, async (req, res) => {
