@@ -23,8 +23,13 @@
     const redirectUrl = new URL('/', window.location.origin);
 
     if (token) {
-      localStorage.setItem('wa_token', token);
+      try {
+        localStorage.setItem('wa_token', token);
+      } catch (error) {
+        console.warn('Unable to persist token in callback context. Continuing with URL handoff.', error);
+      }
       redirectUrl.searchParams.set('auth', 'success');
+      redirectUrl.searchParams.set('token', token);
       redirectUrl.searchParams.set('provider', provider);
       redirectUrl.searchParams.set('mode', mode);
       redirectUrl.searchParams.set('message', params.get('message') || '');

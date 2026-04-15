@@ -867,13 +867,26 @@ function addProductCard(values = {}) {
   ui.productList.appendChild(createDynamicCard('product', values));
 }
 
+
+function getQuillConstructor() {
+  const candidate = window.Quill?.default || window.Quill;
+  if (typeof candidate !== 'function') return null;
+  try {
+    Reflect.construct(String, [], candidate);
+    return candidate;
+  } catch (_error) {
+    return null;
+  }
+}
+
 function initCompanyProfileEditor() {
-  if (typeof window.Quill !== 'function') {
+  const QuillCtor = getQuillConstructor();
+  if (!QuillCtor) {
     console.warn('Quill failed to load. Continuing without company profile editor support.');
-    return;
+    return false;
   }
   try {
-    companyProfileState.quill = new window.Quill('#businessNameEditor', {
+    companyProfileState.quill = new QuillCtor('#businessNameEditor', {
       theme: 'snow',
       placeholder: 'Write your business name, what you sell, where you operate, and the short company introduction the responder should know.',
       modules: { toolbar: [['bold', 'italic'], [{ list: 'bullet' }], ['clean']] },
@@ -881,7 +894,9 @@ function initCompanyProfileEditor() {
   } catch (error) {
     console.warn('Quill initialization failed for company profile editor. Continuing without it.', error);
     companyProfileState.quill = null;
+    return false;
   }
+  return true;
 }
 
 function setCompanyTab(tabName) {
@@ -1596,13 +1611,24 @@ async function handleOAuthRedirectState() {
   if (!authStatus) return false;
   const provider = url.searchParams.get('provider') || 'social provider';
   const mode = url.searchParams.get('mode') || 'login';
+  const handoffToken = sanitizeFormValue(url.searchParams.get('token') || '');
   const message = url.searchParams.get('message') || (authStatus === 'success'
     ? `${provider} ${mode === 'signup' ? 'sign-up' : 'login'} completed successfully.`
     : 'Authentication failed.');
+
+  if (handoffToken) {
+    try {
+      setToken(handoffToken);
+    } catch (error) {
+      console.warn('Unable to store OAuth handoff token from URL.', error);
+    }
+  }
+
   url.searchParams.delete('auth');
   url.searchParams.delete('provider');
   url.searchParams.delete('mode');
   url.searchParams.delete('message');
+  url.searchParams.delete('token');
   window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
 
   if (authStatus !== 'success') {
@@ -2508,12 +2534,13 @@ function queueGrammarCheck() {
 }
 
 function initQuill() {
-  if (typeof window.Quill !== 'function') {
+  const QuillCtor = getQuillConstructor();
+  if (!QuillCtor) {
     console.warn('Quill failed to load. Continuing without rich text editor support.');
-    return;
+    return false;
   }
   try {
-    taskBuilderState.quill = new window.Quill('#messageEditor', {
+    taskBuilderState.quill = new QuillCtor('#messageEditor', {
       theme: 'snow',
       placeholder: 'Type or paste the WhatsApp message here...',
       modules: { toolbar: [['bold', 'italic', 'underline', { size: ['small', false, 'large', 'huge'] }], [{ list: 'ordered' }, { list: 'bullet' }], ['link', 'clean']] },
@@ -2532,7 +2559,9 @@ function initQuill() {
   } catch (error) {
     console.warn('Quill initialization failed for message editor. Continuing without it.', error);
     taskBuilderState.quill = null;
+    return false;
   }
+  return true;
 }
 
 ui.loginForm.addEventListener('submit', async (event) => {
@@ -3150,8 +3179,14 @@ ui.menuToggle?.addEventListener('click', () => {
 applyTheme(localStorage.getItem('wa_theme') || 'light');
 updateUserUI();
 renderWorkspaceMembers();
-initQuill();
-initCompanyProfileEditor();
+const quillReady = initQuill();
+const companyQuillReady = initCompanyProfileEditor();
+if (!quillReady || !companyQuillReady) {
+  window.setTimeout(() => {
+    if (!taskBuilderState.quill) initQuill();
+    if (!companyProfileState.quill) initCompanyProfileEditor();
+  }, 150);
+}
 setCompanyTab('business');
 ensureDynamicEmptyState(ui.faqList, 'faq');
 ensureDynamicEmptyState(ui.productList, 'product');
