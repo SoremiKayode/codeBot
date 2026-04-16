@@ -96,3 +96,33 @@ pm2 status
 pm2 logs whatsapp-automation --lines 100
 curl -I http://127.0.0.1:3000
 ```
+
+## 9) Troubleshooting: `502 Bad Gateway` on your domain
+
+If you see this in browser devtools:
+
+- `GET https://your-domain.com/ 502 (Bad Gateway)`
+- plus a CSP warning like: `Content Security Policy ... script-src ... unsafe-eval`
+
+Treat these as **two separate signals**:
+
+1. `502 Bad Gateway` means Nginx (or another proxy) cannot reach your Node app.
+2. The CSP `unsafe-eval` warning is usually from scripts/extensions trying to run on the proxy error page. It is often **not** the root cause of the 502.
+
+Use this checklist on the server:
+
+```bash
+# 1) Is the Node process up?
+pm2 status
+pm2 logs whatsapp-automation --lines 200
+
+# 2) Is the app reachable directly (bypassing Nginx)?
+curl -i http://127.0.0.1:3000/
+
+# 3) Is Nginx healthy and pointing to the right upstream?
+sudo nginx -t
+sudo systemctl status nginx --no-pager
+sudo tail -n 200 /var/log/nginx/error.log
+```
+
+If `curl http://127.0.0.1:3000/` fails, fix the app/PM2 process first. If that succeeds but your domain still returns 502, fix Nginx upstream config/reload.
